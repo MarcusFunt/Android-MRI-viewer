@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -97,7 +97,7 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f))
                     }
-                    Icon(Icons.Default.ArrowForward, contentDescription = null,
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
                         tint = MaterialTheme.colorScheme.onPrimary)
                 }
             }
@@ -118,7 +118,7 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Icon(Icons.Default.ArrowForward, contentDescription = null,
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary)
                 }
             }

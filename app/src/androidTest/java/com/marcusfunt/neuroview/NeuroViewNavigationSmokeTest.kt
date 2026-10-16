@@ -14,18 +14,18 @@ class NeuroViewNavigationSmokeTest {
     @Test
     fun homeCanOpenSeriesBrowser() {
         compose.onNodeWithText("NEUROVIEW").assertExists()
-        compose.onNodeWithText("VIEW MRI SERIES").performClick()
-        compose.onNodeWithText("MRI series").assertExists()
-        compose.onNodeWithText("ADD NIFTI SERIES").assertExists()
+        compose.onNodeWithText("View MRI series").performClick()
+        compose.onNodeWithText("Series browser").assertExists()
+        compose.onNodeWithText("Import NIfTI volumes").assertExists()
     }
 
     @Test
-    fun libraryExposesBothConversionDirectionsAndManagement() {
-        compose.onNodeWithText("LIBRARY").performClick()
+    fun libraryShowsConversionAndManagementActions() {
+        compose.onNodeWithText("Library & conversion").performClick()
         compose.onNodeWithText("MRI Library").assertExists()
-        compose.onNodeWithText("CREATE COLLECTION").assertExists()
-        compose.onNodeWithText("CONVERT DICOM FOLDER → NIFTI").assertExists()
-        compose.onNodeWithText("OR SELECT INDIVIDUAL DICOM FILES").assertExists()
-        compose.onNodeWithText("IMPORT NIFTI FILES").assertExists()
+        compose.onNodeWithText("New collection").assertExists()
+        compose.onNodeWithText("Choose DICOM folder").assertExists()
+        compose.onNodeWithText("Select individual files instead").assertExists()
+        compose.onNodeWithText("Import NIfTI volumes").assertExists()
     }
 }
