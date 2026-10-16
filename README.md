@@ -95,6 +95,29 @@ Open **Library** for the two conversion workflows:
 
 All processing happens on the Android device via Storage Access Framework. The app requests no network or broad filesystem permission. If saving fails, it attempts to remove the incomplete output document and warns if cleanup is unavailable.
 
+
+## Phase 7 — Orientation, interoperability, memory and emulator QA
+
+Phase 7 makes **validation reproducible**, not clinical-grade. `.github/workflows/android.yml` runs two independent jobs:
+
+- **Desktop JVM + external reference libraries**: Kotlin unit tests verify RAS radiological left/right orientation, oblique/mirrored transforms, millimetre normalization, black background under negative windows, and MPR rendering with a 192×192×96 synthetic volume. The CI script uses Python 3.11, NumPy, **nibabel 5.3.2** and **pydicom 3.0.1** to independently generate synthetic input NIfTI/DICOM files. Kotlin decodes/converts these; Python independently verifies output affine matrices, voxel data, DICOM patient-coordinate geometry, UIDs, metadata and rescale. The synthetic fixtures and outputs are downloadable as a CI artifact.
+- **Android emulator smoke**: on Android 15 (API 35) x86_64, install and launch the app with Compose UI tests. Assert that Home opens the Series browser, Library exposes conversion and management controls, and capture a fresh-install home screenshot and XML test results.
+
+**Memory hardening:** NIfTI loader rejects volumes whose voxel count exceeds an approximately 12-heap-byte-per-voxel allowance based on `Runtime.maxMemory()`, with a global cap of 48 million voxels. The same bound constrains conversion and thumbnail operations. This is a conservative estimate, not a guarantee against device-specific low-memory kills.
+
+**Run the independent reference test locally:**
+
+```bash
+python -m pip install numpy==2.2.6 nibabel==5.3.2 pydicom==3.0.1
+python scripts/qa/reference_interop.py generate app/build/reference-qa
+NEUROVIEW_REFERENCE_FIXTURE_DIR="$(pwd)/app/build/reference-qa" ./gradlew :app:testDebugUnitTest
+python scripts/qa/reference_interop.py verify app/build/reference-qa
+```
+
+The Python QA outputs contain only synthetic scans, never patient data. JVM timing output is NOT a device benchmark.
+
+**Remaining manual device-validation gate** (not covered by this PR): install on a real Android device; use de-identified test scans; compare screenshots of all three anatomical planes against a trusted desktop viewer; verify left/right overlays using asymmetric anatomical landmarks and a known affine; navigate multiple imported series; try SAF document providers; compare exported files against dcm2niix/GDCM; stress-test a large real volume on low-RAM devices; test orientation controls and background/foreground behavior. Record model, API version, scan provenance, timings, peak heap, screenshot checks and any mismatches. **Do not use for diagnosis.**
+
 ## Open in Android Studio
 
 1. Clone this repository and open its root directory in a recent Android Studio.
@@ -111,7 +134,7 @@ Versions: AGP 9.4.0, Gradle 9.6.0, Kotlin 2.2.21, Compose BOM 2026.09.00, Naviga
 - Phase 4 — Scan and series selection from imported datasets. **Implemented for multiple NIfTI documents.**
 - Phase 5 — Local library with SAF import and safe removal of in-app references. **Implemented.**
 - Phase 6 — DICOM to NIfTI and clearly labeled derived-DICOM export. **Implemented with restricted transfer syntax support.**
-- Phase 7 — Device validation, performance, and clinical-orientation sanity checks.
+- Phase 7 — Synthetic reference interoperability, emulator UI and performance/orientation hardening. **Implemented as automated QA; physical-device and clinical validation still outstanding.**
 
 Sensitive images, generated datasets, and patient exports are excluded by `.gitignore`. Use only public or synthetic test data in the source tree.
 
