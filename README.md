@@ -233,3 +233,12 @@ with a non-network, procedural fallback in case of corrupted packaging.
 The Series, Library, MRI viewer, format-conversion pipelines, storage and
 saved user scans are unchanged. The floating 3D view has a transparent
 OpenGL surface over the Home gradient. No diagnostic claims are made.
+
+### v1.1.1 — ambient landing lighting
+
+Removes the two decorative orbital/concentric rings behind the Home-screen
+brain. A non-animated, asymmetric backlight and subdued reflected light below
+the model replace them, alongside a softer navy backdrop and more neutral
+key/fill lighting in the existing OpenGL shader. The ambient-glow toggle still
+hides the decorative lights. The model, main actions, Settings, MRI viewer,
+Library, DICOM/NIfTI workflows and all image data remain unchanged.

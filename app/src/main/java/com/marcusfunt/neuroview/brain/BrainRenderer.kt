@@ -171,15 +171,16 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
                 vec3 normal = normalize(vNormal);
                 vec3 towardEye = normalize(-vEyePosition);
                 if (dot(normal, towardEye) < 0.0) normal = -normal;
-                vec3 keyLight = normalize(vec3(-0.35, 0.71, 0.62));
-                vec3 fillLight = normalize(vec3(0.78, -0.25, 0.58));
+                // Neutral studio key plus restrained cool bounce, not an emissive halo.
+                vec3 keyLight = normalize(vec3(-0.48, 0.80, 0.52));
+                vec3 fillLight = normalize(vec3(0.72, -0.24, 0.43));
                 float key = max(dot(normal, keyLight), 0.0);
                 float fill = max(dot(normal, fillLight), 0.0);
                 float rim = pow(1.0 - max(dot(normal, towardEye), 0.0), 3.2);
                 vec3 reflected = reflect(-keyLight, normal);
                 float specular = pow(max(dot(reflected, towardEye), 0.0), 38.0);
-                vec3 color = uTint * (0.39 + 0.53 * key + 0.19 * fill);
-                color += vec3(0.21, 0.57, 0.85) * (0.16 * rim + 0.12 * fill);
+                vec3 color = uTint * (0.34 + 0.62 * key + 0.18 * fill);
+                color += vec3(0.18, 0.48, 0.70) * (0.13 * rim + 0.08 * fill);
                 color += vec3(0.91, 0.96, 1.00) * (specular * 0.08);
                 gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
             }

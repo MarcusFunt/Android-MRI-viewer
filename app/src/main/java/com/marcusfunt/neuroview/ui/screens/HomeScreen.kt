@@ -78,7 +78,10 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
     Box(
         Modifier.fillMaxSize().background(
             Brush.verticalGradient(
-                listOf(Navy, Color(0xFF0A1B2C), Color(0xFF081423), Navy),
+                listOf(
+                    Color(0xFF050D18), Color(0xFF081827),
+                    Color(0xFF0B1C2E), Color(0xFF050D18),
+                ),
             ),
         ),
     ) {
@@ -141,40 +144,54 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                 // The translucent GLES viewport is intentionally unframed;
                 // no card, border, or explanatory labels sit around the brain.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    // A soft, asymmetric photographic lighting environment.
+                    // There are deliberately no concentric guides, outlines,
+                    // or animated gradients behind the brain.
                     Canvas(Modifier.fillMaxSize()) {
-                        val cx = size.width * 0.5f
-                        val cy = size.height * 0.49f
+                        val w = size.width
+                        val h = size.height
                         if (glowEnabled) {
-                            drawCircle(
+                            // Broad navy-cyan backlight, slightly above/left of the
+                            // center. Contrast is concentrated behind the silhouette.
+                            drawRect(
                                 brush = Brush.radialGradient(
-                                    listOf(
-                                        Color(0xFF276E9D).copy(alpha = 0.38f),
-                                        Color(0xFF13405E).copy(alpha = 0.23f),
+                                    colors = listOf(
+                                        Color(0xFF28658F).copy(alpha = 0.34f),
+                                        Color(0xFF183D5D).copy(alpha = 0.17f),
+                                        Color.Transparent,
                                         Color.Transparent,
                                     ),
-                                    center = Offset(cx, cy),
-                                    radius = size.width * 0.73f,
+                                    center = Offset(w * 0.48f, h * 0.44f),
+                                    radius = w * 0.77f,
                                 ),
-                                radius = size.width * 0.73f,
-                                center = Offset(cx, cy),
                             )
-                            drawCircle(
+                            // Desaturated blue fill on the opposite side avoids a
+                            // perfectly symmetric glow or artificial neon ring.
+                            drawRect(
                                 brush = Brush.radialGradient(
-                                    listOf(Color(0xFF6CC6EA).copy(alpha = 0.13f), Color.Transparent),
-                                    center = Offset(cx, size.height * 0.89f),
-                                    radius = size.width * 0.55f,
+                                    colors = listOf(
+                                        Color(0xFF47799E).copy(alpha = 0.16f),
+                                        Color(0xFF1B4568).copy(alpha = 0.07f),
+                                        Color.Transparent,
+                                        Color.Transparent,
+                                    ),
+                                    center = Offset(w * 0.63f, h * 0.54f),
+                                    radius = w * 0.64f,
                                 ),
-                                radius = size.width * 0.55f,
-                                center = Offset(cx, size.height * 0.89f),
                             )
-                        }
-                        // Quiet orbital guides; low enough opacity to stay background.
-                        for (ratio in listOf(0.78f, 0.92f)) {
-                            drawCircle(
-                                color = Color(0xFF82B7CF).copy(alpha = 0.075f),
-                                radius = size.width * ratio * 0.5f,
-                                center = Offset(cx, cy),
-                                style = Stroke(width = 1.dp.toPx()),
+                            // A gentle stage-light reflection beneath the floating
+                            // brain, without any visible floor or circle outline.
+                            drawRect(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFF6DA9C9).copy(alpha = 0.17f),
+                                        Color(0xFF296B96).copy(alpha = 0.08f),
+                                        Color.Transparent,
+                                        Color.Transparent,
+                                    ),
+                                    center = Offset(w * 0.52f, h * 0.80f),
+                                    radius = w * 0.42f,
+                                ),
                             )
                         }
                     }
