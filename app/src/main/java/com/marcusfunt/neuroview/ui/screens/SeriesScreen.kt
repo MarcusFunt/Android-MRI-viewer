@@ -9,10 +9,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,47 +26,76 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.marcusfunt.neuroview.ui.VolumeLoadState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SeriesScreen(onBack: () -> Unit, onSelectSeries: (String) -> Unit) {
+fun SeriesScreen(
+    volumeState: VolumeLoadState,
+    onImport: () -> Unit,
+    onBack: () -> Unit,
+    onSelectActive: () -> Unit,
+) {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 title = { Text("MRI series") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item {
-                Text(
-                    "Demo entries — no MRI scans have been imported yet.",
-                    modifier = Modifier.padding(vertical = 12.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+            Text(
+                "PHASE 3 · SINGLE NIFTI VOLUME",
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                "Open an MRI file to view real axial, coronal, and sagittal slices. " +
+                    "DICOM series browsing will arrive in Phase 4.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+                Text("OPEN NIFTI (.NII / .NII.GZ)")
             }
-            items(demoSeries, key = { it.id }) { series ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().clickable { onSelectSeries(series.id) },
+            when (val state = volumeState) {
+                is VolumeLoadState.Ready -> Card(
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onSelectActive),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 ) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(18.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
                         Column {
-                            Text(series.title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                            Text(series.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                state.displayName,
+                                fontWeight = FontWeight.SemiBold,
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                "${state.volume.nx} × ${state.volume.ny} × ${state.volume.nz} voxels",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text("Tap to view", color = MaterialTheme.colorScheme.primary)
                         }
-                        Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
+                        Text("›", style = MaterialTheme.typography.headlineMedium)
                     }
                 }
+                VolumeLoadState.Loading -> Text("Reading NIfTI volume…")
+                is VolumeLoadState.Failed -> Text("Import error: ${state.explanation}", color = MaterialTheme.colorScheme.error)
+                VolumeLoadState.Empty -> Text("No file opened yet.")
             }
         }
     }
