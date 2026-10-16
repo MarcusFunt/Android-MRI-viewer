@@ -1,6 +1,8 @@
 package com.marcusfunt.neuroview.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,7 +51,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.marcusfunt.neuroview.ui.theme.NeuroGradients
+import com.marcusfunt.neuroview.ui.theme.neuroGradientBackdrop
 import com.marcusfunt.neuroview.catalog.ImportCollection
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
@@ -90,6 +95,7 @@ fun LibraryScreen(
     var search by rememberSaveable { mutableStateOf("") }
 
     Scaffold(
+        containerColor = NeuroGradients.midnight,
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
@@ -106,7 +112,7 @@ fun LibraryScreen(
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).neuroGradientBackdrop().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
@@ -131,13 +137,21 @@ fun LibraryScreen(
                     Button(
                         onClick = onImport,
                         enabled = !isBusy,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth()
+                            .background(NeuroGradients.primary, RoundedCornerShape(50.dp)),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                        ),
                     ) { Text("Import NIfTI volumes") }
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().background(
+                            NeuroGradients.secondary, RoundedCornerShape(20.dp),
+                        ),
                         shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(1.dp, NeuroGradients.trim),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
+                            containerColor = Color.Transparent,
                         ),
                     ) {
                         Column(

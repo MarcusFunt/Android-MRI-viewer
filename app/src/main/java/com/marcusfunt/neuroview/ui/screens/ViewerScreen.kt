@@ -75,6 +75,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import com.marcusfunt.neuroview.ui.theme.NeuroGradients
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.asImageBitmap
@@ -488,9 +489,13 @@ private fun MriContent(
         }
 
         Surface(
+            modifier = Modifier.fillMaxWidth().background(
+                brush = NeuroGradients.secondary,
+                shape = RoundedCornerShape(18.dp),
+            ),
             shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, NeuroGradients.trim),
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
