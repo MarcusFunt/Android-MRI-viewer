@@ -82,3 +82,11 @@ No network permission and no PHI logging are introduced. The app does not upload
 - `ui/ConversionWorkflow` runs conversions on `Dispatchers.IO`, uses Android SAF multiple-document input and CreateDocument output, gives per-operation error status, and tries to clean up partial output documents. `LibraryScreen` exposes import/export controls.
 
 **Safety/privacy:** The image content itself may still identify a patient, e.g. facial anatomy. "Anonymized" means new identifiers and no copied header patient identity, not certified anonymization or defacing. A clinical original DICOM cannot be recovered from a NIfTI volume alone. The conversion paths are intentionally strict, not a replacement for a full DICOM toolkit. Validation should include external dcm2niix, nibabel and pydicom/gdcm comparisons, and real Android device testing; existing unit tests exercise synthetic round-trip geometry and intensity only.
+
+## Phase 7 validation architecture
+
+The trusted-data boundary is at the conversion integration bridge: nibabel/pydicom create synthetic input fixtures independently, Kotlin reads/writes output, and Python checks the exported spatial geometry/intensities. This catches self-confirming reader/writer defects that pure Kotlin round trips might miss. Android Compose tests launch the UI on an API-35 emulator and save one fresh-install screenshot. This is an automated QA baseline, not a clinical evaluation.
+
+`MriMemoryBudget` uses `maxMemory()/12` voxels for a conservative heap threshold; it applies to active NIfTI reads, series thumbnail creation, and DICOM conversions. `NiftiReader` handles metres/mm/microns explicitly. `MprRenderer` uses opaque black for geometrically outside samples, regardless of intensity window.
+
+Important blind spots: scanner-specific compressed/Enhanced DICOM not supported; physical GPU/device memory and UI interaction timing not measured; no gold-standard real-patient image compare; patient privacy and defacing must still be assessed independently. Test outputs are synthetic.
