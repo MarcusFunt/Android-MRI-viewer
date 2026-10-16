@@ -39,6 +39,19 @@ The app performs **world-space multiplanar reformatting** with trilinear interpo
 **Important:** This is a research/education viewer, **not for medical diagnosis**. Always independently verify radiological orientation against trusted software before interpreting images. The Phase 3 library holds just one open document; multi-series management and conversion are later phases.
 
 
+## Phase 4: Multiple scans & series browser
+
+- Select **View MRI Series → Add NIfTI Series** or **Library → Import NIfTI Files**.
+- Pick **multiple** `.nii` or `.nii.gz` documents at once using the Android document picker.
+- Each selection batch becomes an **import collection**, never an inferred medical study.
+- Series cards show a real central axial preview, original filename, dimensions, voxel spacing, scalar datatype, orientation-source summary, and any NIfTI description.
+- Tap a card to load its volume in the existing axial/coronal/sagittal viewer.
+- The read-only catalog stores file URIs and header metadata only in app-private preferences. Android document permissions survive app restarts.
+- Preview thumbnails are generated lazily, one large volume at a time, stored as small app-private cache images. The original NIfTI files are not copied or modified.
+- Duplicate file URIs and unsupported formats are skipped with a visible import summary; up to 64 files can be selected in one batch.
+
+**Limitations:** A batch is not necessarily one patient or study. NIfTI files do not reliably provide DICOM StudyInstanceUID or SeriesInstanceUID; this app does not invent or infer them. Thumbnail generation reads the full volume and can be slow for large files. If an external document is moved, revoked or unavailable, the stored URI may no longer open. Deletion, rename, multi-file migration, storage ownership and DICOM conversion belong to later phases.
+
 ## Open in Android Studio
 
 1. Clone this repository and open its root directory in a recent Android Studio.
@@ -52,7 +65,7 @@ Versions: AGP 9.4.0, Gradle 9.6.0, Kotlin 2.2.21, Compose BOM 2026.09.00, Naviga
 
 - Phase 2 — Home screen 3D brain visualization. **Implemented.**
 - Phase 3 — Real NIfTI loading and multiplanar viewing. **Implemented.**
-- Phase 4 — Scan and series selection from imported datasets.
+- Phase 4 — Scan and series selection from imported datasets. **Implemented for multiple NIfTI documents.**
 - Phase 5 — Local library with SAF import and deletion.
 - Phase 6 — DICOM to NIfTI and clearly labeled derived-DICOM export.
 - Phase 7 — Device validation, performance, and clinical-orientation sanity checks.
