@@ -17,6 +17,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -105,13 +112,15 @@ fun LibraryScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "LOCAL MRI CATALOG",
+                        "ON-DEVICE WORKSPACE",
                         color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.labelMedium,
                     )
+                    Text("Files & collections", style = MaterialTheme.typography.headlineMedium)
                     Text(
-                        "${snapshot.scans.size} NIfTI files in ${snapshot.collections.size} collections",
-                        style = MaterialTheme.typography.titleLarge,
+                        "${snapshot.scans.size} volumes · ${snapshot.collections.size} collections",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
                         "Rename, organize and remove library references. " +
@@ -123,31 +132,45 @@ fun LibraryScreen(
                         onClick = onImport,
                         enabled = !isBusy,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("IMPORT NIFTI FILES") }
-                    OutlinedButton(
-                        onClick = onConvertDicom,
-                        enabled = !isBusy,
+                    ) { Text("Import NIfTI volumes") }
+                    Card(
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("CONVERT DICOM FOLDER → NIFTI") }
-                    Text(
-                        "Choose a folder containing one DICOM series (including extensionless files), then save a .nii.gz file.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                    OutlinedButton(
-                        onClick = onConvertDicomFiles,
-                        enabled = !isBusy,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("OR SELECT INDIVIDUAL DICOM FILES") }
-                    OutlinedButton(
-                        onClick = { dialog = LibraryDialog.CreateCollection },
-                        enabled = !isBusy,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("CREATE COLLECTION") }
-                    OutlinedButton(
-                        onClick = onBrowse,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("BROWSE MRI SERIES & THUMBNAILS") }
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                        ),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("DICOM conversion", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "Convert a DICOM series into a .nii.gz volume.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            OutlinedButton(
+                                onClick = onConvertDicom,
+                                enabled = !isBusy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Choose DICOM folder") }
+                            TextButton(onClick = onConvertDicomFiles, enabled = !isBusy) {
+                                Text("Select individual files instead")
+                            }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { dialog = LibraryDialog.CreateCollection },
+                            enabled = !isBusy,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("New collection") }
+                        OutlinedButton(
+                            onClick = onBrowse,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Browse series") }
+                    }
                     if (isBusy) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(
@@ -167,8 +190,10 @@ fun LibraryScreen(
                     OutlinedTextField(
                         value = search,
                         onValueChange = { search = it },
-                        label = { Text("Find MRI or collection") },
-                        placeholder = { Text("File name, alias, or group") },
+                        label = { Text("Search library") },
+                        placeholder = { Text("Series or collection name") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        shape = MaterialTheme.shapes.medium,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -237,24 +262,60 @@ fun LibraryScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                TextButton(
-                                    onClick = { onExportDicom(scan) },
-                                    enabled = !isBusy,
-                                ) { Text("EXPORT DERIVED DICOM (ZIP)") }
-                                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    TextButton(onClick = { onOpenScan(scan) }) { Text("Open") }
-                                    TextButton(
-                                        onClick = { dialog = LibraryDialog.RenameScan(scan) },
-                                        enabled = !isBusy,
-                                    ) { Text("Rename") }
-                                    TextButton(
-                                        onClick = { dialog = LibraryDialog.MoveScan(scan) },
-                                        enabled = !isBusy,
-                                    ) { Text("Move") }
-                                    TextButton(
-                                        onClick = { dialog = LibraryDialog.RemoveScan(scan) },
-                                        enabled = !isBusy,
-                                    ) { Text("Remove") }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    TextButton(onClick = { onOpenScan(scan) }) {
+                                        Text("Open volume")
+                                    }
+                                    Box {
+                                        var actionsOpen by remember(scan.id) { mutableStateOf(false) }
+                                        IconButton(onClick = { actionsOpen = true }) {
+                                            Icon(
+                                                Icons.Default.MoreVert,
+                                                contentDescription = "More actions for ${scan.label}",
+                                            )
+                                        }
+                                        DropdownMenu(
+                                            expanded = actionsOpen,
+                                            onDismissRequest = { actionsOpen = false },
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = { Text("Rename") },
+                                                onClick = {
+                                                    actionsOpen = false
+                                                    dialog = LibraryDialog.RenameScan(scan)
+                                                },
+                                                enabled = !isBusy,
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Move to collection") },
+                                                onClick = {
+                                                    actionsOpen = false
+                                                    dialog = LibraryDialog.MoveScan(scan)
+                                                },
+                                                enabled = !isBusy,
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Export derived DICOM ZIP") },
+                                                onClick = {
+                                                    actionsOpen = false
+                                                    onExportDicom(scan)
+                                                },
+                                                enabled = !isBusy,
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Remove from library") },
+                                                onClick = {
+                                                    actionsOpen = false
+                                                    dialog = LibraryDialog.RemoveScan(scan)
+                                                },
+                                                enabled = !isBusy,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
