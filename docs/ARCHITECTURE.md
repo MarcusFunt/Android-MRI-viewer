@@ -72,3 +72,13 @@ No network permission and no PHI logging are introduced. The app does not upload
 - The Series browser and Viewer display local aliases while retaining original file names for provenance.
 
 **Limitations:** Catalog metadata is stored in app-private but unencrypted SharedPreferences; thumbnails are app-private cache files. No medical PHI is transmitted. Collections are user organizational labels, not evidence that scans share a clinical study or patient. No filesystem deletion, rename of source NIfTI files, DICOM conversions or study UID inference. More comprehensive local storage ownership and diagnostic validation are future work.
+
+## Phase 6: Conservative, reversible-geometry conversions
+
+- `conversion/DicomReader` reads a single native Part 10 DICOM file, Explicit/Implicit LE only; it validates integer MONOCHROME2 pixel data and mandatory image geometry. It rejects compressed pixel streams, undefined-length sequences, multiframe, mixed/invalid VR and incompatible pixel encodings. Patient identity tags are ignored.
+- `conversion/DicomSeriesAssembler` groups by existing Study/Series UIDs, checks orientation/pixel spacing/dimensions and regular slice positions, sorts slices along their normal, then maps DICOM **LPS** physical vectors to NIfTI **RAS+** sform. It retains linear per-slice rescale into physical float32 values.
+- `conversion/NiftiSeriesWriter` writes 352-byte NIfTI-1 header + little-endian float32 voxel stream into a gzip file without assembling a duplicate full-volume voxel array.
+- `conversion/DerivedDicomWriter` creates new UIDs and a ZIP of Part 10 **DERIVED Secondary Capture** images (not original MR IOD), converts NIfTI RAS spatial vectors to DICOM LPS, maps finite float32 pixels linearly to uint16, and writes RescaleSlope/Intercept for approximate reconstruction. It deliberately omits original acquisition parameters and patient identity fields.
+- `ui/ConversionWorkflow` runs conversions on `Dispatchers.IO`, uses Android SAF multiple-document input and CreateDocument output, gives per-operation error status, and tries to clean up partial output documents. `LibraryScreen` exposes import/export controls.
+
+**Safety/privacy:** The image content itself may still identify a patient, e.g. facial anatomy. "Anonymized" means new identifiers and no copied header patient identity, not certified anonymization or defacing. A clinical original DICOM cannot be recovered from a NIfTI volume alone. The conversion paths are intentionally strict, not a replacement for a full DICOM toolkit. Validation should include external dcm2niix, nibabel and pydicom/gdcm comparisons, and real Android device testing; existing unit tests exercise synthetic round-trip geometry and intensity only.
