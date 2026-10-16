@@ -24,7 +24,20 @@ The home screen now displays a lightweight, **procedurally generated stylized br
 
 **This preview is decorative and not an anatomical ground truth or patient-derived MRI.** The real 3D MRI renderer is planned for Phase 3.
 
-**Important:** This phase intentionally uses *demo labels and empty viewer placeholders*. It does not read, render, import, convert, or store real medical images. Do not use this app for diagnosis.
+## Phase 3: Real NIfTI volume viewer
+
+1. Open **View MRI series** or **Library**, then tap **Open NIfTI**.
+2. Select an accessible `.nii` or `.nii.gz` file with Android's document picker.
+3. The selected scan is loaded privately on device; no server or account is used.
+4. Use the slice slider, ± Slice buttons, or vertical swipes to move through MRI slices.
+5. Swipe left on the image or tap the plane label to select **Axial**, **Coronal**, or **Sagittal**.
+6. Adjust the two image windowing sliders for brightness and contrast.
+7. Use the upper-left hamburger menu to return to Home, Series, or Library.
+
+The app performs **world-space multiplanar reformatting** with trilinear interpolation using NIfTI RAS+ **sform** (preferred) or **qform** matrices. Missing orientation is clearly warned about. Supports little/big endian NIfTI-1 scalar data, gzip, and the first volume of 4D sequences. Mobile safety limits cap an active volume to 48 million voxels (about 183 MiB as 32-bit floats). Unsupported datatypes, NIfTI-2, multi-file .hdr/.img pairs, DICOM, and multi-volume sequence navigation are not yet implemented.
+
+**Important:** This is a research/education viewer, **not for medical diagnosis**. Always independently verify radiological orientation against trusted software before interpreting images. The Phase 3 library holds just one open document; multi-series management and conversion are later phases.
+
 
 ## Open in Android Studio
 
@@ -38,7 +51,7 @@ Versions: AGP 9.4.0, Gradle 9.6.0, Kotlin 2.2.21, Compose BOM 2026.09.00, Naviga
 ## Planned progression
 
 - Phase 2 — Home screen 3D brain visualization. **Implemented.**
-- Phase 3 — Real NIfTI loading and multiplanar viewing.
+- Phase 3 — Real NIfTI loading and multiplanar viewing. **Implemented.**
 - Phase 4 — Scan and series selection from imported datasets.
 - Phase 5 — Local library with SAF import and deletion.
 - Phase 6 — DICOM to NIfTI and clearly labeled derived-DICOM export.
