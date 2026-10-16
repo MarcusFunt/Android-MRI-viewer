@@ -1,0 +1,36 @@
+# Local Android/Gradle output
+.gradle/
+.idea/
+build/
+**/build/
+local.properties
+*.iml
+.cxx/
+.externalNativeBuild/
+captures/
+*.apk
+*.aab
+*.jks
+*.keystore
+# Personal health data must never be committed
+data/
+scans/
+datasets/
+imports/
+exports/
+*.dcm
+*.dicom
+*.ima
+*.nii
+*.nii.gz
+*.nii2
+*.nrrd
+*.mha
+*.mhd
+*.mgz
+*.mgh
+*.hdr
+*.img
+*.nvd
+*.bval
+*.bvec
