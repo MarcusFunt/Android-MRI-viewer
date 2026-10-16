@@ -19,8 +19,8 @@ import javax.microedition.khronos.opengles.GL10
  * Rendering is driven by GLSurfaceView.RENDERMODE_WHEN_DIRTY.
  */
 internal class BrainRenderer(private val context: Context) : GLSurfaceView.Renderer {
-    @Volatile var yawDegrees = 25f
-    @Volatile var pitchDegrees = -8f
+    @Volatile var yawDegrees = -85f
+    @Volatile var pitchDegrees = -12f
 
     private data class GpuMesh(
         val vertices: FloatBuffer,
@@ -91,8 +91,8 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
         Matrix.setIdentityM(model, 0)
         Matrix.rotateM(model, 0, yawDegrees, 0f, 1f, 0f)
         Matrix.rotateM(model, 0, pitchDegrees, 1f, 0f, 0f)
-        // NVBM geometry has Z-up; OpenGL's orbit-camera is Y-up.
-        Matrix.rotateM(model, 0, -90f, 1f, 0f, 0f)
+        // Match the original GLB preview: NVBM is mirrored in X/Z relative to the\n        // prototype camera basis. A 180-degree Y rotation restores that basis.
+        Matrix.rotateM(model, 0, 180f, 0f, 1f, 0f)
         Matrix.multiplyMM(modelView, 0, view, 0, model, 0)
         Matrix.multiplyMM(mvp, 0, projection, 0, modelView, 0)
 

@@ -37,8 +37,8 @@ internal class BrainGlSurfaceView(context: Context) : GLSurfaceView(context) {
     }
 
     fun resetView() {
-        brainRenderer.yawDegrees = 25f
-        brainRenderer.pitchDegrees = -8f
+        brainRenderer.yawDegrees = -85f
+        brainRenderer.pitchDegrees = -12f
         requestRender()
     }
 
