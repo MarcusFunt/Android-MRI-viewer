@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.marcusfunt.neuroview.mri.MriMemoryBudget
 import com.marcusfunt.neuroview.mri.MprRenderer
 import com.marcusfunt.neuroview.mri.MriPlane
 import com.marcusfunt.neuroview.mri.NiftiReader
@@ -240,7 +241,7 @@ class ScanCatalog(private val context: Context) {
             }
             try {
                 val volume = context.contentResolver.openInputStream(Uri.parse(scan.documentUri))
-                    ?.use { NiftiReader.read(it) } ?: return@withLock null
+                    ?.use { NiftiReader.read(it, MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory())) } ?: return@withLock null
                 val plane = when {
                     // Choose a reformat with the fewest out-of-plane slices for thick 2D volumes.
                     volume.affine.axisSpacing(2) >=

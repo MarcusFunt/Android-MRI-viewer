@@ -12,8 +12,8 @@ android {
         applicationId = "com.marcusfunt.neuroview"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.6.0"
+        versionCode = 7
+        versionName = "0.7.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -52,4 +52,9 @@ dependencies {
     implementation(libs.kotlinx.serialization.core)
 
     testImplementation(libs.junit)
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

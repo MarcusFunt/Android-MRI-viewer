@@ -17,6 +17,7 @@ import com.marcusfunt.neuroview.conversion.DerivedDicomWriter
 import com.marcusfunt.neuroview.conversion.DicomReader
 import com.marcusfunt.neuroview.conversion.DicomSeriesAssembler
 import com.marcusfunt.neuroview.conversion.NiftiSeriesWriter
+import com.marcusfunt.neuroview.mri.MriMemoryBudget
 import com.marcusfunt.neuroview.mri.NiftiReader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -62,12 +63,21 @@ fun rememberConversionControls(): ConversionControls {
                         require(source.isNotEmpty() && source.size <= 1024) {
                             "Select 1–1024 DICOM files"
                         }
+                        val memoryCap = MriMemoryBudget.maxVoxels(
+                            Runtime.getRuntime().maxMemory(),
+                        )
+                        var accumulated = 0L
                         val slices = source.mapIndexed { index, file ->
-                            context.contentResolver.openInputStream(file)?.use {
+                            val slice = context.contentResolver.openInputStream(file)?.use {
                                 DicomReader.read(it)
                             } ?: throw IllegalArgumentException(
                                 "Cannot open DICOM file ${index + 1}"
                             )
+                            accumulated += slice.pixels.size.toLong()
+                            require(accumulated <= memoryCap) {
+                                "DICOM series exceeds device heap safety limit ($memoryCap voxels)"
+                            }
+                            slice
                         }
                         val series = DicomSeriesAssembler.assemble(slices)
                         context.contentResolver.openOutputStream(output, "wt")?.use {
@@ -120,7 +130,7 @@ fun rememberConversionControls(): ConversionControls {
                         val source = context.contentResolver.openInputStream(
                             Uri.parse(record.documentUri),
                         ) ?: throw IllegalArgumentException("Source NIfTI no longer accessible")
-                        val volume = source.use { NiftiReader.read(it) }
+                        val volume = source.use { NiftiReader.read(it, MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory())) }
                         context.contentResolver.openOutputStream(output, "wt")?.use {
                             DerivedDicomWriter.writeZip(volume, it)
                         } ?: throw IllegalArgumentException("Cannot write DICOM ZIP")
