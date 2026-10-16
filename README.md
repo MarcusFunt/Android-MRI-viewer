@@ -196,3 +196,15 @@ entries, DICOM/NIfTI conversion flows, and Android package identity; updating
 an existing debug-signed installation should not require clearing user data.
 The brain preview is a stylized illustration, not a patient-derived model.
 Use the viewer for exploration only, not diagnosis.
+
+### v1.0.1 — original home layout and brightness correction
+
+Restores the pre-v1.0 brain-first Home screen: the interactive rotating brain
+occupies the main card above **View MRI series** and **Library & conversion**.
+The NIfTI import action is still available through either destination.
+Viewer layout, plane tabs, recent scan bookkeeping, caching, and conversions
+are not changed.
+
+The **Brightness** slider in Image adjustments now moves from **Darker** on the
+left to **Brighter** on the right, by reversing the displayed slider position
+relative to the image window-center. The underlying NIfTI voxels are unchanged.

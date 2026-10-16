@@ -14,9 +14,9 @@ class NeuroViewNavigationSmokeTest {
     @Test
     fun homeExposesPrimaryActionsWithoutOpeningAnotherScreen() {
         compose.onNodeWithText("NEUROVIEW").assertExists()
-        compose.onNodeWithText("Quick actions").assertExists()
+        compose.onNodeWithText("Explore in every plane.").assertExists()
+        compose.onNodeWithText("BRAIN PREVIEW").assertExists()
         compose.onNodeWithText("View MRI series").assertExists()
-        compose.onNodeWithText("Import NIfTI volumes").assertExists()
         compose.onNodeWithText("Library & conversion").assertExists()
     }
 

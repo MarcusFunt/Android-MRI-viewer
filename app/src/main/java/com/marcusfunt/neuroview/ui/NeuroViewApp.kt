@@ -185,13 +185,8 @@ fun NeuroViewApp() {
             entryProvider = entryProvider {
                 entry<Destination.Home> {
                     HomeScreen(
-                        snapshot = snapshot,
                         onView = { navigate(Destination.Series) },
                         onLibrary = { navigate(Destination.Library) },
-                        onImport = chooseDocuments,
-                        onOpenRecent = openScan,
-                        isImporting = importBusy,
-                        lastOpenedScanId = lastOpenedScanId,
                     )
                 }
                 entry<Destination.Series> {

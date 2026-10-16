@@ -621,11 +621,30 @@ private fun MriContent(
                 )
                 Text("Brightness", style = MaterialTheme.typography.titleSmall)
                 Slider(
-                    value = windowCenter,
-                    onValueChange = onWindowCenter,
+                    // Higher window center darkens a fixed voxel intensity.
+                    // Invert the control so right = brighter, left = darker.
+                    value = BrightnessSliderMapping.sliderFromWindowCenter(windowCenter),
+                    onValueChange = {
+                        onWindowCenter(BrightnessSliderMapping.windowCenterFromSlider(it))
+                    },
                     valueRange = 0f..1f,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "Darker",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Brighter",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text("Contrast / window width", style = MaterialTheme.typography.titleSmall)
                 Slider(
                     value = windowWidth,
