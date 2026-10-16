@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -19,41 +19,72 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.marcusfunt.neuroview.ui.VolumeLoadState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(onBack: () -> Unit) {
+fun LibraryScreen(
+    volumeState: VolumeLoadState,
+    onImport: () -> Unit,
+    onBack: () -> Unit,
+    onOpenActive: () -> Unit,
+) {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 title = { Text("Library") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("No MRI datasets", style = MaterialTheme.typography.headlineSmall)
             Text(
-                "Local imports, dataset management, and DICOM / NIfTI conversion are planned for later phases.",
-                modifier = Modifier.padding(vertical = 20.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
+                "OPEN FROM DEVICE",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
             )
-            Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                Text("IMPORT MRI — COMING SOON")
+            Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+                Text("OPEN .NII OR .NII.GZ")
             }
+            when (val state = volumeState) {
+                is VolumeLoadState.Ready -> {
+                    Text("Current MRI", style = MaterialTheme.typography.titleMedium)
+                    Text(state.displayName)
+                    Text(
+                        "${state.volume.nx} × ${state.volume.ny} × ${state.volume.nz} voxels · " +
+                            state.volume.transformSource,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(onClick = onOpenActive, modifier = Modifier.fillMaxWidth()) {
+                        Text("VIEW OPENED MRI")
+                    }
+                }
+                VolumeLoadState.Loading -> Text("Importing file…")
+                is VolumeLoadState.Failed -> Text(
+                    "Could not open: ${state.explanation}",
+                    color = MaterialTheme.colorScheme.error,
+                )
+                VolumeLoadState.Empty -> Text("No NIfTI opened yet.")
+            }
+            Text(
+                "Phase 3 stores only the currently selected document permission. " +
+                    "Multi-scan management, deletion, and DICOM conversion are later phases.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
