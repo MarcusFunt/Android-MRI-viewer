@@ -7,83 +7,64 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.SystemClock
 import android.view.animation.LinearInterpolator
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.marcusfunt.neuroview.brain.BrainGlSurfaceView
 
+/**
+ * Pure 3D preview without chrome or descriptive text. Home owns the settings.
+ * Paused off-screen and while the user drags; drawing uses RENDERMODE_WHEN_DIRTY.
+ */
 @Composable
-internal fun BrainPreview(modifier: Modifier = Modifier) {
+internal fun BrainPreview(
+    modifier: Modifier = Modifier,
+    autoRotation: Boolean = true,
+    resetRequest: Int = 0,
+) {
     val context = LocalContext.current
     val supportsOpenGl = remember(context) {
-        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        manager.deviceConfigurationInfo.reqGlEsVersion >= 0x20000
+        (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
+            .deviceConfigurationInfo.reqGlEsVersion >= 0x20000
     }
-
-    Column(
-        modifier = modifier.padding(18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("BRAIN PREVIEW", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Text("3D · OFFLINE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-
-        if (supportsOpenGl) {
-            InteractiveBrain(
-                modifier = Modifier.fillMaxWidth().weight(1f),
+    if (!supportsOpenGl) {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text(
+                "3D preview requires OpenGL ES 2.0",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
-        } else {
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text(
-                    "This device does not support OpenGL ES 2.0. The 3D preview is unavailable.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-            }
         }
-
-        Text(
-            "Stylized illustration · Not a patient MRI or diagnostic model",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.labelSmall,
-        )
+        return
     }
+    InteractiveBrain(modifier, autoRotation, resetRequest)
 }
 
 @Composable
-private fun InteractiveBrain(modifier: Modifier = Modifier) {
+private fun InteractiveBrain(
+    modifier: Modifier,
+    autoRotation: Boolean,
+    resetRequest: Int,
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val view = remember(context) { BrainGlSurfaceView(context) }
-    var autoRotation by rememberSaveable { mutableStateOf(true) }
     var userDragging by remember { mutableStateOf(false) }
     var resumed by remember { mutableStateOf(false) }
 
@@ -92,20 +73,17 @@ private fun InteractiveBrain(modifier: Modifier = Modifier) {
             duration = 1000L
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
-            var lastFrameMillis = 0L
+            var lastMillis = 0L
             addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationStart(animation: Animator) {
-                    lastFrameMillis = 0L
-                }
+                override fun onAnimationStart(animation: Animator) { lastMillis = 0L }
             })
             addUpdateListener {
                 val now = SystemClock.uptimeMillis()
-                if (lastFrameMillis == 0L) lastFrameMillis = now
-                val elapsed = now - lastFrameMillis
-                if (elapsed >= 32L) {
-                    // Approximately 30 FPS: avoid rendering at 60/120 Hz unnecessarily.
-                    view.rotateBy(elapsed.coerceAtMost(60L) * (360f / 24000f), 0f)
-                    lastFrameMillis = now
+                if (lastMillis == 0L) lastMillis = now
+                val elapsed = now - lastMillis
+                if (elapsed >= 33L) {
+                    view.rotateBy(elapsed.coerceAtMost(66L) * (360f / 50000f), 0f)
+                    lastMillis = now
                 }
             }
         }
@@ -149,29 +127,8 @@ private fun InteractiveBrain(modifier: Modifier = Modifier) {
             animator.cancel()
         }
     }
-
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        AndroidView(
-            factory = { view },
-            modifier = Modifier.fillMaxWidth().weight(1f),
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(onClick = { autoRotation = !autoRotation }) {
-                Text(if (autoRotation) "Pause rotation" else "Resume rotation")
-            }
-            OutlinedButton(onClick = { view.resetView() }) {
-                Text("Reset view")
-            }
-        }
-        Text(
-            "Drag the brain to rotate",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
+    LaunchedEffect(resetRequest) {
+        if (resetRequest != 0) view.resetView()
     }
+    AndroidView(factory = { view }, modifier = modifier.fillMaxSize())
 }
