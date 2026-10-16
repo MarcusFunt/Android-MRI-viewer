@@ -52,3 +52,13 @@ Manual QA for device/emulator: Home displays the shaded brain, yaw changes with 
 ### Safety boundaries and limitations
 
 No network permission and no PHI logging are introduced. The app does not upload data. Arbitrarily large volumes are rejected rather than attempting to allocate beyond device capacity. NIfTI-2, vector/RGB/complex data, masks with unusual intent, 5D/6D series and DICOM are not supported. Slices are resampled (not independently acquired images), and anisotropic scans can look blurry in off-axis views. Volumes without orientation metadata are flagged with an explicit warning. This app has not undergone medical-device or diagnostic validation.
+
+## Phase 4: Scan and series browsing
+
+- `mri/NiftiSeriesInspector` reads only the initial 348-byte NIfTI-1 header (gzip supported) to index dimensions, voxel spacing, dtype, timepoints, spatial metadata provenance, and descriptive text, without allocating the complete volume.
+- `catalog/ScanCatalog` persists a small JSON catalog in app-private SharedPreferences and retains SAF read permissions. Imported files are **referenced, not duplicated**; no network permission or external file writes. A collection groups files selected in a single import operation, not a verified clinical study.
+- `ui/screens/SeriesScreen` is a real grouped, lazy scrolling series browser with searchable-by-eye metadata labels and preview cards. Touching one opens its selected NIfTI volume in Phase 3's `ViewerScreen`.
+- Preview generation uses a `Mutex` to serialize full-volume loads, avoiding concurrent NIfTI allocations, and caches 144-pixel axial center-slice thumbnails as private PNGs in `cacheDir`. This cache may be evicted by Android and will be rebuilt on demand.
+- `ui/NeuroViewApp` uses `OpenMultipleDocuments` and routes selected series IDs through Navigation 3. Only one selected NIfTI volume is held in memory at a time.
+
+**Not a full study library.** No patient grouping, DICOM study UID assignment, metadata mutation, scanner/protocol inference, deletion or conversion is performed. Plain NIfTI generally cannot prove a series belongs to a given study; Phase 5 should introduce explicit user-owned collections rather than implicit patient matching. Preserve privacy by never logging scan filenames or descriptions.
