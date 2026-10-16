@@ -23,6 +23,7 @@ import androidx.navigation3.ui.NavDisplay
 import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
+import com.marcusfunt.neuroview.mri.MriMemoryBudget
 import com.marcusfunt.neuroview.mri.NiftiReader
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.navigation.Destination
@@ -97,7 +98,7 @@ fun NeuroViewApp() {
                         }
                     }.getOrNull() ?: "Opened NIfTI volume"
                     val volume = context.contentResolver.openInputStream(uri)?.use {
-                        NiftiReader.read(it)
+                        NiftiReader.read(it, MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory()))
                     } ?: throw IllegalArgumentException("Unable to open selected volume")
                     VolumeLoadState.Ready(name, volume)
                 }
