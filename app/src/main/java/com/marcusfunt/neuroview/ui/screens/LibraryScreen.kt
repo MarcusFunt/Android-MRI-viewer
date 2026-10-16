@@ -14,6 +14,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -21,15 +22,16 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.marcusfunt.neuroview.ui.VolumeLoadState
+import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
-    volumeState: VolumeLoadState,
+    snapshot: ScanCatalogSnapshot,
+    isImporting: Boolean,
     onImport: () -> Unit,
+    onBrowse: () -> Unit,
     onBack: () -> Unit,
-    onOpenActive: () -> Unit,
 ) {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -49,39 +51,36 @@ fun LibraryScreen(
     ) { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Text(
-                "OPEN FROM DEVICE",
+                "LOCAL MRI REFERENCES",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
             )
-            Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
-                Text("OPEN .NII OR .NII.GZ")
+            Text(
+                "${snapshot.scans.size} NIfTI files in ${snapshot.collections.size} import collections",
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            Text(
+                "The app remembers document links you select. Original MRI files remain " +
+                    "in their original location on your device or storage provider.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = onImport,
+                enabled = !isImporting,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (isImporting) "INDEXING SERIES…" else "IMPORT NIFTI FILES")
             }
-            when (val state = volumeState) {
-                is VolumeLoadState.Ready -> {
-                    Text("Current MRI", style = MaterialTheme.typography.titleMedium)
-                    Text(state.displayName)
-                    Text(
-                        "${state.volume.nx} × ${state.volume.ny} × ${state.volume.nz} voxels · " +
-                            state.volume.transformSource,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Button(onClick = onOpenActive, modifier = Modifier.fillMaxWidth()) {
-                        Text("VIEW OPENED MRI")
-                    }
-                }
-                VolumeLoadState.Loading -> Text("Importing file…")
-                is VolumeLoadState.Failed -> Text(
-                    "Could not open: ${state.explanation}",
-                    color = MaterialTheme.colorScheme.error,
-                )
-                VolumeLoadState.Empty -> Text("No NIfTI opened yet.")
+            OutlinedButton(onClick = onBrowse, modifier = Modifier.fillMaxWidth()) {
+                Text("BROWSE SCANS & SERIES")
             }
             Text(
-                "Phase 3 stores only the currently selected document permission. " +
-                    "Multi-scan management, deletion, and DICOM conversion are later phases.",
+                "Phase 4: read-only file indexing and series previews. " +
+                    "Renaming, deleting, and managing library storage are Phase 5. " +
+                    "DICOM import and conversion are planned separately.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
             )
