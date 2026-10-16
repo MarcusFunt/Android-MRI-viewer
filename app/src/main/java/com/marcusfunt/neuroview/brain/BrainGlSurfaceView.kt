@@ -2,6 +2,7 @@ package com.marcusfunt.neuroview.brain
 
 import android.content.Context
 import android.opengl.GLSurfaceView
+import android.graphics.PixelFormat
 import android.view.MotionEvent
 
 /**
@@ -9,17 +10,22 @@ import android.view.MotionEvent
  * Touch drag rotates the model; automatic rotation is controlled by the Compose host.
  */
 internal class BrainGlSurfaceView(context: Context) : GLSurfaceView(context) {
-    private val brainRenderer = BrainRenderer()
+    private val brainRenderer = BrainRenderer(context.applicationContext)
     private var previousX = 0f
     private var previousY = 0f
     var onTouchDragChanged: (Boolean) -> Unit = {}
 
     init {
+        // Transparent brain SurfaceView lets the gradient and subtle glow sit
+        // behind the model instead of trapping it in a rectangular canvas.
+        holder.setFormat(PixelFormat.TRANSLUCENT)
+        setZOrderOnTop(true)
         setEGLContextClientVersion(2)
+        setEGLConfigChooser(8, 8, 8, 8, 16, 0)
         preserveEGLContextOnPause = true
         setRenderer(brainRenderer)
         renderMode = RENDERMODE_WHEN_DIRTY
-        contentDescription = "Interactive stylized brain. Drag to rotate the 3D model."
+        contentDescription = "Rotating 3D brain model from the Brainchop demonstration dataset. Drag to rotate."
         isClickable = true
     }
 
@@ -31,7 +37,7 @@ internal class BrainGlSurfaceView(context: Context) : GLSurfaceView(context) {
     }
 
     fun resetView() {
-        brainRenderer.yawDegrees = 26f
+        brainRenderer.yawDegrees = -85f
         brainRenderer.pitchDegrees = -12f
         requestRender()
     }

@@ -1,5 +1,7 @@
 package com.marcusfunt.neuroview.brain
 
+import android.content.Context
+import android.util.Log
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
@@ -11,12 +13,13 @@ import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
 /**
- * Small GLES 2.0 renderer for the decorative, procedural brain on the home screen.
- * No network access, WebView, native library, or external 3D runtime required.
+ * GLES2 renderer for the locally bundled, optimized Brainchop demonstration
+ * cortex mesh. No network access or GLB runtime needed. The GPU consumes
+ * the NVB1 vertex and index buffers natively (under GLES2's 65k vertex cap).
  * Rendering is driven by GLSurfaceView.RENDERMODE_WHEN_DIRTY.
  */
-internal class BrainRenderer : GLSurfaceView.Renderer {
-    @Volatile var yawDegrees = 26f
+internal class BrainRenderer(private val context: Context) : GLSurfaceView.Renderer {
+    @Volatile var yawDegrees = -85f
     @Volatile var pitchDegrees = -12f
 
     private data class GpuMesh(
@@ -40,7 +43,7 @@ internal class BrainRenderer : GLSurfaceView.Renderer {
     private val mvp = FloatArray(16)
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        GLES20.glClearColor(0.066f, 0.118f, 0.153f, 1f)
+        GLES20.glClearColor(0f, 0f, 0f, 0f)
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
         GLES20.glDepthFunc(GLES20.GL_LEQUAL)
         GLES20.glDisable(GLES20.GL_CULL_FACE)
@@ -51,7 +54,13 @@ internal class BrainRenderer : GLSurfaceView.Renderer {
         mvpHandle = GLES20.glGetUniformLocation(program, "uMvp")
         modelViewHandle = GLES20.glGetUniformLocation(program, "uModelView")
         tintHandle = GLES20.glGetUniformLocation(program, "uTint")
-        meshes = BrainGeometry.build().map { cpu ->
+        val cpuMeshes = runCatching {
+            listOf(BrainAssetLoader.load(context.assets.open(BrainAssetLoader.ASSET_NAME)))
+        }.getOrElse { failure ->
+            Log.e("NeuroViewBrain", "Bundled model unavailable; using offline fallback", failure)
+            BrainGeometry.build()
+        }
+        meshes = cpuMeshes.map { cpu ->
             val vertexData = ByteBuffer.allocateDirect(cpu.vertices.size * 4)
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer().apply {
@@ -66,13 +75,13 @@ internal class BrainRenderer : GLSurfaceView.Renderer {
                 }
             GpuMesh(vertexData, indexData, cpu.indices.size, cpu.color)
         }
-        Matrix.setLookAtM(view, 0, 0f, 0f, 4.3f, 0f, -0.08f, 0f, 0f, 1f, 0f)
+        Matrix.setLookAtM(view, 0, 0f, 0f, 4.85f, 0f, 0f, 0f, 0f, 1f, 0f)
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
         val safeAspect = width.toFloat() / height.coerceAtLeast(1)
-        Matrix.perspectiveM(projection, 0, 39f, safeAspect, 0.1f, 20f)
+        Matrix.perspectiveM(projection, 0, 36f, safeAspect, 0.1f, 20f)
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -82,6 +91,8 @@ internal class BrainRenderer : GLSurfaceView.Renderer {
         Matrix.setIdentityM(model, 0)
         Matrix.rotateM(model, 0, yawDegrees, 0f, 1f, 0f)
         Matrix.rotateM(model, 0, pitchDegrees, 1f, 0f, 0f)
+        // Match the original GLB preview: NVBM is mirrored in X/Z relative to the\n        // prototype camera basis. A 180-degree Y rotation restores that basis.
+        Matrix.rotateM(model, 0, 180f, 0f, 1f, 0f)
         Matrix.multiplyMM(modelView, 0, view, 0, model, 0)
         Matrix.multiplyMM(mvp, 0, projection, 0, modelView, 0)
 
@@ -159,14 +170,17 @@ internal class BrainRenderer : GLSurfaceView.Renderer {
             void main() {
                 vec3 normal = normalize(vNormal);
                 vec3 towardEye = normalize(-vEyePosition);
-                vec3 light = normalize(vec3(-0.38, 0.72, 0.67));
-                float diffuse = max(dot(normal, light), 0.0);
-                float rim = pow(1.0 - max(dot(normal, towardEye), 0.0), 2.9);
-                vec3 reflected = reflect(-light, normal);
-                float specular = pow(max(dot(reflected, towardEye), 0.0), 29.0);
-                vec3 base = uTint * (0.34 + 0.79 * diffuse);
-                vec3 color = base + vec3(0.31, 0.83, 0.91) * 0.27 * rim;
-                color += vec3(0.85, 0.97, 1.0) * specular * 0.14;
+                if (dot(normal, towardEye) < 0.0) normal = -normal;
+                vec3 keyLight = normalize(vec3(-0.35, 0.71, 0.62));
+                vec3 fillLight = normalize(vec3(0.78, -0.25, 0.58));
+                float key = max(dot(normal, keyLight), 0.0);
+                float fill = max(dot(normal, fillLight), 0.0);
+                float rim = pow(1.0 - max(dot(normal, towardEye), 0.0), 3.2);
+                vec3 reflected = reflect(-keyLight, normal);
+                float specular = pow(max(dot(reflected, towardEye), 0.0), 38.0);
+                vec3 color = uTint * (0.39 + 0.53 * key + 0.19 * fill);
+                color += vec3(0.21, 0.57, 0.85) * (0.16 * rim + 0.12 * fill);
+                color += vec3(0.91, 0.96, 1.00) * (specular * 0.08);
                 gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
             }
         """
