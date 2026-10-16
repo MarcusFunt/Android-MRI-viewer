@@ -24,7 +24,8 @@ class NeuroViewNavigationSmokeTest {
         compose.onNodeWithText("LIBRARY").performClick()
         compose.onNodeWithText("MRI Library").assertExists()
         compose.onNodeWithText("CREATE COLLECTION").assertExists()
-        compose.onNodeWithText("CONVERT DICOM SERIES → NIFTI").assertExists()
+        compose.onNodeWithText("CONVERT DICOM FOLDER → NIFTI").assertExists()
+        compose.onNodeWithText("OR SELECT INDIVIDUAL DICOM FILES").assertExists()
         compose.onNodeWithText("IMPORT NIFTI FILES").assertExists()
     }
 }
