@@ -247,3 +247,7 @@ it off removes the decorative lighting without hiding the brain.
 Only Home screen presentation and brain fragment lighting change. Brain mesh,
 MRI rendering, imports, Library and Series UI, storage and user data are
 unchanged.
+
+### v1.2.0 � unified navigation and MRI viewer styling
+
+The Series browser and MRI Library now use the same restrained navy surfaces, quiet borders, and cyan-to-blue primary action styling as the floating-brain landing page. The MRI viewer has segmented axial/coronal/sagittal controls, a compact untinted image frame and slice-position panel, readable window/level adjustment values and a Focus button that temporarily hides peripheral controls to maximize the MRI viewing area. The original voxel data, grayscale display, windowing mapping, real-time render sessions, memory management, scrolling behavior, DICOM/NIfTI workflows and saved library entries are unchanged. The UI is fully offline and remains exploration-only, not a diagnostic viewer.

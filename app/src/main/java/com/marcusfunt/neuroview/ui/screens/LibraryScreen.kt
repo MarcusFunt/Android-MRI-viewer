@@ -53,8 +53,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.marcusfunt.neuroview.ui.theme.NeuroGradients
-import com.marcusfunt.neuroview.ui.theme.neuroGradientBackdrop
+import com.marcusfunt.neuroview.ui.theme.NeuroChrome
+import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
 import com.marcusfunt.neuroview.catalog.ImportCollection
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
@@ -95,7 +95,7 @@ fun LibraryScreen(
     var search by rememberSaveable { mutableStateOf("") }
 
     Scaffold(
-        containerColor = NeuroGradients.midnight,
+        containerColor = NeuroChrome.background,
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
@@ -106,25 +106,25 @@ fun LibraryScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
+                    containerColor = NeuroChrome.topBar,
                 ),
             )
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).neuroGradientBackdrop().padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).neuroWorkspaceBackground().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
                         "ON-DEVICE WORKSPACE",
-                        color = MaterialTheme.colorScheme.primary,
+                        color = NeuroChrome.accent,
                         style = MaterialTheme.typography.labelMedium,
                     )
-                    Text("Files & collections", style = MaterialTheme.typography.headlineMedium)
+                    Text("Your library", style = MaterialTheme.typography.headlineMedium)
                     Text(
-                        "${snapshot.scans.size} volumes · ${snapshot.collections.size} collections",
+                        "${snapshot.scans.size} volume${if (snapshot.scans.size == 1) "" else "s"} · ${snapshot.collections.size} collection${if (snapshot.collections.size == 1) "" else "s"}",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -137,21 +137,20 @@ fun LibraryScreen(
                     Button(
                         onClick = onImport,
                         enabled = !isBusy,
-                        modifier = Modifier.fillMaxWidth()
-                            .background(NeuroGradients.primary, RoundedCornerShape(50.dp)),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+                            .background(NeuroChrome.primaryGradient, RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp),
                         colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                             containerColor = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            contentColor = Color.White,
                         ),
                     ) { Text("Import NIfTI volumes") }
                     Card(
-                        modifier = Modifier.fillMaxWidth().background(
-                            NeuroGradients.secondary, RoundedCornerShape(20.dp),
-                        ),
+                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(20.dp),
-                        border = BorderStroke(1.dp, NeuroGradients.trim),
+                        border = BorderStroke(1.dp, NeuroChrome.stroke),
                         colors = CardDefaults.cardColors(
-                            containerColor = Color.Transparent,
+                            containerColor = NeuroChrome.panel,
                         ),
                     ) {
                         Column(
@@ -225,7 +224,12 @@ fun LibraryScreen(
                 }
                 if (query.isBlank() || groupMatches || visible.isNotEmpty()) {
                     item(key = "group-${collection.id}") {
-                        Card(modifier = Modifier.fillMaxWidth()) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            border = BorderStroke(1.dp, NeuroChrome.stroke),
+                            colors = CardDefaults.cardColors(containerColor = NeuroChrome.panel),
+                        ) {
                             Column(modifier = Modifier.padding(14.dp)) {
                                 Text(
                                     collection.label,
@@ -253,7 +257,12 @@ fun LibraryScreen(
                         }
                     }
                     items(visible, key = { "scan-${it.id}" }) { scan ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            border = BorderStroke(1.dp, NeuroChrome.stroke),
+                            colors = CardDefaults.cardColors(containerColor = NeuroChrome.panel),
+                        ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(
                                     scan.label,
