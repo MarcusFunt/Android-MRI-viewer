@@ -62,7 +62,8 @@ class NiftiVolume(
 object NiftiReader {
     const val MAX_VOXELS = 48_000_000L // ~183 MiB float volume, intentionally bounded
 
-    fun read(input: InputStream): NiftiVolume {
+    fun read(input: InputStream, maxVoxels: Long = MAX_VOXELS): NiftiVolume {
+        require(maxVoxels in 1..MAX_VOXELS) { "Invalid voxel memory budget" }
         val buffered = BufferedInputStream(input, 64 * 1024)
         buffered.mark(2)
         val first = buffered.read()
@@ -99,8 +100,8 @@ object NiftiReader {
             val timepoints = if (dimensions[0] >= 4) dimensions[4] else 1
             require(timepoints in 1..100000) { "Invalid NIfTI temporal dimension" }
             val count = nx.toLong() * ny * nz
-            require(count in 1..MAX_VOXELS) {
-                "Volume too large for mobile preview (${count} voxels; limit $MAX_VOXELS)"
+            require(count in 1..maxVoxels) {
+                "Volume too large for available device memory (${count} voxels; limit $maxVoxels)"
             }
 
             val datatype = header.getShort(70).toInt()
