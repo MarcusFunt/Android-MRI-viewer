@@ -62,3 +62,13 @@ No network permission and no PHI logging are introduced. The app does not upload
 - `ui/NeuroViewApp` uses `OpenMultipleDocuments` and routes selected series IDs through Navigation 3. Only one selected NIfTI volume is held in memory at a time.
 
 **Not a full study library.** No patient grouping, DICOM study UID assignment, metadata mutation, scanner/protocol inference, deletion or conversion is performed. Plain NIfTI generally cannot prove a series belongs to a given study; Phase 5 should introduce explicit user-owned collections rather than implicit patient matching. Preserve privacy by never logging scan filenames or descriptions.
+
+## Phase 5: Collection management and safe un-linking
+
+- `catalog/CatalogEdits` provides pure, unit-tested immutable operations: create/rename collection, add/remove local display alias, move series, remove series, or cascade-remove a collection's catalog references. It validates nonempty bounded user labels and target IDs.
+- `catalog/ScanCatalog` serializes writes with a coroutine `Mutex`, performs SharedPreferences `commit()` before cleanup, and preserves Phase 4 JSON compatibility by adding optional `customName` fields. Existing v4 catalog entries load without migration.
+- Removal never mutates/deletes source NIfTI files. It evicts a removed entry's app-private thumbnail and relinquishes the SAF persisted read permission only if the source URI is no longer catalog-referenced. The currently selected volume is also cleared if its library entry was removed.
+- `ui/screens/LibraryScreen` exposes search, create/rename, move, remove with explicit confirmation prompts, original filename restoration and private thumbnail cache cleanup.
+- The Series browser and Viewer display local aliases while retaining original file names for provenance.
+
+**Limitations:** Catalog metadata is stored in app-private but unencrypted SharedPreferences; thumbnails are app-private cache files. No medical PHI is transmitted. Collections are user organizational labels, not evidence that scans share a clinical study or patient. No filesystem deletion, rename of source NIfTI files, DICOM conversions or study UID inference. More comprehensive local storage ownership and diagnostic validation are future work.
