@@ -1,6 +1,13 @@
 # NeuroView — Android MRI Viewer
 
-A local-first Android application for browsing MRI series, examining volumes, and eventually importing and converting DICOM/NIfTI data.
+## Download Android APK
+
+**[Download NeuroView v0.7.0 APK (Phase 7)](https://github.com/MarcusFunt/Android-MRI-viewer/releases/download/v0.7.0/NeuroView-v0.7.0-debug.apk)**  
+[Release notes and SHA-256 checksum](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v0.7.0)
+
+This is an experimental **debug-signed prerelease APK**, not a production or medical diagnostic application. Only install APKs you trust. The APK comes directly from the successfully tested GitHub Actions build on `main` (run `38892440182`).
+
+An offline-first Android application for browsing MRI series, viewing NIfTI volumes in three planes, organizing a local MRI library, and performing supported DICOM/NIfTI conversions.
 
 ## Phase 1: Android foundation
 
