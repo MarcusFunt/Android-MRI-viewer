@@ -9,7 +9,7 @@ object CatalogEdits {
         val label = text.trim()
         require(label.isNotEmpty()) { "Name cannot be empty" }
         require(label.length <= 100) { "Name must be 100 characters or fewer" }
-        require(label.none { it.isISOControl() }) { "Name cannot contain control characters" }
+        require(label.none { Character.isISOControl(it) }) { "Name cannot contain control characters" }
         return label
     }
 
