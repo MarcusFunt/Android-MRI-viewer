@@ -64,8 +64,8 @@ import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
 import java.util.Locale
-import com.marcusfunt.neuroview.ui.theme.NeuroGradients
-import com.marcusfunt.neuroview.ui.theme.neuroGradientBackdrop
+import com.marcusfunt.neuroview.ui.theme.NeuroChrome
+import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,7 +89,7 @@ fun SeriesScreen(
     }
 
     Scaffold(
-        containerColor = NeuroGradients.midnight,
+        containerColor = NeuroChrome.background,
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
@@ -100,29 +100,29 @@ fun SeriesScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
+                    containerColor = NeuroChrome.topBar,
                 ),
             )
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).neuroGradientBackdrop(),
+            modifier = Modifier.fillMaxSize().padding(padding).neuroWorkspaceBackground(),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "YOUR WORKSPACE",
+                        "SERIES BROWSER",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = NeuroChrome.accent,
                     )
                     Text(
-                        "Explore your scans",
+                        "Explore scans",
                         style = MaterialTheme.typography.headlineMedium,
                     )
                     Text(
-                        "Select a volume to inspect it in axial, sagittal and coronal planes.",
+                        "Your local MRI volumes, organized for quick viewing.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -130,10 +130,11 @@ fun SeriesScreen(
                         onClick = onImport,
                         enabled = !isImporting,
                         modifier = Modifier.fillMaxWidth().height(52.dp)
-                            .background(NeuroGradients.primary, RoundedCornerShape(50.dp)),
+                            .background(NeuroChrome.primaryGradient, RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp),
                         colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                             containerColor = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            contentColor = Color.White,
                         ),
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null)
@@ -149,7 +150,7 @@ fun SeriesScreen(
                     }
                     if (!importMessage.isNullOrBlank()) {
                         Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            color = NeuroChrome.panel,
                             shape = MaterialTheme.shapes.medium,
                         ) {
                             Text(
@@ -192,9 +193,9 @@ fun SeriesScreen(
                 item {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.surface,
-                        shape = MaterialTheme.shapes.large,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        color = NeuroChrome.panel,
+                        shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(1.dp, NeuroChrome.stroke),
                     ) {
                         Column(
                             modifier = Modifier.padding(24.dp),
@@ -271,7 +272,7 @@ private fun CollectionHeader(
     Row(
         modifier = Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(NeuroChrome.raised)
             .clickable(onClick = onToggle).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -288,7 +289,7 @@ private fun CollectionHeader(
         Icon(
             if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
             contentDescription = if (isExpanded) "Collapse collection" else "Expand collection",
-            tint = MaterialTheme.colorScheme.primary,
+            tint = NeuroChrome.accent,
         )
     }
 }
@@ -299,8 +300,8 @@ private fun ScanSeriesCard(scan: ScanRecord, catalog: ScanCatalog, onClick: () -
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, NeuroChrome.stroke),
+        colors = CardDefaults.cardColors(containerColor = NeuroChrome.panel),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -344,7 +345,7 @@ private fun ScanSeriesCard(scan: ScanRecord, catalog: ScanCatalog, onClick: () -
             Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = "Open volume",
-                tint = MaterialTheme.colorScheme.primary,
+                tint = NeuroChrome.accent,
             )
         }
     }

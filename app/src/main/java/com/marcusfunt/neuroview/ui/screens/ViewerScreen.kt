@@ -10,6 +10,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -75,7 +76,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import com.marcusfunt.neuroview.ui.theme.NeuroGradients
+import com.marcusfunt.neuroview.ui.theme.NeuroChrome
+import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.asImageBitmap
@@ -115,6 +117,7 @@ fun ViewerScreen(
 ) {
     var plane by rememberSaveable { mutableStateOf(MriPlane.AXIAL) }
     var panelOpen by rememberSaveable { mutableStateOf(false) }
+    var focusMode by rememberSaveable { mutableStateOf(false) }
     var sliceIndex by rememberSaveable { mutableIntStateOf(0) }
     var windowCenter by rememberSaveable { mutableFloatStateOf(0.5f) }
     var windowWidth by rememberSaveable { mutableFloatStateOf(1.0f) }
@@ -184,7 +187,7 @@ fun ViewerScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surface) {
+            ModalDrawerSheet(drawerContainerColor = NeuroChrome.topBar) {
                 Text(
                     "NEUROVIEW",
                     modifier = Modifier.padding(24.dp),
@@ -209,6 +212,7 @@ fun ViewerScreen(
         },
     ) {
         Scaffold(
+            containerColor = NeuroChrome.background,
             contentWindowInsets = WindowInsets.safeDrawing,
             topBar = {
                 TopAppBar(
@@ -226,17 +230,20 @@ fun ViewerScreen(
                         }
                     },
                     actions = {
+                        TextButton(onClick = { focusMode = !focusMode }) {
+                            Text(if (focusMode) "Controls" else "Focus", color = NeuroChrome.accent)
+                        }
                         TextButton(onClick = { panelOpen = true }) {
-                            Text(plane.label)
+                            Text(plane.label, color = NeuroChrome.ink)
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.background,
+                        containerColor = NeuroChrome.topBar,
                     ),
                 )
             },
         ) { padding ->
-            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding).neuroWorkspaceBackground()) {
                 when (volumeState) {
                     VolumeLoadState.Empty -> ViewerMessage(
                         title = "No MRI opened",
@@ -259,6 +266,7 @@ fun ViewerScreen(
                     )
                     is VolumeLoadState.Ready -> MriContent(
                         modifier = Modifier.fillMaxSize(),
+                        focusMode = focusMode,
                         volume = volumeState.volume,
                         plane = plane,
                         bitmap = bitmap,
@@ -292,7 +300,7 @@ fun ViewerScreen(
                         modifier = Modifier.align(Alignment.CenterEnd)
                             .fillMaxHeight()
                             .fillMaxWidth(0.75f),
-                        color = MaterialTheme.colorScheme.surface,
+                        color = NeuroChrome.panel,
                     ) {
                         Column(
                             modifier = Modifier.padding(18.dp),
@@ -357,6 +365,7 @@ private fun ViewerMessage(title: String, detail: String, onImport: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 private fun MriContent(
     modifier: Modifier,
+    focusMode: Boolean,
     volume: NiftiVolume,
     plane: MriPlane,
     bitmap: Bitmap?,
@@ -376,26 +385,36 @@ private fun MriContent(
     val currentOnSliceChange by rememberUpdatedState(onSliceChange)
     var showAdjustments by rememberSaveable { mutableStateOf(false) }
     Column(
-        modifier = modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
-        // Plane switching is an ordinary, visible action—not hidden in a drawer.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            MriPlane.entries.forEach { option ->
-                FilterChip(
-                    selected = plane == option,
-                    onClick = { onPlaneSelect(option) },
-                    label = { Text(option.label) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ),
-                    modifier = Modifier.weight(1f),
-                )
+        // Compact orientation tabs, with the medical image remaining grayscale.
+        if (!focusMode) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MriPlane.entries.forEach { option ->
+                    val selected = plane == option
+                    val shape = RoundedCornerShape(12.dp)
+                    Box(
+                        modifier = Modifier.weight(1f).height(42.dp).clip(shape)
+                            .background(if (selected) NeuroChrome.raised else NeuroChrome.panel)
+                            .border(
+                                BorderStroke(1.dp, if (selected) NeuroChrome.accent else NeuroChrome.stroke),
+                                shape,
+                            )
+                            .clickable(onClick = { onPlaneSelect(option) }),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            option.label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (selected) NeuroChrome.accent else NeuroChrome.muted,
+                        )
+                    }
+                }
             }
         }
         val flingScope = rememberCoroutineScope()
@@ -404,8 +423,9 @@ private fun MriContent(
         val currentOpenPlanePanel by rememberUpdatedState(onOpenPlanePanel)
         Box(
             modifier = Modifier.fillMaxWidth().weight(1f)
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(12.dp))
                 .background(Color.Black)
+                .border(1.dp, NeuroChrome.stroke.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
                 .pointerInput(volume, plane, totalSlices) {
                     val pixelsPerSlice = 18.dp.toPx()
                     var horizontalDrag = 0f
@@ -488,14 +508,12 @@ private fun MriContent(
             // is placed in the surrounding chrome, never drawn over the pixels.
         }
 
+        if (!focusMode) {
         Surface(
-            modifier = Modifier.fillMaxWidth().background(
-                brush = NeuroGradients.secondary,
-                shape = RoundedCornerShape(18.dp),
-            ),
+            modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(18.dp),
-            color = Color.Transparent,
-            border = BorderStroke(1.dp, NeuroGradients.trim),
+            color = NeuroChrome.panel,
+            border = BorderStroke(1.dp, NeuroChrome.stroke),
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
@@ -508,7 +526,7 @@ private fun MriContent(
                 ) {
                     Text(
                         "SLICE POSITION",
-                        color = MaterialTheme.colorScheme.primary,
+                        color = NeuroChrome.accent,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                     )
@@ -527,6 +545,11 @@ private fun MriContent(
                     onValueChangeFinished = { onScrubbingChanged(false) },
                     valueRange = 0f..(totalSlices - 1).coerceAtLeast(1).toFloat(),
                     modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = NeuroChrome.accent,
+                        activeTrackColor = NeuroChrome.accent,
+                        inactiveTrackColor = NeuroChrome.stroke,
+                    ),
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -597,12 +620,13 @@ private fun MriContent(
                 style = MaterialTheme.typography.labelSmall,
             )
         }
+        } // Hide position and adjustment controls in Focus mode
     }
 
     if (showAdjustments) {
         ModalBottomSheet(
             onDismissRequest = { showAdjustments = false },
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = NeuroChrome.topBar,
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
@@ -624,7 +648,17 @@ private fun MriContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text("Brightness", style = MaterialTheme.typography.titleSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Brightness", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "${(BrightnessSliderMapping.sliderFromWindowCenter(windowCenter) * 100).roundToInt()}%",
+                        color = NeuroChrome.accent,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
                 Slider(
                     // Higher window center darkens a fixed voxel intensity.
                     // Invert the control so right = brighter, left = darker.
@@ -634,6 +668,11 @@ private fun MriContent(
                     },
                     valueRange = 0f..1f,
                     modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = NeuroChrome.accent,
+                        activeTrackColor = NeuroChrome.accent,
+                        inactiveTrackColor = NeuroChrome.stroke,
+                    ),
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -650,12 +689,27 @@ private fun MriContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text("Contrast / window width", style = MaterialTheme.typography.titleSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Contrast / window width", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "${(windowWidth * 100).roundToInt()}%",
+                        color = NeuroChrome.accent,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
                 Slider(
                     value = windowWidth,
                     onValueChange = onWindowWidth,
                     valueRange = 0.05f..1.8f,
                     modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = NeuroChrome.accent,
+                        activeTrackColor = NeuroChrome.accent,
+                        inactiveTrackColor = NeuroChrome.stroke,
+                    ),
                 )
                 Button(
                     onClick = { showAdjustments = false },
