@@ -52,6 +52,23 @@ The app performs **world-space multiplanar reformatting** with trilinear interpo
 
 **Limitations:** A batch is not necessarily one patient or study. NIfTI files do not reliably provide DICOM StudyInstanceUID or SeriesInstanceUID; this app does not invent or infer them. Thumbnail generation reads the full volume and can be slow for large files. If an external document is moved, revoked or unavailable, the stored URI may no longer open. Deletion, rename, multi-file migration, storage ownership and DICOM conversion belong to later phases.
 
+## Phase 5: Manage your MRI library
+
+From **Library** you can now:
+
+- Create empty named collections (for your own organizational purposes; never inferred DICOM studies).
+- Rename collections and assign **local-only display aliases** to NIfTI entries. The original filename remains visible and unchanged.
+- Restore an MRI entry's original display name.
+- Move an MRI from one collection to another without re-importing or copying its source.
+- Search across collection names, local labels, original filenames and NIfTI descriptions.
+- Remove a single MRI entry, or remove an entire collection and all its listed entries, using explicit confirmation prompts.
+- Clear generated thumbnail cache without losing imports or touching the original medical images.
+- Import additional NIfTI files and open any listed volume in the 3-plane viewer.
+
+**Safety behavior:** “Remove” means **unlink from this app**, not delete from phone storage. This is deliberate: scans may be stored in an external SAF/cloud document provider, and accidental deletion is irrecoverable. Removing an entry deletes its app-private thumbnail and relinquishes the persisted read grant if it is no longer referenced. Editing names only changes app-private metadata, not source NIfTI headers. Actual DICOM conversion and durable source file ownership are not implemented.
+
+**Privacy:** The catalog lives in app-private SharedPreferences (not encrypted); cached derived MRI thumbnails live in app-private cache. Neither is sent over the network. Android backups are disabled. If the app is uninstalled, the private catalog is lost but original source MRI documents remain where they were. Avoid making diagnostic decisions from this educational viewer.
+
 ## Open in Android Studio
 
 1. Clone this repository and open its root directory in a recent Android Studio.
@@ -66,7 +83,7 @@ Versions: AGP 9.4.0, Gradle 9.6.0, Kotlin 2.2.21, Compose BOM 2026.09.00, Naviga
 - Phase 2 — Home screen 3D brain visualization. **Implemented.**
 - Phase 3 — Real NIfTI loading and multiplanar viewing. **Implemented.**
 - Phase 4 — Scan and series selection from imported datasets. **Implemented for multiple NIfTI documents.**
-- Phase 5 — Local library with SAF import and deletion.
+- Phase 5 — Local library with SAF import and safe removal of in-app references. **Implemented.**
 - Phase 6 — DICOM to NIfTI and clearly labeled derived-DICOM export.
 - Phase 7 — Device validation, performance, and clinical-orientation sanity checks.
 
