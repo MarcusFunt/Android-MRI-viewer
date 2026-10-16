@@ -233,3 +233,17 @@ with a non-network, procedural fallback in case of corrupted packaging.
 The Series, Library, MRI viewer, format-conversion pipelines, storage and
 saved user scans are unchanged. The floating 3D view has a transparent
 OpenGL surface over the Home gradient. No diagnostic claims are made.
+
+### v1.1.1 — landing-page lighting refinement
+
+Removes the concentric circular guides behind the rotating brain. The Home
+screen now has a restrained, static arrangement of feathered navy-blue
+ambient light, off-axis cool illumination and a diffuse low-level reflection
+under the brain, based loosely on the provided visual reference. The brain's
+OpenGL shader uses a softer overhead key and a restrained cool fill.
+The user-facing landing settings can still toggle background glow; turning
+it off removes the decorative lighting without hiding the brain.
+
+Only Home screen presentation and brain fragment lighting change. Brain mesh,
+MRI rendering, imports, Library and Series UI, storage and user data are
+unchanged.

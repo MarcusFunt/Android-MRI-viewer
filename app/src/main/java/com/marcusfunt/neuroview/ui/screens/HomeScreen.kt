@@ -78,10 +78,53 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
     Box(
         Modifier.fillMaxSize().background(
             Brush.verticalGradient(
-                listOf(Navy, Color(0xFF0A1B2C), Color(0xFF081423), Navy),
+                listOf(
+                    Color(0xFF05101B),
+                    Color(0xFF0A1D2F),
+                    Color(0xFF0B1D30),
+                    Color(0xFF050E18),
+                ),
             ),
         ),
     ) {
+        if (glowEnabled) {
+            // Broad cinematic softboxes, drawn behind the whole page, not
+            // clipped to the OpenGL viewport. No orbit lines or oval borders.
+            Canvas(Modifier.fillMaxSize()) {
+                val width = size.width
+                val height = size.height
+                drawRect(
+                    brush = Brush.radialGradient(
+                        0.0f to Color(0xFF458AB3).copy(alpha = 0.20f),
+                        0.40f to Color(0xFF2B5E83).copy(alpha = 0.11f),
+                        0.77f to Color(0xFF1E4569).copy(alpha = 0.03f),
+                        1.0f to Color.Transparent,
+                        center = Offset(width * 0.56f, height * 0.37f),
+                        radius = maxOf(width * 0.89f, height * 0.42f),
+                    ),
+                )
+                drawRect(
+                    brush = Brush.radialGradient(
+                        0.0f to Color(0xFF66A7CA).copy(alpha = 0.10f),
+                        0.55f to Color(0xFF295276).copy(alpha = 0.035f),
+                        1.0f to Color.Transparent,
+                        center = Offset(width * 0.16f, height * 0.27f),
+                        radius = maxOf(width * 0.58f, height * 0.33f),
+                    ),
+                )
+                // A fully feathered hint of reflection, not an ellipse:
+                // the light extends naturally into the navy surroundings.
+                drawRect(
+                    brush = Brush.radialGradient(
+                        0.0f to Color(0xFF6EBAE3).copy(alpha = 0.10f),
+                        0.49f to Color(0xFF3276A4).copy(alpha = 0.045f),
+                        1.0f to Color.Transparent,
+                        center = Offset(width * 0.5f, height * 0.64f),
+                        radius = maxOf(width * 0.76f, height * 0.25f),
+                    ),
+                )
+            }
+        }
         Scaffold(
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets.safeDrawing,
@@ -141,43 +184,6 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                 // The translucent GLES viewport is intentionally unframed;
                 // no card, border, or explanatory labels sit around the brain.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    Canvas(Modifier.fillMaxSize()) {
-                        val cx = size.width * 0.5f
-                        val cy = size.height * 0.49f
-                        if (glowEnabled) {
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    listOf(
-                                        Color(0xFF276E9D).copy(alpha = 0.38f),
-                                        Color(0xFF13405E).copy(alpha = 0.23f),
-                                        Color.Transparent,
-                                    ),
-                                    center = Offset(cx, cy),
-                                    radius = size.width * 0.73f,
-                                ),
-                                radius = size.width * 0.73f,
-                                center = Offset(cx, cy),
-                            )
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    listOf(Color(0xFF6CC6EA).copy(alpha = 0.13f), Color.Transparent),
-                                    center = Offset(cx, size.height * 0.89f),
-                                    radius = size.width * 0.55f,
-                                ),
-                                radius = size.width * 0.55f,
-                                center = Offset(cx, size.height * 0.89f),
-                            )
-                        }
-                        // Quiet orbital guides; low enough opacity to stay background.
-                        for (ratio in listOf(0.78f, 0.92f)) {
-                            drawCircle(
-                                color = Color(0xFF82B7CF).copy(alpha = 0.075f),
-                                radius = size.width * ratio * 0.5f,
-                                center = Offset(cx, cy),
-                                style = Stroke(width = 1.dp.toPx()),
-                            )
-                        }
-                    }
                     BrainPreview(
                         modifier = Modifier.fillMaxSize(),
                         autoRotation = autoRotate,

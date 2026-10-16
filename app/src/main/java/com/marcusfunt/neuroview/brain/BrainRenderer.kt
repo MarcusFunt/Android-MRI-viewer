@@ -171,16 +171,18 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
                 vec3 normal = normalize(vNormal);
                 vec3 towardEye = normalize(-vEyePosition);
                 if (dot(normal, towardEye) < 0.0) normal = -normal;
-                vec3 keyLight = normalize(vec3(-0.35, 0.71, 0.62));
-                vec3 fillLight = normalize(vec3(0.78, -0.25, 0.58));
+                // Broad, neutral overhead key + controlled cool fill.
+                // Keep the brain matte and anatomical, not glassy or neon.
+                vec3 keyLight = normalize(vec3(-0.44, 0.77, 0.47));
+                vec3 fillLight = normalize(vec3(0.77, 0.18, 0.53));
                 float key = max(dot(normal, keyLight), 0.0);
                 float fill = max(dot(normal, fillLight), 0.0);
-                float rim = pow(1.0 - max(dot(normal, towardEye), 0.0), 3.2);
+                float rim = pow(1.0 - max(dot(normal, towardEye), 0.0), 3.1);
                 vec3 reflected = reflect(-keyLight, normal);
-                float specular = pow(max(dot(reflected, towardEye), 0.0), 38.0);
-                vec3 color = uTint * (0.39 + 0.53 * key + 0.19 * fill);
-                color += vec3(0.21, 0.57, 0.85) * (0.16 * rim + 0.12 * fill);
-                color += vec3(0.91, 0.96, 1.00) * (specular * 0.08);
+                float specular = pow(max(dot(reflected, towardEye), 0.0), 40.0);
+                vec3 color = uTint * (0.34 + 0.67 * key + 0.15 * fill);
+                color += vec3(0.16, 0.42, 0.62) * (0.18 * fill + 0.09 * rim);
+                color += vec3(0.92, 0.97, 1.00) * (specular * 0.10);
                 gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
             }
         """
