@@ -121,16 +121,25 @@ object NiftiReader {
             require(offset == intOffset.toDouble()) { "Invalid noninteger NIfTI data offset" }
 
             val pixdim = (0..3).map { header.getFloat(76 + 4 * it).toDouble() }
-            val dx = pixdim[1].takeIf { it.isFinite() && it > 0.0 } ?: 1.0
-            val dy = pixdim[2].takeIf { it.isFinite() && it > 0.0 } ?: 1.0
-            val dz = pixdim[3].takeIf { it.isFinite() && it > 0.0 } ?: 1.0
+            // NIfTI xyzt_units lower 3 bits: metres=1, millimetres=2, microns=3.
+            // All in-app world coordinates are millimetres (also for sform offsets).
+            val spatialUnits = header.get(123).toInt() and 0x07
+            val millimetres = when (spatialUnits) {
+                1 -> 1000.0
+                2, 0 -> 1.0 // unspecified is commonly interpreted as millimetres
+                3 -> 0.001
+                else -> throw IllegalArgumentException("Unsupported NIfTI spatial units")
+            }
+            val dx = (pixdim[1].takeIf { it.isFinite() && it > 0.0 } ?: 1.0) * millimetres
+            val dy = (pixdim[2].takeIf { it.isFinite() && it > 0.0 } ?: 1.0) * millimetres
+            val dz = (pixdim[3].takeIf { it.isFinite() && it > 0.0 } ?: 1.0) * millimetres
             val sform = header.getShort(254).toInt()
             val qform = header.getShort(252).toInt()
             val affine: SpatialAffine
             val transformSource: String
             if (sform > 0) {
                 val rows = DoubleArray(12) { i ->
-                    header.getFloat(280 + 4 * i).toDouble()
+                    header.getFloat(280 + 4 * i).toDouble() * millimetres
                 }
                 affine = SpatialAffine.fromRows(rows)
                 transformSource = "sform (RAS+)"
@@ -140,9 +149,9 @@ object NiftiReader {
                     cInput = header.getFloat(260).toDouble(),
                     dInput = header.getFloat(264).toDouble(),
                     dx = dx, dy = dy, dz = dz, qfac = pixdim[0],
-                    tx = header.getFloat(268).toDouble(),
-                    ty = header.getFloat(272).toDouble(),
-                    tz = header.getFloat(276).toDouble(),
+                    tx = header.getFloat(268).toDouble() * millimetres,
+                    ty = header.getFloat(272).toDouble() * millimetres,
+                    tz = header.getFloat(276).toDouble() * millimetres,
                 )
                 transformSource = "qform (RAS+)"
             } else {
