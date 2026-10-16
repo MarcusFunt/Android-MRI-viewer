@@ -12,6 +12,15 @@ class NeuroViewNavigationSmokeTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Test
+    fun homeExposesPrimaryActionsWithoutOpeningAnotherScreen() {
+        compose.onNodeWithText("NEUROVIEW").assertExists()
+        compose.onNodeWithText("Quick actions").assertExists()
+        compose.onNodeWithText("View MRI series").assertExists()
+        compose.onNodeWithText("Import NIfTI volumes").assertExists()
+        compose.onNodeWithText("Library & conversion").assertExists()
+    }
+
+    @Test
     fun homeCanOpenSeriesBrowser() {
         compose.onNodeWithText("NEUROVIEW").assertExists()
         compose.onNodeWithText("View MRI series").performClick()

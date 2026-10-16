@@ -172,3 +172,27 @@ The asynchronous MPR render coordinator observes the actual Compose slice index
 (instead of capturing a recomposition-local integer on first launch), so
 vertical dragging, inertial scrolling, and the slice slider update both the
 slice counter and the displayed MRI pixels. This does not alter stored MRI data.
+
+
+## NeuroView 1.0 UX refresh
+
+The Home screen is now task-first and scrollable on smaller Android phones.
+It puts **View MRI series**, **Import NIfTI volumes**, and
+**Library & conversion** above the 3-D brain illustration. A local workspace
+summary shows volumes and collections; a resume card opens the last MRI viewed
+(the ID is stored locally in application preferences; if no scan has been
+opened, it instead shows the most recently imported volume).
+
+The MRI viewer now keeps axial, coronal, and sagittal views in always-visible
+plane tabs. The scan gets more screen space, and the slice controller groups
+a large scrubbing slider, the exact slice number and millimetre position, and
+Previous/Next step actions. Vertical drag, kinetic scrolling, left-swipe plane
+panel, and high-resolution refinement are retained. Image brightness and
+contrast controls are in a dismissible bottom sheet with a Reset action,
+avoiding cramped controls or shrinking the scan area during ordinary viewing.
+
+The UI upgrade retains read-only MRI source data, existing in-app library
+entries, DICOM/NIfTI conversion flows, and Android package identity; updating
+an existing debug-signed installation should not require clearing user data.
+The brain preview is a stylized illustration, not a patient-derived model.
+Use the viewer for exploration only, not diagnosis.
