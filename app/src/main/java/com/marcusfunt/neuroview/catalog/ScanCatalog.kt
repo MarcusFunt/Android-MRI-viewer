@@ -240,6 +240,12 @@ class ScanCatalog(private val context: Context) {
                 BitmapFactory.decodeFile(thumb.absolutePath)?.let { return@withLock it }
             }
             try {
+                // Large series remain importable. Avoid decompressing an entire huge
+                // volume just to show its thumbnail in a scrolling list.
+                val count = scan.metadata.dimensions.fold(1L) { acc, dim -> acc * dim }
+                if (count > MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory())) {
+                    return@withLock null
+                }
                 val volume = context.contentResolver.openInputStream(Uri.parse(scan.documentUri))
                     ?.use { NiftiReader.read(it, MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory())) } ?: return@withLock null
                 val plane = when {

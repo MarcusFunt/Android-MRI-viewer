@@ -12,7 +12,11 @@ import java.util.zip.GZIPOutputStream
  * All original DICOM patient identity/acquisition fields are deliberately omitted.
  */
 object NiftiSeriesWriter {
-    fun writeGz(series: DicomSeries, destination: OutputStream) {
+    fun writeGz(
+        series: DicomSeries,
+        destination: OutputStream,
+        readPixels: (DicomSlice) -> FloatArray = { it.pixels },
+    ) {
         val header = ByteBuffer.allocate(352).order(ByteOrder.LITTLE_ENDIAN)
         header.putInt(0, 348)
         header.putShort(40, 3)                        // 3 spatial dimensions
@@ -52,7 +56,9 @@ object NiftiSeriesWriter {
             out.write(header.array())
             val bytes = ByteBuffer.allocate(64 * 1024).order(ByteOrder.LITTLE_ENDIAN)
             for (slice in series.slices) {
-                for (pixel in slice.pixels) {
+                val pixels = readPixels(slice)
+                require(pixels.size == series.nx * series.ny) { "DICOM slice size changed during conversion" }
+                for (pixel in pixels) {
                     if (bytes.remaining() < 4) {
                         out.write(bytes.array(), 0, bytes.position())
                         bytes.clear()

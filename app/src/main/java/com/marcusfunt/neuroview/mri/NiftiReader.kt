@@ -2,6 +2,9 @@ package com.marcusfunt.neuroview.mri
 
 import java.io.BufferedInputStream
 import java.io.DataInputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.Closeable
 import java.io.InputStream
 import java.util.zip.GZIPInputStream
 import java.nio.ByteBuffer
@@ -19,13 +22,21 @@ class NiftiVolume(
     val percentileHigh: Float,
     val transformSource: String,
     val timepoints: Int,
-) {
+    private val backing: MappedNiftiStore? = null,
+) : Closeable {
     init {
-        require(values.size.toLong() == nx.toLong() * ny * nz)
+        val count = nx.toLong() * ny * nz
+        require(if (backing == null) values.size.toLong() == count else values.isEmpty())
     }
 
-    fun nearest(i: Int, j: Int, k: Int): Float =
-        values[(k * ny + j) * nx + i]
+    val isDiskBacked: Boolean get() = backing != null
+
+    fun nearest(i: Int, j: Int, k: Int): Float {
+        val index = (k.toLong() * ny + j) * nx + i
+        return backing?.value(index) ?: values[index.toInt()]
+    }
+
+    override fun close() { backing?.close() }
 
     /** Trilinear interpolation at fractional voxel coordinates; exterior is black. */
     fun sample(i: Double, j: Double, k: Double): Float {
@@ -62,7 +73,17 @@ class NiftiVolume(
 object NiftiReader {
     const val MAX_VOXELS = 48_000_000L // ~183 MiB float volume, intentionally bounded
 
-    fun read(input: InputStream, maxVoxels: Long = MAX_VOXELS): NiftiVolume {
+    /**
+     * Volumes above the in-heap budget are spooled as uncompressed voxels into
+     * backingDirectory and accessed on demand with memory maps. No fixed volume
+     * size ceiling is applied to that path; available storage is the constraint.
+     * When backingDirectory is omitted, the existing bounded in-memory API remains.
+     */
+    fun read(
+        input: InputStream,
+        maxVoxels: Long = MAX_VOXELS,
+        backingDirectory: File? = null,
+    ): NiftiVolume {
         require(maxVoxels in 1..MAX_VOXELS) { "Invalid voxel memory budget" }
         val buffered = BufferedInputStream(input, 64 * 1024)
         buffered.mark(2)
@@ -100,8 +121,10 @@ object NiftiReader {
             val timepoints = if (dimensions[0] >= 4) dimensions[4] else 1
             require(timepoints in 1..100000) { "Invalid NIfTI temporal dimension" }
             val count = nx.toLong() * ny * nz
-            require(count in 1..maxVoxels) {
-                "Volume too large for available device memory (${count} voxels; limit $maxVoxels)"
+            require(count > 0) { "Invalid NIfTI voxel count" }
+            val diskBacked = count > maxVoxels
+            require(!diskBacked || backingDirectory != null) {
+                "Volume requires disk-backed loading (${count} voxels)"
             }
 
             val datatype = header.getShort(70).toInt()
@@ -175,38 +198,89 @@ object NiftiReader {
                 remaining -= n
             }
 
-            val data = FloatArray(count.toInt())
+            val data = if (diskBacked) FloatArray(0) else FloatArray(count.toInt())
             val chunk = ByteArray(64 * 1024)
             val voxelsPerChunk = chunk.size / bytesPerVoxel
-            var index = 0
-            while (index < data.size) {
-                val batch = minOf(voxelsPerChunk, data.size - index)
-                stream.readFully(chunk, 0, batch * bytesPerVoxel)
-                val bytes = ByteBuffer.wrap(chunk, 0, batch * bytesPerVoxel).order(order)
-                for (p in 0 until batch) {
-                    val number = when (datatype) {
-                        2 -> (bytes.get().toInt() and 255).toDouble()
-                        256 -> bytes.get().toDouble()
-                        4 -> bytes.short.toDouble()
-                        512 -> (bytes.short.toInt() and 65535).toDouble()
-                        8 -> bytes.int.toDouble()
-                        16 -> bytes.float.toDouble()
-                        768 -> (bytes.int.toLong() and 0xffffffffL).toDouble()
-                        64 -> bytes.double
-                        else -> bytes.long.toDouble()
-                    }
-                    val result = number * slope + intercept
-                    data[index++] = if (result.isFinite()) result.toFloat() else 0f
+            val samples: FloatArray
+            var backing: MappedNiftiStore? = null
+            if (diskBacked) {
+                val directory = requireNotNull(backingDirectory)
+                require(directory.isDirectory || directory.mkdirs()) {
+                    "Cannot create NIfTI disk cache"
                 }
+                val needed = Math.multiplyExact(count, bytesPerVoxel.toLong())
+                require(directory.usableSpace > needed + 32L * 1024 * 1024) {
+                    "Insufficient storage for large NIfTI (need ${needed / 1048576} MiB plus 32 MiB free)"
+                }
+                val file = File.createTempFile("nifti-disk-", ".raw", directory)
+                val sampleCount = minOf(48_000L, count).toInt()
+                val stride = max(1L, count / sampleCount)
+                samples = FloatArray(sampleCount)
+                try {
+                    FileOutputStream(file).use { output ->
+                        var index = 0L
+                        var nextSample = 0
+                        while (index < count) {
+                            val batch = minOf(voxelsPerChunk.toLong(), count - index).toInt()
+                            stream.readFully(chunk, 0, batch * bytesPerVoxel)
+                            output.write(chunk, 0, batch * bytesPerVoxel)
+                            val bytes = ByteBuffer.wrap(chunk, 0, batch * bytesPerVoxel).order(order)
+                            while (nextSample < sampleCount) {
+                                val target = minOf(nextSample.toLong() * stride, count - 1)
+                                if (target >= index + batch) break
+                                bytes.position((target - index).toInt() * bytesPerVoxel)
+                                val scaled = sampleNumber(bytes, datatype) * slope + intercept
+                                samples[nextSample++] = if (scaled.isFinite()) scaled.toFloat() else 0f
+                            }
+                            index += batch
+                        }
+                    }
+                    backing = MappedNiftiStore(file, count, bytesPerVoxel, datatype, order, slope, intercept)
+                } catch (error: Throwable) {
+                    file.delete()
+                    throw error
+                }
+            } else {
+                var index = 0
+                while (index < data.size) {
+                    val batch = minOf(voxelsPerChunk, data.size - index)
+                    stream.readFully(chunk, 0, batch * bytesPerVoxel)
+                    val bytes = ByteBuffer.wrap(chunk, 0, batch * bytesPerVoxel).order(order)
+                    repeat(batch) {
+                        val result = sampleNumber(bytes, datatype) * slope + intercept
+                        data[index++] = if (result.isFinite()) result.toFloat() else 0f
+                    }
+                }
+                samples = FloatArray(minOf(48_000, data.size))
+                val stride = max(1, data.size / samples.size)
+                for (i in samples.indices) samples[i] = data[(i * stride).coerceAtMost(data.lastIndex)]
             }
-            val samples = FloatArray(minOf(48_000, data.size))
-            val stride = max(1, data.size / samples.size)
-            for (i in samples.indices) samples[i] = data[(i * stride).coerceAtMost(data.lastIndex)]
             samples.sort()
             val low = samples[(samples.lastIndex * 0.02).toInt()]
             val high = samples[(samples.lastIndex * 0.98).toInt()]
             val upper = if (high > low) high else low + 1f
-            return NiftiVolume(nx, ny, nz, data, affine, low, upper, transformSource, timepoints)
+            return NiftiVolume(nx, ny, nz, data, affine, low, upper, transformSource, timepoints, backing)
         }
+    }
+
+    fun cleanStaleBackings(directory: File) {
+        val cutoff = System.currentTimeMillis() - 24L * 60 * 60 * 1000
+        directory.listFiles()?.forEach { file ->
+            if (file.name.startsWith("nifti-disk-") && file.name.endsWith(".raw") &&
+                file.lastModified() < cutoff) file.delete()
+        }
+    }
+
+    private fun sampleNumber(bytes: ByteBuffer, datatype: Int): Double = when (datatype) {
+        2 -> (bytes.get().toInt() and 255).toDouble()
+        256 -> bytes.get().toDouble()
+        4 -> bytes.short.toDouble()
+        512 -> (bytes.short.toInt() and 65535).toDouble()
+        8 -> bytes.int.toDouble()
+        16 -> bytes.float.toDouble()
+        768 -> (bytes.int.toLong() and 0xffffffffL).toDouble()
+        64 -> bytes.double
+        1024 -> bytes.long.toDouble()
+        else -> throw IllegalArgumentException("Unsupported datatype")
     }
 }

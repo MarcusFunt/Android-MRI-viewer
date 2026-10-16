@@ -19,6 +19,7 @@ import com.marcusfunt.neuroview.conversion.DicomReader
 import com.marcusfunt.neuroview.conversion.DicomSeriesAssembler
 import com.marcusfunt.neuroview.conversion.NiftiSeriesWriter
 import com.marcusfunt.neuroview.mri.MriMemoryBudget
+import java.util.IdentityHashMap
 import com.marcusfunt.neuroview.mri.NiftiReader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -70,25 +71,32 @@ fun rememberConversionControls(): ConversionControls {
                         require(source.isNotEmpty() && source.size <= 1024) {
                             "Select 1–1024 DICOM files"
                         }
-                        val memoryCap = MriMemoryBudget.maxVoxels(
-                            Runtime.getRuntime().maxMemory(),
-                        )
-                        var accumulated = 0L
-                        val slices = source.mapIndexed { index, file ->
-                            val slice = context.contentResolver.openInputStream(file)?.use {
-                                DicomReader.read(it)
+                        // First pass reads metadata only. No 3D array or cumulative heap
+                        // limit: the writer reopens one DICOM slice at a time in sorted order.
+                        val sources = IdentityHashMap<com.marcusfunt.neuroview.conversion.DicomSlice, Uri>()
+                        val slices = source.mapIndexed { index, uri ->
+                            val slice = context.contentResolver.openInputStream(uri)?.use {
+                                DicomReader.read(it, includePixels = false)
                             } ?: throw IllegalArgumentException(
                                 "Cannot open DICOM file ${index + 1}"
                             )
-                            accumulated += slice.pixels.size.toLong()
-                            require(accumulated <= memoryCap) {
-                                "DICOM series exceeds device heap safety limit ($memoryCap voxels)"
-                            }
+                            sources[slice] = uri
                             slice
                         }
                         val series = DicomSeriesAssembler.assemble(slices)
-                        context.contentResolver.openOutputStream(output, "wt")?.use {
-                            NiftiSeriesWriter.writeGz(series, it)
+                        context.contentResolver.openOutputStream(output, "wt")?.use { stream ->
+                            NiftiSeriesWriter.writeGz(series, stream) { metadata ->
+                                val uri = requireNotNull(sources[metadata])
+                                val actual = context.contentResolver.openInputStream(uri)?.use {
+                                    DicomReader.read(it)
+                                } ?: throw IllegalArgumentException("DICOM source is unavailable")
+                                require(
+                                    actual.studyUid == metadata.studyUid &&
+                                    actual.seriesUid == metadata.seriesUid &&
+                                    actual.positionLps.contentEquals(metadata.positionLps)
+                                ) { "DICOM source changed during conversion" }
+                                actual.pixels
+                            }
                         } ?: throw IllegalArgumentException("Cannot write NIfTI destination")
                         series.nz
                     }

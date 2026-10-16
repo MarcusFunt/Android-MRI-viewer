@@ -131,4 +131,34 @@ class ConversionRoundTripTest {
         val volume = DicomSeriesAssembler.assemble(listOf(one))
         assertEquals(3.5, volume.affine.axisSpacing(2), 0.0001)
     }
+
+    @Test fun metadataOnlyDicomPassAndSliceAtATimeWriting() {
+        val zipped = ByteArrayOutputStream()
+        DerivedDicomWriter.writeZip(volume(), zipped)
+        val sourceFiles = java.util.IdentityHashMap<DicomSlice, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(zipped.toByteArray())).use { zip ->
+            while (zip.nextEntry != null) {
+                val sliceBytes = ByteArrayOutputStream()
+                zip.copyTo(sliceBytes)
+                val bytes = sliceBytes.toByteArray()
+                val metadata = DicomReader.read(ByteArrayInputStream(bytes), includePixels = false)
+                assertTrue(metadata.pixels.isEmpty())
+                sourceFiles[metadata] = bytes
+                zip.closeEntry()
+            }
+        }
+        val ordered = DicomSeriesAssembler.assemble(sourceFiles.keys.toList().reversed())
+        var readCount = 0
+        val converted = ByteArrayOutputStream()
+        NiftiSeriesWriter.writeGz(ordered, converted) { meta ->
+            readCount++
+            DicomReader.read(ByteArrayInputStream(sourceFiles[meta]!!)).pixels
+        }
+        assertEquals(3, readCount)
+        val output = NiftiReader.read(ByteArrayInputStream(converted.toByteArray()))
+        val original = volume()
+        for (i in original.values.indices) assertEquals(original.values[i], output.values[i], 0.002f)
+        assertEquals(original.affine.world(0.0, 0.0, 0.0).toList(),
+            output.affine.world(0.0, 0.0, 0.0).toList())
+    }
 }

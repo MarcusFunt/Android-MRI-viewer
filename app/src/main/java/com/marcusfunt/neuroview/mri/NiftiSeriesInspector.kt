@@ -59,9 +59,8 @@ object NiftiSeriesInspector {
             require(dimensionality in 3..7) { "Not a 3D/4D NIfTI volume" }
             val dims = (1..3).map { buffer.getShort(40 + it * 2).toInt() }
             require(dims.all { it in 1..4096 }) { "Invalid image dimensions" }
-            require(dims.fold(1L) { acc, dim -> acc * dim } <= NiftiReader.MAX_VOXELS) {
-                "Volume exceeds mobile memory limit"
-            }
+            // Cataloging is header-only: large scans need no voxel heap allocation.
+            // Disk space is checked when a volume is opened in the viewer.
             require((5..7).all { buffer.getShort(40 + it * 2).toInt() <= 1 }) {
                 "Unsupported multi-channel NIfTI"
             }

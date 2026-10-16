@@ -1,6 +1,5 @@
 package com.marcusfunt.neuroview.conversion
 
-import com.marcusfunt.neuroview.mri.NiftiReader
 import com.marcusfunt.neuroview.mri.SpatialAffine
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -20,7 +19,7 @@ object DicomSeriesAssembler {
         require(files.isNotEmpty() && files.size <= 1024) { "Select 1–1024 DICOM slices" }
         val first = files.first()
         val pixels = first.rows.toLong() * first.columns * files.size
-        require(pixels in 1..NiftiReader.MAX_VOXELS) { "DICOM series too large for this device" }
+        require(pixels > 0) { "Invalid DICOM series pixel count" }
         val a = first.orientationLps
         val iVector = a.copyOfRange(0, 3)
         val jVector = a.copyOfRange(3, 6)

@@ -2,6 +2,7 @@ package com.marcusfunt.neuroview.mri
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.nio.file.Files
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.GZIPOutputStream
@@ -128,5 +129,37 @@ class NiftiReaderTest {
             ByteArrayInputStream(synthetic(sform = false, qform = false)),
         )
         assertTrue(volume.transformSource.startsWith("NO ORIENTATION"))
+    }
+
+    @Test fun diskBackedMatchesInMemoryForBigEndianGzipAndCleansCache() {
+        val source = synthetic(
+            nx = 7, ny = 4, nz = 3, datatype = 4,
+            order = ByteOrder.BIG_ENDIAN, slope = 2.5f, intercept = -7f,
+        )
+        val compressed = ByteArrayOutputStream().also { dst ->
+            GZIPOutputStream(dst).use { it.write(source) }
+        }.toByteArray()
+        val expected = NiftiReader.read(ByteArrayInputStream(compressed))
+        val dir = Files.createTempDirectory("nifti-disk-test").toFile()
+        try {
+            val large = NiftiReader.read(
+                ByteArrayInputStream(compressed), maxVoxels = 2, backingDirectory = dir,
+            )
+            assertTrue(large.isDiskBacked)
+            assertEquals(0, large.values.size)
+            for (k in 0 until 3) for (j in 0 until 4) for (i in 0 until 7) {
+                assertEquals(expected.nearest(i, j, k), large.nearest(i, j, k), 0.0001f)
+            }
+            assertEquals(expected.percentileLow, large.percentileLow, 0.0001f)
+            assertEquals(expected.percentileHigh, large.percentileHigh, 0.0001f)
+            large.close()
+            // Windows locks active mapped views until JVM GC; Android/Linux can unlink immediately.
+            if (System.getProperty("os.name")?.startsWith("Windows") != true) {
+                assertEquals(0, dir.listFiles()?.size ?: -1)
+            }
+        } finally {
+            dir.listFiles()?.forEach { it.delete() }
+            dir.delete()
+        }
     }
 }

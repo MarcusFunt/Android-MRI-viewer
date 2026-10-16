@@ -43,7 +43,7 @@ object DicomReader {
         0x00280100, 0x00280101, 0x00280102, 0x00280103,
     )
 
-    fun read(input: InputStream): DicomSlice {
+    fun read(input: InputStream, includePixels: Boolean = true): DicomSlice {
         val stream = DataInputStream(BufferedInputStream(input, 64 * 1024))
         val preamble = ByteArray(132)
         stream.readFully(preamble)
@@ -70,7 +70,9 @@ object DicomReader {
         while (nextTag != null) {
             val tag = nextTag
             if (tag == TAG_PIXEL_DATA || tag in textTags || tag in numericTags) {
-                val element = readElement(stream, explicit, tag, keep = true)
+                val element = readElement(
+                    stream, explicit, tag, keep = tag != TAG_PIXEL_DATA || includePixels,
+                )
                 if (element != null) data[tag] = element
                 if (tag == TAG_PIXEL_DATA) break
             } else {
@@ -110,9 +112,10 @@ object DicomReader {
         val signed = us(0x00280103, "PixelRepresentation")
         require(bits in listOf(8, 16) && stored in 1..bits && highBit == stored - 1 &&
             signed in 0..1) { "Unsupported DICOM pixel packing" }
-        val pixel = data[TAG_PIXEL_DATA] ?: throw IllegalArgumentException("Missing DICOM PixelData")
+        val pixel = data[TAG_PIXEL_DATA]
         val needed = rows.toLong() * columns * (bits / 8)
-        require(needed <= MAX_ELEMENT && pixel.size.toLong() in needed..(needed + 1)) {
+        require(needed <= MAX_ELEMENT && (!includePixels ||
+            (pixel != null && pixel.size.toLong() in needed..(needed + 1)))) {
             "DICOM PixelData does not match image dimensions"
         }
         val slope = data[0x00281053]?.let(::asText)?.toDoubleOrNull() ?: 1.0
@@ -122,18 +125,21 @@ object DicomReader {
         }
         val mask = (1 shl stored) - 1
         val signBit = 1 shl (stored - 1)
-        val values = FloatArray(rows * columns)
-        for (idx in values.indices) {
-            val raw = if (bits == 8) pixel[idx].toInt() and 255 else {
-                val offset = idx * 2
-                (pixel[offset].toInt() and 255) or ((pixel[offset + 1].toInt() and 255) shl 8)
-            } and mask
-            val number = if (signed == 1 && raw and signBit != 0) raw - (1 shl stored) else raw
-            val scaled = number.toDouble() * slope + intercept
-            require(scaled.isFinite() && abs(scaled) <= Float.MAX_VALUE) {
-                "Unrepresentable DICOM intensity"
+        val values = if (includePixels) FloatArray(rows * columns) else FloatArray(0)
+        if (includePixels) {
+            val rawPixels = requireNotNull(pixel)
+            for (idx in values.indices) {
+                val raw = if (bits == 8) rawPixels[idx].toInt() and 255 else {
+                    val offset = idx * 2
+                    (rawPixels[offset].toInt() and 255) or ((rawPixels[offset + 1].toInt() and 255) shl 8)
+                } and mask
+                val number = if (signed == 1 && raw and signBit != 0) raw - (1 shl stored) else raw
+                val scaled = number.toDouble() * slope + intercept
+                require(scaled.isFinite() && abs(scaled) <= Float.MAX_VALUE) {
+                    "Unrepresentable DICOM intensity"
+                }
+                values[idx] = scaled.toFloat()
             }
-            values[idx] = scaled.toFloat()
         }
 
         val spacing = numbers(0x00280030, 2, "PixelSpacing")

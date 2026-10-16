@@ -91,11 +91,10 @@ class NiftiSeriesInspectorTest {
     }
 
     @Test
-    fun refusesOversizedVolumesBeforeReadingPixels() {
+    fun acceptsLargeValidHeadersWithoutAllocatingVoxelArrays() {
         val header = niftiHeader(dimensions = Triple(4096, 4096, 4096))
-        assertThrows(IllegalArgumentException::class.java) {
-            NiftiSeriesInspector.inspect(ByteArrayInputStream(header))
-        }
+        val metadata = NiftiSeriesInspector.inspect(ByteArrayInputStream(header))
+        assertEquals(listOf(4096, 4096, 4096), metadata.dimensions)
     }
 
     @Test
@@ -103,5 +102,25 @@ class NiftiSeriesInspectorTest {
         val header = niftiHeader()
         val data = NiftiSeriesInspector.inspect(ByteArrayInputStream(header.copyOf(348)))
         assertTrue(data.dimensions[0] > 0)
+    }
+
+    @Test fun veryLargeVolumesCanBeCataloguedFromHeaderOnly() {
+        val header = ByteBuffer.allocate(352).order(ByteOrder.LITTLE_ENDIAN)
+        header.putInt(0, 348)
+        header.putShort(40, 3)
+        header.putShort(42, 1024)
+        header.putShort(44, 1024)
+        header.putShort(46, 130)
+        header.putShort(70, 4)
+        header.putShort(72, 16)
+        header.putFloat(80, 1f)
+        header.putFloat(84, 1f)
+        header.putFloat(88, 1f)
+        header.putFloat(108, 352f)
+        header.put(344, 'n'.code.toByte())
+        header.put(345, '+'.code.toByte())
+        header.put(346, '1'.code.toByte())
+        val result = NiftiSeriesInspector.inspect(ByteArrayInputStream(header.array()))
+        assertEquals(listOf(1024, 1024, 130), result.dimensions)
     }
 }

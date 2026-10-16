@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -36,6 +37,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 sealed interface VolumeLoadState {
     data object Empty : VolumeLoadState
@@ -50,7 +52,10 @@ fun NeuroViewApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val conversions = rememberConversionControls()
-    val catalog = remember(context.applicationContext) { ScanCatalog(context.applicationContext) }
+    val catalog = remember(context.applicationContext) {
+        NiftiReader.cleanStaleBackings(File(context.cacheDir, "nifti_mapped"))
+        ScanCatalog(context.applicationContext)
+    }
     var snapshot by remember { mutableStateOf(catalog.load()) }
     var importBusy by remember { mutableStateOf(false) }
     var editBusy by remember { mutableStateOf(false) }
@@ -98,7 +103,11 @@ fun NeuroViewApp() {
                         }
                     }.getOrNull() ?: "Opened NIfTI volume"
                     val volume = context.contentResolver.openInputStream(uri)?.use {
-                        NiftiReader.read(it, MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory()))
+                        NiftiReader.read(
+                            it,
+                            MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory()),
+                            File(context.cacheDir, "nifti_mapped"),
+                        )
                     } ?: throw IllegalArgumentException("Unable to open selected volume")
                     VolumeLoadState.Ready(name, volume)
                 }
@@ -114,6 +123,12 @@ fun NeuroViewApp() {
                 )
             }
         }
+    }
+
+    // Release temporary voxel files on series changes or viewer disposal.
+    DisposableEffect(volumeState) {
+        val volume = (volumeState as? VolumeLoadState.Ready)?.volume
+        onDispose { volume?.close() }
     }
 
     val picker = rememberLauncherForActivityResult(

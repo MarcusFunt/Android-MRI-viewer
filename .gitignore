@@ -34,3 +34,6 @@ exports/
 *.nvd
 *.bval
 *.bvec
+
+# Kotlin local compiler cache
+/.kotlin/
