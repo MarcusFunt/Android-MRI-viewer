@@ -69,6 +69,32 @@ From **Library** you can now:
 
 **Privacy:** The catalog lives in app-private SharedPreferences (not encrypted); cached derived MRI thumbnails live in app-private cache. Neither is sent over the network. Android backups are disabled. If the app is uninstalled, the private catalog is lost but original source MRI documents remain where they were. Avoid making diagnostic decisions from this educational viewer.
 
+## Phase 6: Offline DICOM ↔ NIfTI conversion
+
+Open **Library** for the two conversion workflows:
+
+**DICOM → NIfTI (.nii.gz)**
+
+1. Tap **Convert DICOM Series → NIfTI**.
+2. Select all the **single-frame, uncompressed** DICOM Part 10 files belonging to one MR series. Mixing series is rejected.
+3. Choose a destination and save the generated `.nii.gz` file. Import that NIfTI to browse it in the library.
+4. The converter uses each slice's DICOM LPS ImagePositionPatient / ImageOrientationPatient / PixelSpacing and writes an NIfTI RAS+ sform; the raw pixels are linearly rescaled to float32.
+
+**NIfTI → derived DICOM (.zip)**
+
+1. Find a NIfTI entry in **Library**.
+2. Tap **Export DERIVED DICOM (ZIP)**, choose a destination, and save.
+3. The ZIP contains one DICOM Part 10 Secondary Capture `.dcm` file per NIfTI k-slice, using distinct new DICOM UIDs, a derivation description, LPS spatial attributes, and 16-bit monochrome pixels.
+4. The converter normalizes intensities to uint16 and supplies RescaleSlope/Intercept. It does not reconstruct scanner settings, original identifiers, patient identity, or acquired MR image objects.
+
+**Explicit compatibility restrictions:**
+- DICOM reader: Part 10, Explicit VR Little Endian or Implicit VR Little Endian, single-frame MONOCHROME2, integer 8/16-bit grayscale, consistent positions/orientation/spacing and one StudyInstanceUID + SeriesInstanceUID. JPEG/JPEG-LS/JPEG 2000, RLE, enhanced multiframe, mosaic/Siemens CSA, RGB, undefined-length sequences, non-Part-10 and unusual signed packing are rejected with an explanation.
+- NIfTI→DICOM: sform/qform must provide trustworthy orientation; in-plane sheared affines are rejected. Output is **anonymized in header fields but not guaranteed de-identified from voxel imagery**, e.g. a face may still be recognizable.
+- Only 3D spatial volumes are output, and the NIfTI loader uses only the first frame of 4D data. Source clinical metadata cannot be losslessly recovered. Exported DICOM is **DERIVED SECONDARY CAPTURE**, not a scanner-original MR series.
+- DICOM conversion has not been validated against clinical scanners or diagnostic viewers. For educational use only; **not for diagnostic use**.
+
+All processing happens on the Android device via Storage Access Framework. The app requests no network or broad filesystem permission. If saving fails, it attempts to remove the incomplete output document and warns if cleanup is unavailable.
+
 ## Open in Android Studio
 
 1. Clone this repository and open its root directory in a recent Android Studio.
@@ -84,7 +110,7 @@ Versions: AGP 9.4.0, Gradle 9.6.0, Kotlin 2.2.21, Compose BOM 2026.09.00, Naviga
 - Phase 3 — Real NIfTI loading and multiplanar viewing. **Implemented.**
 - Phase 4 — Scan and series selection from imported datasets. **Implemented for multiple NIfTI documents.**
 - Phase 5 — Local library with SAF import and safe removal of in-app references. **Implemented.**
-- Phase 6 — DICOM to NIfTI and clearly labeled derived-DICOM export.
+- Phase 6 — DICOM to NIfTI and clearly labeled derived-DICOM export. **Implemented with restricted transfer syntax support.**
 - Phase 7 — Device validation, performance, and clinical-orientation sanity checks.
 
 Sensitive images, generated datasets, and patient exports are excluded by `.gitignore`. Use only public or synthetic test data in the source tree.
