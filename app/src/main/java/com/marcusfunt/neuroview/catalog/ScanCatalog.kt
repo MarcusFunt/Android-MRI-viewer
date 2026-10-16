@@ -36,7 +36,11 @@ data class ScanRecord(
     val documentUri: String,
     val displayName: String,
     val metadata: NiftiSeriesMetadata,
-)
+    /** Optional in-app alias; the actual filename and external NIfTI are unchanged. */
+    val customName: String? = null,
+) {
+    val label: String get() = customName?.takeIf { it.isNotBlank() } ?: displayName
+}
 
 data class ScanCatalogSnapshot(
     val collections: List<ImportCollection> = emptyList(),
@@ -54,7 +58,7 @@ data class ImportResult(
 
 /**
  * Lightweight, app-private URI catalog. Never copies the original MRI data.
- * No deletion/metadata edits or actual DICOM study organization (Phase 5/6).
+ * Allows editing only in-app references and labels. Original MRI files stay untouched.
  */
 class ScanCatalog(private val context: Context) {
     private val preferences = context.getSharedPreferences("scan_catalog_v1", Context.MODE_PRIVATE)
@@ -62,6 +66,7 @@ class ScanCatalog(private val context: Context) {
     // Multiple visible list cells may start image work together. Serialize big-volume decoding
     // so simultaneous full-memory reads do not exhaust a modest Android phone.
     private val thumbnailMutex = Mutex()
+    private val catalogMutex = Mutex()
 
     fun load(): ScanCatalogSnapshot {
         return try {
@@ -89,6 +94,7 @@ class ScanCatalog(private val context: Context) {
                         collectionId = item.getString("collectionId"),
                         documentUri = item.getString("uri"),
                         displayName = item.getString("name"),
+                        customName = item.optString("customName").takeIf { it.isNotBlank() },
                         metadata = NiftiSeriesMetadata(
                             dimensions = dimensions,
                             spacingMm = spacings,
@@ -107,6 +113,7 @@ class ScanCatalog(private val context: Context) {
     }
 
     suspend fun importDocuments(documents: List<Uri>): ImportResult = withContext(Dispatchers.IO) {
+        catalogMutex.withLock {
         var snapshot = load()
         val records = mutableListOf<ScanRecord>()
         val errors = mutableListOf<String>()
@@ -142,7 +149,8 @@ class ScanCatalog(private val context: Context) {
                     metadata = metadata,
                 )
             } catch (exception: Exception) {
-                // Message is user-visible only. Never send patient filenames to app logs.
+                // Invalid files must not retain a persistent read grant.
+                releaseReadPermission(uri.toString())
                 errors += "$name: ${exception.message ?: "Unable to inspect header"}"
             }
         }
@@ -159,6 +167,69 @@ class ScanCatalog(private val context: Context) {
             store(snapshot)
         }
         ImportResult(records.size, skipped, errors.take(5))
+        }
+    }
+
+    /** Atomic and persistent catalog-only edits. The URI and source bytes never change. */
+    suspend fun createCollection(label: String): ScanCatalogSnapshot =
+        edit { original ->
+            CatalogEdits.createCollection(
+                original, UUID.randomUUID().toString(), label, System.currentTimeMillis(),
+            )
+        }
+
+    suspend fun renameCollection(id: String, label: String): ScanCatalogSnapshot =
+        edit { CatalogEdits.renameCollection(it, id, label) }
+
+    suspend fun renameSeries(id: String, alias: String): ScanCatalogSnapshot =
+        edit { CatalogEdits.renameSeries(it, id, alias) }
+
+    suspend fun resetSeriesName(id: String): ScanCatalogSnapshot =
+        edit { CatalogEdits.resetSeriesName(it, id) }
+
+    suspend fun moveSeries(id: String, collectionId: String): ScanCatalogSnapshot =
+        edit { CatalogEdits.moveSeries(it, id, collectionId) }
+
+    suspend fun removeSeries(id: String): ScanCatalogSnapshot =
+        edit { CatalogEdits.removeSeries(it, id) }
+
+    /** Removes this collection AND all its in-app references; never deletes source files. */
+    suspend fun removeCollection(id: String): ScanCatalogSnapshot =
+        edit { CatalogEdits.removeCollection(it, id) }
+
+    suspend fun clearThumbnailCache(): Int = withContext(Dispatchers.IO) {
+        thumbnailMutex.withLock {
+            if (!thumbnailsDir.isDirectory) 0 else {
+                thumbnailsDir.listFiles()?.count { it.isFile && it.delete() } ?: 0
+            }
+        }
+    }
+
+    private suspend fun edit(
+        operation: (ScanCatalogSnapshot) -> ScanCatalogSnapshot,
+    ): ScanCatalogSnapshot = withContext(Dispatchers.IO) {
+        catalogMutex.withLock {
+            val before = load()
+            val after = operation(before)
+            store(after) // commit first; do not discard grants/files if persistence fails.
+            val remainingIds = after.scans.mapTo(mutableSetOf()) { it.id }
+            val remainingUris = after.scans.mapTo(mutableSetOf()) { it.documentUri }
+            before.scans.filterNot { it.id in remainingIds }.forEach { removed ->
+                File(thumbnailsDir, "${removed.id}.png").delete()
+                if (removed.documentUri !in remainingUris) {
+                    releaseReadPermission(removed.documentUri)
+                }
+            }
+            after
+        }
+    }
+
+    private fun releaseReadPermission(documentUri: String) {
+        runCatching {
+            context.contentResolver.releasePersistableUriPermission(
+                Uri.parse(documentUri), Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
     }
 
     suspend fun loadThumbnail(scan: ScanRecord): Bitmap? = withContext(Dispatchers.IO) {
