@@ -21,6 +21,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.marcusfunt.neuroview.catalog.ScanCatalog
+import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
 import com.marcusfunt.neuroview.mri.NiftiReader
 import com.marcusfunt.neuroview.mri.NiftiVolume
@@ -50,8 +51,30 @@ fun NeuroViewApp() {
     val catalog = remember(context.applicationContext) { ScanCatalog(context.applicationContext) }
     var snapshot by remember { mutableStateOf(catalog.load()) }
     var importBusy by remember { mutableStateOf(false) }
+    var editBusy by remember { mutableStateOf(false) }
+    var libraryMessage by remember { mutableStateOf<String?>(null) }
     var importMessage by remember { mutableStateOf<String?>(null) }
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedScanId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    fun updateCatalog(description: String, action: suspend () -> ScanCatalogSnapshot) {
+        if (importBusy || editBusy) return
+        editBusy = true
+        libraryMessage = null
+        scope.launch {
+            try {
+                snapshot = action()
+                libraryMessage = description
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                libraryMessage = "Library operation failed: ${error.message ?: "Unknown error"}"
+            } finally {
+                editBusy = false
+            }
+        }
+    }
+
 
     val backStack = rememberNavBackStack(Destination.Home)
     val navigate: (Destination) -> Unit = { NavigationActions.navigate(backStack, it) }
@@ -124,6 +147,7 @@ fun NeuroViewApp() {
 
     val openScan: (ScanRecord) -> Unit = { scan ->
         selectedUri = scan.documentUri
+        selectedScanId = scan.id
         navigate(Destination.Viewer(scan.id))
     }
 
@@ -152,15 +176,75 @@ fun NeuroViewApp() {
                 entry<Destination.Library> {
                     LibraryScreen(
                         snapshot = snapshot,
-                        isImporting = importBusy,
+                        isBusy = importBusy || editBusy,
+                        feedback = libraryMessage ?: importMessage,
                         onImport = chooseDocuments,
                         onBrowse = { navigate(Destination.Series) },
+                        onOpenScan = openScan,
+                        onCreateCollection = { label ->
+                            updateCatalog("Collection created") { catalog.createCollection(label) }
+                        },
+                        onRenameCollection = { id, name ->
+                            updateCatalog("Collection renamed") { catalog.renameCollection(id, name) }
+                        },
+                        onRemoveCollection = { id ->
+                            val removed = snapshot.inCollection(id)
+                            updateCatalog("Collection and references removed; original files untouched") {
+                                val updated = catalog.removeCollection(id)
+                                if (removed.any { it.id == selectedScanId }) {
+                                    selectedScanId = null
+                                    selectedUri = null
+                                }
+                                updated
+                            }
+                        },
+                        onRenameScan = { id, name ->
+                            updateCatalog("MRI label updated") { catalog.renameSeries(id, name) }
+                        },
+                        onResetScanName = { id ->
+                            updateCatalog("Original filename label restored") {
+                                catalog.resetSeriesName(id)
+                            }
+                        },
+                        onMoveScan = { id, collectionId ->
+                            updateCatalog("MRI moved to another collection") {
+                                catalog.moveSeries(id, collectionId)
+                            }
+                        },
+                        onRemoveScan = { id ->
+                            updateCatalog("MRI reference removed; source file untouched") {
+                                val updated = catalog.removeSeries(id)
+                                if (selectedScanId == id) {
+                                    selectedScanId = null
+                                    selectedUri = null
+                                }
+                                updated
+                            }
+                        },
+                        onClearThumbnails = {
+                            if (!importBusy && !editBusy) {
+                                editBusy = true
+                                scope.launch {
+                                    try {
+                                        val count = catalog.clearThumbnailCache()
+                                        libraryMessage = "Cleared $count cached thumbnails"
+                                    } catch (error: Exception) {
+                                        libraryMessage = error.message ?: "Cache cleanup failed"
+                                    } finally {
+                                        editBusy = false
+                                    }
+                                }
+                            }
+                        },
                         onBack = { NavigationActions.back(backStack) },
                     )
                 }
-                entry<Destination.Viewer> {
+                entry<Destination.Viewer> { destination ->
                     ViewerScreen(
                         volumeState = volumeState,
+                        displayNameOverride = snapshot.scans.firstOrNull {
+                            it.id == destination.seriesId
+                        }?.label,
                         onImport = chooseDocuments,
                         onNavigate = navigate,
                     )
