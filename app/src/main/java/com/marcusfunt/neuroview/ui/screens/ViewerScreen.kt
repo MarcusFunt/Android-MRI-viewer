@@ -71,6 +71,7 @@ import kotlin.math.roundToInt
 @Composable
 fun ViewerScreen(
     volumeState: VolumeLoadState,
+    displayNameOverride: String? = null,
     onImport: () -> Unit,
     onNavigate: (Destination) -> Unit,
 ) {
@@ -145,7 +146,7 @@ fun ViewerScreen(
                 TopAppBar(
                     title = {
                         Text(
-                            ready?.displayName ?: "MRI viewer",
+                            displayNameOverride ?: ready?.displayName ?: "MRI viewer",
                             maxLines = 1,
                             style = MaterialTheme.typography.titleMedium,
                         )
