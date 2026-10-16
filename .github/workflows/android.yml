@@ -88,6 +88,7 @@ jobs:
           script: |
             ./gradlew --no-daemon :app:connectedDebugAndroidTest
             mkdir -p app/build/emulator-qa
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb shell am start -n com.marcusfunt.neuroview/.MainActivity
             sleep 5
             adb exec-out screencap -p > app/build/emulator-qa/home.png
