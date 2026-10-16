@@ -1,6 +1,13 @@
 package com.marcusfunt.neuroview.ui.screens
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,11 +46,12 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -53,15 +61,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.marcusfunt.neuroview.mri.MprRenderSession
 import com.marcusfunt.neuroview.mri.MprRenderer
 import com.marcusfunt.neuroview.mri.MriPlane
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.navigation.Destination
 import com.marcusfunt.neuroview.ui.VolumeLoadState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -82,6 +100,7 @@ fun ViewerScreen(
     var windowWidth by rememberSaveable { mutableFloatStateOf(1.0f) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    var isScrubbing by remember { mutableStateOf(false) }
 
     val ready = volumeState as? VolumeLoadState.Ready
     val volume = ready?.volume
@@ -92,17 +111,43 @@ fun ViewerScreen(
         sliceIndex = if (volume != null) MprRenderer.sliceCount(volume, plane) / 2 else 0
     }
 
-    val bitmap by produceState<Bitmap?>(
-        initialValue = null,
-        volume, plane, selectedSlice, windowCenter, windowWidth,
-    ) {
-        value = if (volume == null) null else withContext(Dispatchers.Default) {
-            val image = MprRenderer.render(
-                volume, plane, selectedSlice, windowCenter, windowWidth,
-            )
-            Bitmap.createBitmap(
-                image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888,
-            )
+    // Preserve the previous frame until its replacement is ready. Heavy resampling
+    // runs off the UI thread; a conflated queue skips intermediate requests while
+    // ensuring continuous gestures can still finish and display preview frames.
+    // During interaction render a smaller preview, then refine at full resolution
+    // once the gesture/slider settles. Cached scalar slices avoid costly rereads
+    // when changing window levels or moving backwards through the stack.
+    var bitmap by remember(volume, plane) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(volume, plane) {
+        if (volume == null) return@LaunchedEffect
+        val preview = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 160) }
+        val full = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 384) }
+        snapshotFlow {
+            SliceRenderRequest(selectedSlice, windowCenter, windowWidth, isScrubbing)
+        }.distinctUntilChanged().conflate().collect { request ->
+            val quick = withContext(Dispatchers.Default) {
+                val context = currentCoroutineContext()
+                val image = preview.render(
+                    request.slice, request.center, request.width,
+                ) { context.ensureActive() }
+                Bitmap.createBitmap(image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
+            }
+            // Present completed previews during continuous drag. For still frames,
+            // do not display a request superseded by another slider/plane setting.
+            fun latest() = SliceRenderRequest(selectedSlice, windowCenter, windowWidth, isScrubbing)
+            if (request.scrubbing || latest() == request) bitmap = quick
+            if (!request.scrubbing && latest() == request) {
+                delay(72)
+                if (latest() != request) return@collect
+                val refined = withContext(Dispatchers.Default) {
+                    val context = currentCoroutineContext()
+                    val image = full.render(
+                        request.slice, request.center, request.width,
+                    ) { context.ensureActive() }
+                    Bitmap.createBitmap(image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
+                }
+                if (latest() == request) bitmap = refined
+            }
         }
     }
 
@@ -196,6 +241,7 @@ fun ViewerScreen(
                         selectedSlice = selectedSlice,
                         totalSlices = sliceCount,
                         onSliceChange = { sliceIndex = it.coerceIn(0, sliceCount - 1) },
+                        onScrubbingChanged = { isScrubbing = it },
                         onOpenPlanePanel = { panelOpen = true },
                         windowCenter = windowCenter,
                         onWindowCenter = { windowCenter = it },
@@ -207,9 +253,16 @@ fun ViewerScreen(
                 if (panelOpen) {
                     Box(
                         modifier = Modifier.fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.65f))
+                            .background(Color.Black.copy(alpha = 0.55f))
                             .clickable { panelOpen = false },
                     )
+                }
+                AnimatedVisibility(
+                    visible = panelOpen,
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    enter = fadeIn() + slideInHorizontally(initialOffsetX = { it }),
+                    exit = fadeOut() + slideOutHorizontally(targetOffsetX = { it }),
+                ) {
                     Surface(
                         modifier = Modifier.align(Alignment.CenterEnd)
                             .fillMaxHeight()
@@ -250,6 +303,13 @@ fun ViewerScreen(
     }
 }
 
+private data class SliceRenderRequest(
+    val slice: Int,
+    val center: Float,
+    val width: Float,
+    val scrubbing: Boolean,
+)
+
 @Composable
 private fun ViewerMessage(title: String, detail: String, onImport: () -> Unit) {
     Column(
@@ -277,6 +337,7 @@ private fun MriContent(
     selectedSlice: Int,
     totalSlices: Int,
     onSliceChange: (Int) -> Unit,
+    onScrubbingChanged: (Boolean) -> Unit,
     onOpenPlanePanel: () -> Unit,
     windowCenter: Float,
     onWindowCenter: (Float) -> Unit,
@@ -306,32 +367,77 @@ private fun MriContent(
             )
         }
 
-        var horizontalDrag = 0f
-        var verticalDrag = 0f
+        val flingScope = rememberCoroutineScope()
+        var flingJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
+        val currentScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
+        val currentOpenPlanePanel by rememberUpdatedState(onOpenPlanePanel)
         Box(
             modifier = Modifier.fillMaxWidth().weight(1f)
                 .background(Color.Black)
                 .pointerInput(volume, plane, totalSlices) {
+                    val pixelsPerSlice = 18.dp.toPx()
+                    var horizontalDrag = 0f
+                    var verticalDrag = 0f
+                    var anchorSlice = 0
+                    var scrollLocked = false
+                    var tracker = VelocityTracker()
                     detectDragGestures(
                         onDragStart = {
+                            flingJob?.cancel()
+                            flingJob = null
+                            anchorSlice = currentSlice
                             horizontalDrag = 0f
                             verticalDrag = 0f
+                            scrollLocked = false
+                            tracker = VelocityTracker()
+                            currentScrubbingChanged(true)
                         },
                         onDrag = { change, drag ->
                             change.consume()
                             horizontalDrag += drag.x
                             verticalDrag += drag.y
-                            if (abs(verticalDrag) > abs(horizontalDrag) &&
-                                abs(verticalDrag) >= 16f
-                            ) {
-                                val steps = (verticalDrag / 16f).toInt()
-                                currentOnSliceChange(currentSlice - steps)
-                                verticalDrag -= steps * 16f
+                            tracker.addPosition(change.uptimeMillis, change.position)
+                            if (!scrollLocked && abs(verticalDrag) + abs(horizontalDrag) > 12.dp.toPx()) {
+                                scrollLocked = abs(verticalDrag) > abs(horizontalDrag)
+                            }
+                            if (scrollLocked) {
+                                // Anchor to the start of the gesture; don't lose steps when
+                                // several pointer events arrive before recomposition.
+                                currentOnSliceChange(
+                                    (anchorSlice - (verticalDrag / pixelsPerSlice).toInt())
+                                        .coerceIn(0, totalSlices - 1),
+                                )
                             }
                         },
                         onDragEnd = {
-                            if (horizontalDrag < -90f) onOpenPlanePanel()
+                            if (!scrollLocked && horizontalDrag < -90.dp.toPx()) {
+                                currentOpenPlanePanel()
+                            }
+                            val pixelsPerSecond = tracker.calculateVelocity().y
+                            if (scrollLocked && abs(pixelsPerSecond) > 380f) {
+                                val initialSlice = (anchorSlice - (verticalDrag / pixelsPerSlice).toInt())
+                                    .coerceIn(0, totalSlices - 1).toFloat()
+                                flingJob = flingScope.launch {
+                                    try {
+                                        Animatable(initialSlice).animateDecay(
+                                            initialVelocity = (-pixelsPerSecond / pixelsPerSlice)
+                                                .coerceIn(-90f, 90f),
+                                            animationSpec = exponentialDecay(frictionMultiplier = 3.0f),
+                                        ) {
+                                            currentOnSliceChange(
+                                                value.roundToInt().coerceIn(0, totalSlices - 1),
+                                            )
+                                            // Clamp out-of-bounds values; decay naturally stops.
+                                        }
+                                    } finally {
+                                        if (currentCoroutineContext().isActive) currentScrubbingChanged(false)
+                                    }
+                                }
+                            } else {
+                                currentScrubbingChanged(false)
+                            }
                         },
+                        onDragCancel = { currentScrubbingChanged(false) },
                     )
                 },
             contentAlignment = Alignment.Center,
@@ -378,7 +484,12 @@ private fun MriContent(
         }
         Slider(
             value = selectedSlice.toFloat(),
-            onValueChange = { onSliceChange(it.roundToInt()) },
+            onValueChange = {
+                flingJob?.cancel()
+                onScrubbingChanged(true)
+                onSliceChange(it.roundToInt())
+            },
+            onValueChangeFinished = { onScrubbingChanged(false) },
             valueRange = 0f..(totalSlices - 1).coerceAtLeast(1).toFloat(),
             modifier = Modifier.fillMaxWidth(),
         )

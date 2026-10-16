@@ -147,3 +147,21 @@ Versions: AGP 9.4.0, Gradle 9.6.0, Kotlin 2.2.21, Compose BOM 2026.09.00, Naviga
 Sensitive images, generated datasets, and patient exports are excluded by `.gitignore`. Use only public or synthetic test data in the source tree.
 
 See [architecture notes](docs/ARCHITECTURE.md).
+
+## Smooth scrolling (v0.9.0)
+
+The MRI viewer now uses a reusable voxel-space sampling grid per anatomical plane,
+avoiding repeated spatial-affine computations for every rendered slice.
+A conflated renderer processes fast drag/fling/slider updates at a sustainable
+rate without queuing hundreds of stale frames. During interactive scrubbing it
+displays a 160-pixel preview, then refines to the existing 384-pixel quality
+after interaction stops; the original image data, voxel values and anatomical
+orientation are not changed. Nearby slices are cached as scalar intensity
+buffers, so changing brightness/window width does not repeat the expensive
+3-D interpolation. Drag gestures use a fixed starting slice to prevent lost
+steps and support gentle kinetic scroll inertia. The plane selector now slides
+and fades into view.
+
+All voxel resampling remains off the main UI thread. On-device scrolling
+performance depends on scan dimensions and storage speed (especially for
+disk-backed imports); do not interpret this as a guaranteed frame rate.
