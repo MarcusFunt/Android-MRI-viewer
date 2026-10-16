@@ -1,7 +1,7 @@
 package com.marcusfunt.neuroview.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -22,9 +22,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.marcusfunt.neuroview.ui.BrainPreview
 
 @Composable
 fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
@@ -32,32 +31,33 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("NEUROVIEW", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text("MRI EXPLORER", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "NEUROVIEW",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "MRI EXPLORER",
+                    color = MaterialTheme.colorScheme.secondary,
+                    style = MaterialTheme.typography.labelLarge,
+                )
             }
+
             Card(
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(vertical = 28.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(vertical = 22.dp),
                 shape = RoundedCornerShape(28.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             ) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("🧠", fontSize = 84.sp)
-                        Spacer(Modifier.height(18.dp))
-                        Text("3D brain preview", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Rotating model arrives in Phase 2",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                }
+                BrainPreview(modifier = Modifier.fillMaxSize())
             }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Button(onClick = onView, modifier = Modifier.fillMaxWidth().height(56.dp)) {
                     Text("VIEW MRI SERIES")
                 }
@@ -66,7 +66,11 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(10.dp))
-            Text("Offline-first • Phase 1 foundation", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Private by design • All preview rendering runs locally",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
     }
 }
