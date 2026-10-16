@@ -31,3 +31,11 @@ Screen data is explicitly placeholder-only in Phase 1, not a real scan. Later ph
 ## Boundaries
 
 Phase 1 deliberately does **not** include the 3D brain asset, image decoding/rendering, DICOM conversion, image-file import, library persistence, or clinical measurement tools.
+
+## Phase 2 brain preview rendering
+
+The Home Card hosts `BrainPreview`, which embeds `BrainGlSurfaceView` (OpenGL ES 2.0) via Compose `AndroidView`. Meshes are synthesized by the pure Kotlin `BrainGeometry` builder (two hemispheres, two cerebellar lobes, one stylized stem) and lit using a compact custom GLSL shader. Model geometry is only a decorative visualization and is not a medical atlas.
+
+`BrainGlSurfaceView` uses `RENDERMODE_WHEN_DIRTY`; touch gestures modify yaw/pitch, while an Activity-lifecycle-bound animator issues approximately 30 render requests per second. Pausing the Activity stops both animation and the GL thread. When Android disables animators or GLES2 isn't supported, animation stops or a text fallback is shown. The preview has no dependency on MRI input, which remains separate for Phase 3.
+
+Manual QA for device/emulator: Home displays the shaded brain, yaw changes with drag, pitch is clamped, Pause holds the view still, Resume restarts, Reset returns to the default angle, Android back navigation still works, and opening Library/Series stops the home rendering. Test portrait/landscape, dark theme, and Android 8.0+; no medical use is intended.
