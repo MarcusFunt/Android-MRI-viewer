@@ -1,9 +1,9 @@
 name: Android CI
 on:
   push:
-    branches: [main]
+    branches: [main, feat/phase4-series-catalog]
   pull_request:
-    branches: [main]
+    branches: [main, feat/phase3-nifti-mpr-viewer]
   workflow_dispatch:
 
 permissions:
