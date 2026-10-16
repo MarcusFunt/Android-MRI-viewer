@@ -65,6 +65,7 @@ fun LibraryScreen(
     feedback: String?,
     onImport: () -> Unit,
     onConvertDicom: () -> Unit,
+    onConvertDicomFiles: () -> Unit,
     onExportDicom: (ScanRecord) -> Unit,
     onBrowse: () -> Unit,
     onOpenScan: (ScanRecord) -> Unit,
@@ -127,12 +128,17 @@ fun LibraryScreen(
                         onClick = onConvertDicom,
                         enabled = !isBusy,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("CONVERT DICOM SERIES → NIFTI") }
+                    ) { Text("CONVERT DICOM FOLDER → NIFTI") }
                     Text(
-                        "Choose uncompressed single-frame DICOM slices, then save a .nii.gz file.",
+                        "Choose a folder containing one DICOM series (including extensionless files), then save a .nii.gz file.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelSmall,
                     )
+                    OutlinedButton(
+                        onClick = onConvertDicomFiles,
+                        enabled = !isBusy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("OR SELECT INDIVIDUAL DICOM FILES") }
                     OutlinedButton(
                         onClick = { dialog = LibraryDialog.CreateCollection },
                         enabled = !isBusy,

@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.marcusfunt.neuroview.catalog.ScanRecord
 import com.marcusfunt.neuroview.conversion.DerivedDicomWriter
+import com.marcusfunt.neuroview.conversion.DicomFolderScanner
 import com.marcusfunt.neuroview.conversion.DicomReader
 import com.marcusfunt.neuroview.conversion.DicomSeriesAssembler
 import com.marcusfunt.neuroview.conversion.NiftiSeriesWriter
@@ -28,6 +29,7 @@ data class ConversionControls(
     val busy: Boolean,
     val message: String?,
     val selectDicomSeries: () -> Unit,
+    val selectDicomFolder: () -> Unit,
     val exportNiftiAsDicom: (ScanRecord) -> Unit,
 )
 
@@ -38,6 +40,7 @@ fun rememberConversionControls(): ConversionControls {
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var dicomSource by remember { mutableStateOf(emptyList<Uri>()) }
+    var ignoredFolderFiles by remember { mutableStateOf(0) }
     var niftiSource by remember { mutableStateOf<ScanRecord?>(null) }
 
     // The document is newly created through SAF; attempt removal if a write fails.
@@ -53,6 +56,10 @@ fun rememberConversionControls(): ConversionControls {
     val createNifti = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/gzip"),
     ) { output ->
+        if (output == null) {
+            dicomSource = emptyList()
+            ignoredFolderFiles = 0
+        }
         if (output != null && !busy) {
             val source = dicomSource.toList()
             busy = true
@@ -85,8 +92,9 @@ fun rememberConversionControls(): ConversionControls {
                         } ?: throw IllegalArgumentException("Cannot write NIfTI destination")
                         series.nz
                     }
-                    message = "Saved $count DICOM slices as .nii.gz. " +
-                        "Use Import NIfTI to add the result to your library."
+                    message = "Saved $count DICOM slices as .nii.gz." +
+                        (if (ignoredFolderFiles > 0) " Skipped $ignoredFolderFiles non-DICOM files." else "") +
+                        " Use Import NIfTI to add the result to your library."
                 } catch (cancelled: CancellationException) {
                     withContext(Dispatchers.IO) { reportFailure(output, cancelled) }
                     throw cancelled
@@ -99,6 +107,7 @@ fun rememberConversionControls(): ConversionControls {
                 } finally {
                     busy = false
                     dicomSource = emptyList()
+                    ignoredFolderFiles = 0
                 }
             }
         }
@@ -112,7 +121,41 @@ fun rememberConversionControls(): ConversionControls {
                 message = "Select at most 1024 single-frame DICOM files."
             } else {
                 dicomSource = chosen
+                ignoredFolderFiles = 0
                 createNifti.launch("NeuroView_DICOM_derived.nii.gz")
+            }
+        }
+    }
+
+    val pickDicomFolder = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { treeUri ->
+        if (treeUri != null && !busy) {
+            busy = true
+            message = "Checking DICOM files in the selected folder…"
+            scope.launch {
+                try {
+                    val selection = withContext(Dispatchers.IO) {
+                        DicomFolderScanner.scan(context.contentResolver, treeUri)
+                    }
+                    dicomSource = selection.documents
+                    ignoredFolderFiles = selection.ignoredFiles
+                    message = "Found ${selection.documents.size} DICOM slices. Choose where to save the NIfTI."
+                    busy = false
+                    createNifti.launch("NeuroView_DICOM_derived.nii.gz")
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    dicomSource = emptyList()
+                    ignoredFolderFiles = 0
+                    message = "DICOM folder could not be opened: ${error.message ?: "Unknown error"}"
+                } catch (_: OutOfMemoryError) {
+                    dicomSource = emptyList()
+                    ignoredFolderFiles = 0
+                    message = "Not enough memory to inspect this DICOM folder"
+                } finally {
+                    busy = false
+                }
             }
         }
     }
@@ -158,6 +201,12 @@ fun rememberConversionControls(): ConversionControls {
     return ConversionControls(
         busy = busy,
         message = message,
+        selectDicomFolder = {
+            if (!busy) {
+                message = null
+                pickDicomFolder.launch(null)
+            }
+        },
         selectDicomSeries = {
             if (!busy) {
                 message = null

@@ -82,10 +82,11 @@ Open **Library** for the two conversion workflows:
 
 **DICOM → NIfTI (.nii.gz)**
 
-1. Tap **Convert DICOM Series → NIfTI**.
-2. Select all the **single-frame, uncompressed** DICOM Part 10 files belonging to one MR series. Mixing series is rejected.
-3. Choose a destination and save the generated `.nii.gz` file. Import that NIfTI to browse it in the library.
-4. The converter uses each slice's DICOM LPS ImagePositionPatient / ImageOrientationPatient / PixelSpacing and writes an NIfTI RAS+ sform; the raw pixels are linearly rescaled to float32.
+1. Tap **Convert DICOM Folder → NIfTI** and choose the directory containing the entire MR series. Subdirectories are scanned too; extensionless DICOM Part 10 files are recognized from their headers. Non-DICOM sidecars are skipped.
+2. The folder must contain **one compatible series** of 1–1024 uncompressed, single-frame DICOM slices. If the folder contains multiple studies/series or irregular geometry, conversion is rejected rather than mixing volumes. Files with known DICOM extensions but missing Part 10 headers are reported as unsupported.
+3. Choose where to save the generated `.nii.gz`. The original DICOM files are not changed. Tap **Import NIfTI Files** to add the saved result to the library.
+4. Alternatively, tap **Or Select Individual DICOM Files** to use the original multi-select picker.
+5. The converter sorts slices by their DICOM patient-space positions, converts LPS ImagePositionPatient / ImageOrientationPatient / PixelSpacing to a NIfTI RAS+ sform, and scales pixels to float32. All conversion runs locally.
 
 **NIfTI → derived DICOM (.zip)**
 
