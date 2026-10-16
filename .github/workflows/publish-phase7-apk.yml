@@ -1,0 +1,95 @@
+name: Publish tested Phase 7 APK
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-phase7-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-neuroview-v0.7.0
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILT_RUN: '38892440182'
+      BUILT_SHA: '6511d037d559445120c5cf2988ede492ed324694'
+      TAG: 'v0.7.0'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Verify source build is successful and from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILT_RUN" \
+            --jq '{conclusion,head_sha,head_branch}' > /tmp/build.json
+          cat /tmp/build.json
+          jq -e --arg sha "$BUILT_SHA" \
+            '.conclusion == "success" and .head_sha == $sha and .head_branch == "main"' \
+            /tmp/build.json
+      - name: Download original tested APK from Android CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh run download "$BUILT_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name neuroview-debug --dir release-assets
+          test -s release-assets/app-debug.apk
+          mv release-assets/app-debug.apk release-assets/NeuroView-v0.7.0-debug.apk
+          (cd release-assets && sha256sum NeuroView-v0.7.0-debug.apk \
+            > NeuroView-v0.7.0-debug.apk.sha256)
+      - name: Publish GitHub pre-release and attach original tested APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'EOF'
+          ## NeuroView Android v0.7.0 — Phase 7 preview
+          
+          Offline-first experimental MRI viewer with NIfTI viewing and a constrained
+          DICOM/NIfTI conversion workflow, local library, and three-plane MPR.
+          
+          **Preview build only:** This is a debug-signed APK, **not for medical diagnosis**.
+          Physical Android phone testing and real scanner dataset verification
+          are still pending. DICOM support is intentionally limited to supported
+          uncompressed single-frame monochrome files.
+          
+          **Build provenance:** Android CI run 38892440182 from commit
+          `6511d037d559445120c5cf2988ede492ed324694` (main), verified successful.
+          The uploaded APK is the original CI artifact, not a separate rebuilt binary.
+          
+          Download **NeuroView-v0.7.0-debug.apk** and optionally verify it with
+          the adjacent SHA-256 checksum file.
+          EOF
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              release-assets/NeuroView-v0.7.0-debug.apk \
+              release-assets/NeuroView-v0.7.0-debug.apk.sha256 \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" \
+              release-assets/NeuroView-v0.7.0-debug.apk \
+              release-assets/NeuroView-v0.7.0-debug.apk.sha256 \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$BUILT_SHA" \
+              --title "NeuroView v0.7.0 — Phase 7 APK (preview)" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi
+      - name: Verify published assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets,url --jq '{url,assets:[.assets[].name]}'
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' \
+            | grep -Fx 'NeuroView-v0.7.0-debug.apk'
