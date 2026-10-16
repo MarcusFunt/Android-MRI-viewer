@@ -149,7 +149,7 @@ def verify_dicom(folder):
             # Source NIfTI RAS -> DICOM LPS orientation and positions.
             np.testing.assert_allclose(
                 [float(v) for v in ds.ImageOrientationPatient],
-                [0, -1, 0, 1.5 / math.hypot(1.5, 0.1), 0, -0.1 / math.hypot(1.5, 0.1)],
+                [0, -1, 0, 1.5 / math.hypot(1.5, 0.1), 0, 0.1 / math.hypot(1.5, 0.1)],
                 atol=0.07, rtol=0,
             )
             expected_pos = expected_ras() @ np.array([0, 0, k, 1])
