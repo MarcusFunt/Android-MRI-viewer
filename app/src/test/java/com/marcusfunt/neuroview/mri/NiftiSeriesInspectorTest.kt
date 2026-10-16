@@ -46,7 +46,9 @@ class NiftiSeriesInspectorTest {
     fun indexesHeaderWithoutRequiringPixelData() {
         val data = NiftiSeriesInspector.inspect(ByteArrayInputStream(niftiHeader()))
         assertEquals(listOf(11, 9, 7), data.dimensions)
-        assertEquals(listOf(0.8, 0.8, 1.3), data.spacingMm, 0.00001)
+        assertEquals(0.8, data.spacingMm[0], 0.00001)
+        assertEquals(0.8, data.spacingMm[1], 0.00001)
+        assertEquals(1.3, data.spacingMm[2], 0.00001)
         assertEquals("float32", data.dataType)
         assertEquals("sform", data.orientation)
         assertEquals("Synthetic only", data.description)
