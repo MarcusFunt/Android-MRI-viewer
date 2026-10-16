@@ -101,7 +101,7 @@ object DicomReader {
         require(requiredString(0x00280004, "PhotometricInterpretation") == "MONOCHROME2") {
             "Only MONOCHROME2 DICOM supported"
         }
-        require(data[0x00280008]?.let(::asText)?.toIntOrNull() ?: 1 == 1) {
+        require((data[0x00280008]?.let(::asText)?.toIntOrNull() ?: 1) == 1) {
             "Multiframe DICOM is not supported"
         }
         val bits = us(0x00280100, "BitsAllocated")
