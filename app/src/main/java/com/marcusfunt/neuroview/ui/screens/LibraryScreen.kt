@@ -64,6 +64,8 @@ fun LibraryScreen(
     isBusy: Boolean,
     feedback: String?,
     onImport: () -> Unit,
+    onConvertDicom: () -> Unit,
+    onExportDicom: (ScanRecord) -> Unit,
     onBrowse: () -> Unit,
     onOpenScan: (ScanRecord) -> Unit,
     onCreateCollection: (String) -> Unit,
@@ -121,6 +123,16 @@ fun LibraryScreen(
                         enabled = !isBusy,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("IMPORT NIFTI FILES") }
+                    OutlinedButton(
+                        onClick = onConvertDicom,
+                        enabled = !isBusy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("CONVERT DICOM SERIES → NIFTI") }
+                    Text(
+                        "Choose uncompressed single-frame DICOM slices, then save a .nii.gz file.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
                     OutlinedButton(
                         onClick = { dialog = LibraryDialog.CreateCollection },
                         enabled = !isBusy,
@@ -219,6 +231,10 @@ fun LibraryScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                TextButton(
+                                    onClick = { onExportDicom(scan) },
+                                    enabled = !isBusy,
+                                ) { Text("EXPORT DERIVED DICOM (ZIP)") }
                                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                                     TextButton(onClick = { onOpenScan(scan) }) { Text("Open") }
                                     TextButton(
@@ -252,7 +268,8 @@ fun LibraryScreen(
                     }
                     Text(
                         "Removing entries here removes only in-app references, not files " +
-                            "from device storage. DICOM conversion is planned for Phase 6.",
+                            "from device storage. DICOM exports are anonymized, derived " +
+                            "Secondary Capture images, not reconstructed scanner originals.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

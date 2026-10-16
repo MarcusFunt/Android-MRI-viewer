@@ -48,6 +48,7 @@ sealed interface VolumeLoadState {
 fun NeuroViewApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val conversions = rememberConversionControls()
     val catalog = remember(context.applicationContext) { ScanCatalog(context.applicationContext) }
     var snapshot by remember { mutableStateOf(catalog.load()) }
     var importBusy by remember { mutableStateOf(false) }
@@ -58,7 +59,7 @@ fun NeuroViewApp() {
     var selectedScanId by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun updateCatalog(description: String, action: suspend () -> ScanCatalogSnapshot) {
-        if (importBusy || editBusy) return
+        if (importBusy || editBusy || conversions.busy) return
         editBusy = true
         libraryMessage = null
         scope.launch {
@@ -142,7 +143,7 @@ fun NeuroViewApp() {
         }
     }
     val chooseDocuments: () -> Unit = {
-        if (!importBusy) picker.launch(arrayOf("*/*"))
+        if (!importBusy && !conversions.busy) picker.launch(arrayOf("*/*"))
     }
 
     val openScan: (ScanRecord) -> Unit = { scan ->
@@ -176,8 +177,10 @@ fun NeuroViewApp() {
                 entry<Destination.Library> {
                     LibraryScreen(
                         snapshot = snapshot,
-                        isBusy = importBusy || editBusy,
-                        feedback = libraryMessage ?: importMessage,
+                        isBusy = importBusy || editBusy || conversions.busy,
+                        feedback = conversions.message ?: libraryMessage ?: importMessage,
+                        onConvertDicom = conversions.selectDicomSeries,
+                        onExportDicom = conversions.exportNiftiAsDicom,
                         onImport = chooseDocuments,
                         onBrowse = { navigate(Destination.Series) },
                         onOpenScan = openScan,
