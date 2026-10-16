@@ -62,6 +62,7 @@ object MprRenderer {
         val lower = center - widthWindow * 0.5
         val image = IntArray(width * height)
         val world = DoubleArray(3)
+        val voxel = DoubleArray(3)
         world[plane.firstAxis] = slicePosition
 
         for (row in 0 until height) {
@@ -74,7 +75,7 @@ object MprRenderer {
                 val horizontalFraction = col.toDouble() / max(1, width - 1)
                 world[plane.horizontalAxis] = bounds[1][plane.horizontalAxis] -
                     horizontalFraction * horizontalSpan
-                val voxel = volume.affine.voxel(world[0], world[1], world[2])
+                volume.affine.voxelInto(world[0], world[1], world[2], voxel)
                 val value = volume.sample(voxel[0], voxel[1], voxel[2]).toDouble()
                 val intensity = (((value - lower) / widthWindow) * 255.0)
                     .roundToInt().coerceIn(0, 255)
