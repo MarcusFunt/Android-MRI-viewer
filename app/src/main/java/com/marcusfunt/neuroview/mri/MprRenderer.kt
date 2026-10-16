@@ -76,6 +76,16 @@ object MprRenderer {
                 world[plane.horizontalAxis] = bounds[1][plane.horizontalAxis] -
                     horizontalFraction * horizontalSpan
                 volume.affine.voxelInto(world[0], world[1], world[2], voxel)
+                // Black exterior even for negative-valued volumes and non-default windows.
+                // NIfTI zeros outside the acquisition are not genuine measured intensities.
+                if (voxel[0] < -0.0001 || voxel[1] < -0.0001 ||
+                    voxel[2] < -0.0001 || voxel[0] > volume.nx - 1 + 0.0001 ||
+                    voxel[1] > volume.ny - 1 + 0.0001 ||
+                    voxel[2] > volume.nz - 1 + 0.0001
+                ) {
+                    image[row * width + col] = 0xff000000.toInt()
+                    continue
+                }
                 val value = volume.sample(voxel[0], voxel[1], voxel[2]).toDouble()
                 val intensity = (((value - lower) / widthWindow) * 255.0)
                     .roundToInt().coerceIn(0, 255)
