@@ -8,10 +8,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -19,6 +20,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
+import com.marcusfunt.neuroview.catalog.ScanCatalog
+import com.marcusfunt.neuroview.catalog.ScanRecord
 import com.marcusfunt.neuroview.mri.NiftiReader
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.navigation.Destination
@@ -29,6 +32,7 @@ import com.marcusfunt.neuroview.ui.screens.SeriesScreen
 import com.marcusfunt.neuroview.ui.screens.ViewerScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 sealed interface VolumeLoadState {
@@ -38,17 +42,19 @@ sealed interface VolumeLoadState {
     data class Failed(val explanation: String) : VolumeLoadState
 }
 
-/**
- * Phase 3 holds one active NIfTI document. The URI is saved across Activity recreation,
- * and reloaded through the Android Storage Access Framework without broad storage access.
- * A persistent multi-document library is Phase 5.
- */
+/** Phase 4 separates a persisted read-only series catalog from one active in-memory volume. */
 @Composable
 fun NeuroViewApp() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val catalog = remember(context.applicationContext) { ScanCatalog(context.applicationContext) }
+    var snapshot by remember { mutableStateOf(catalog.load()) }
+    var importBusy by remember { mutableStateOf(false) }
+    var importMessage by remember { mutableStateOf<String?>(null) }
+    var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
+
     val backStack = rememberNavBackStack(Destination.Home)
     val navigate: (Destination) -> Unit = { NavigationActions.navigate(backStack, it) }
-    var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
 
     val volumeState by produceState<VolumeLoadState>(VolumeLoadState.Empty, selectedUri) {
         val source = selectedUri
@@ -59,7 +65,7 @@ fun NeuroViewApp() {
             value = try {
                 withContext(Dispatchers.IO) {
                     val uri = Uri.parse(source)
-                    val displayName = runCatching {
+                    val name = runCatching {
                         context.contentResolver.query(
                             uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null,
                         )?.use { cursor ->
@@ -68,29 +74,58 @@ fun NeuroViewApp() {
                     }.getOrNull() ?: "Opened NIfTI volume"
                     val volume = context.contentResolver.openInputStream(uri)?.use {
                         NiftiReader.read(it)
-                    } ?: throw IllegalArgumentException("Unable to open selected file")
-                    VolumeLoadState.Ready(displayName, volume)
+                    } ?: throw IllegalArgumentException("Unable to open selected volume")
+                    VolumeLoadState.Ready(name, volume)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (error: Exception) {
-                VolumeLoadState.Failed(error.message ?: "Unable to read NIfTI volume")
+            } catch (exception: Exception) {
+                VolumeLoadState.Failed(
+                    exception.message ?: "Could not access or decode the NIfTI volume",
+                )
+            } catch (_: OutOfMemoryError) {
+                VolumeLoadState.Failed(
+                    "Device is low on memory. Try a smaller NIfTI volume.",
+                )
             }
         }
     }
 
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { documents ->
+        if (documents.isNotEmpty()) {
+            importBusy = true
+            importMessage = null
+            scope.launch {
+                try {
+                    val result = catalog.importDocuments(documents)
+                    snapshot = catalog.load()
+                    val summary = "Added ${result.added} NIfTI series; " +
+                        "skipped ${result.skipped} duplicate or unsupported files."
+                    importMessage = if (result.errors.isEmpty()) {
+                        summary
+                    } else {
+                        summary + "\n" + result.errors.joinToString("\n")
+                    }
+                    navigate(Destination.Series)
+                } catch (exception: Exception) {
+                    importMessage = exception.message ?: "Import failed"
+                    navigate(Destination.Series)
+                } finally {
+                    importBusy = false
+                }
             }
-            selectedUri = uri.toString()
-            navigate(Destination.Viewer("active"))
         }
     }
-    val pickNifti: () -> Unit = { launcher.launch(arrayOf("*/*")) }
+    val chooseDocuments: () -> Unit = {
+        if (!importBusy) picker.launch(arrayOf("*/*"))
+    }
+
+    val openScan: (ScanRecord) -> Unit = { scan ->
+        selectedUri = scan.documentUri
+        navigate(Destination.Viewer(scan.id))
+    }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         NavDisplay(
@@ -105,24 +140,28 @@ fun NeuroViewApp() {
                 }
                 entry<Destination.Series> {
                     SeriesScreen(
-                        volumeState = volumeState,
-                        onImport = pickNifti,
+                        snapshot = snapshot,
+                        catalog = catalog,
+                        isImporting = importBusy,
+                        importMessage = importMessage,
+                        onImport = chooseDocuments,
                         onBack = { NavigationActions.back(backStack) },
-                        onSelectActive = { navigate(Destination.Viewer("active")) },
+                        onSelectSeries = openScan,
                     )
                 }
                 entry<Destination.Library> {
                     LibraryScreen(
-                        volumeState = volumeState,
-                        onImport = pickNifti,
+                        snapshot = snapshot,
+                        isImporting = importBusy,
+                        onImport = chooseDocuments,
+                        onBrowse = { navigate(Destination.Series) },
                         onBack = { NavigationActions.back(backStack) },
-                        onOpenActive = { navigate(Destination.Viewer("active")) },
                     )
                 }
                 entry<Destination.Viewer> {
                     ViewerScreen(
                         volumeState = volumeState,
-                        onImport = pickNifti,
+                        onImport = chooseDocuments,
                         onNavigate = navigate,
                     )
                 }
