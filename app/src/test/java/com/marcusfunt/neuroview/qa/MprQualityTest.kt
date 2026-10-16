@@ -41,8 +41,8 @@ class MprQualityTest {
 
     @Test fun obliqueOutsideVolumeIsBlackEvenWhenWindowIncludesZero() {
         val affine = SpatialAffine.fromRows(doubleArrayOf(
-            0.0, -1.0, 0.0, 5.0,
-            1.0, 0.0, 0.0, 6.0,
+            0.8660254, -0.5, 0.0, 5.0,
+            0.5, 0.8660254, 0.0, 6.0,
             0.0, 0.0, 2.0, 7.0
         ))
         val v = signedVolume(affine)
