@@ -39,3 +39,16 @@ The Home Card hosts `BrainPreview`, which embeds `BrainGlSurfaceView` (OpenGL ES
 `BrainGlSurfaceView` uses `RENDERMODE_WHEN_DIRTY`; touch gestures modify yaw/pitch, while an Activity-lifecycle-bound animator issues approximately 30 render requests per second. Pausing the Activity stops both animation and the GL thread. When Android disables animators or GLES2 isn't supported, animation stops or a text fallback is shown. The preview has no dependency on MRI input, which remains separate for Phase 3.
 
 Manual QA for device/emulator: Home displays the shaded brain, yaw changes with drag, pitch is clamped, Pause holds the view still, Resume restarts, Reset returns to the default angle, Android back navigation still works, and opening Library/Series stops the home rendering. Test portrait/landscape, dark theme, and Android 8.0+; no medical use is intended.
+
+## Phase 3: MRI volume and MPR
+
+- `mri/NiftiReader`: bounded, streamed NIfTI-1 `.nii` or `.nii.gz` decoder, with datatype/bitpix validation, endian handling, proper slope/intercept semantics, first-frame 4D behavior, and volume-size limits.
+- `mri/SpatialAffine`: sform/qform/fallback voxel-to-RAS+ mm transforms and inverse mapping. The header's qform/sform are defined in NIfTI RAS+; they are not DICOM LPS without conversion.
+- `mri/MprRenderer`: world-coordinate axial/coronal/sagittal slices, 384-pixel max width/height, trilinear sampling, grayscale window/level. Radiological viewing convention is patient-right screen-left for axial/coronal; anterior screen-left for sagittal. Medical use is NOT supported.
+- `ui/NeuroViewApp`: Android Storage Access Framework OpenDocument with read-only URI permission. Only one open NIfTI is held as a session-wide active volume, reloaded on activity recreation. No custom storage or sync.
+- `ui/screens/ViewerScreen`: asynchronous bitmap updates, orientation warning, vertical image drag and slider slice navigation, right-hand MPR selector, and brightness/window-width sliders. No DICOM yet.
+- Tests use small synthetic volumes (including big endian and gzip) to catch spatial flips, reading errors, and bad affine inverses.
+
+### Safety boundaries and limitations
+
+No network permission and no PHI logging are introduced. The app does not upload data. Arbitrarily large volumes are rejected rather than attempting to allocate beyond device capacity. NIfTI-2, vector/RGB/complex data, masks with unusual intent, 5D/6D series and DICOM are not supported. Slices are resampled (not independently acquired images), and anisotropic scans can look blurry in off-axis views. Volumes without orientation metadata are flagged with an explicit warning. This app has not undergone medical-device or diagnostic validation.
