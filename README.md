@@ -165,3 +165,10 @@ and fades into view.
 All voxel resampling remains off the main UI thread. On-device scrolling
 performance depends on scan dimensions and storage speed (especially for
 disk-backed imports); do not interpret this as a guaranteed frame rate.
+
+### v0.9.2 slice display fix
+
+The asynchronous MPR render coordinator observes the actual Compose slice index
+(instead of capturing a recomposition-local integer on first launch), so
+vertical dragging, inertial scrolling, and the slice slider update both the
+slice counter and the displayed MRI pixels. This does not alter stored MRI data.

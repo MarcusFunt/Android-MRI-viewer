@@ -122,8 +122,11 @@ fun ViewerScreen(
         if (volume == null) return@LaunchedEffect
         val preview = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 160) }
         val full = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 384) }
+        // Observe the mutable sliceIndex directly. The composable's selectedSlice
+        // is a recomposition-local value and would be captured at initial launch,
+        // leaving the image frozen even when the slice counter changes.
         snapshotFlow {
-            SliceRenderRequest(selectedSlice, windowCenter, windowWidth, isScrubbing)
+            SliceRenderRequest(sliceIndex.coerceIn(0, sliceCount - 1), windowCenter, windowWidth, isScrubbing)
         }.distinctUntilChanged().conflate().collect { request ->
             val quick = withContext(Dispatchers.Default) {
                 val context = currentCoroutineContext()
@@ -134,7 +137,7 @@ fun ViewerScreen(
             }
             // Present completed previews during continuous drag. For still frames,
             // do not display a request superseded by another slider/plane setting.
-            fun latest() = SliceRenderRequest(selectedSlice, windowCenter, windowWidth, isScrubbing)
+            fun latest() = SliceRenderRequest(sliceIndex.coerceIn(0, sliceCount - 1), windowCenter, windowWidth, isScrubbing)
             if (request.scrubbing || latest() == request) bitmap = quick
             if (!request.scrubbing && latest() == request) {
                 delay(72)
