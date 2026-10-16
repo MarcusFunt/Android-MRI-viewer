@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,11 +23,26 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,10 +75,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.mri.MprRenderSession
@@ -196,6 +215,7 @@ fun ViewerScreen(
                         Text(
                             displayNameOverride ?: ready?.displayName ?: "MRI viewer",
                             maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleMedium,
                         )
                     },
@@ -246,6 +266,7 @@ fun ViewerScreen(
                         onSliceChange = { sliceIndex = it.coerceIn(0, sliceCount - 1) },
                         onScrubbingChanged = { isScrubbing = it },
                         onOpenPlanePanel = { panelOpen = true },
+                        onPlaneSelect = { plane = it },
                         windowCenter = windowCenter,
                         onWindowCenter = { windowCenter = it },
                         windowWidth = windowWidth,
@@ -332,6 +353,7 @@ private fun ViewerMessage(title: String, detail: String, onImport: () -> Unit) {
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun MriContent(
     modifier: Modifier,
     volume: NiftiVolume,
@@ -342,6 +364,7 @@ private fun MriContent(
     onSliceChange: (Int) -> Unit,
     onScrubbingChanged: (Boolean) -> Unit,
     onOpenPlanePanel: () -> Unit,
+    onPlaneSelect: (MriPlane) -> Unit,
     windowCenter: Float,
     onWindowCenter: (Float) -> Unit,
     windowWidth: Float,
@@ -350,32 +373,37 @@ private fun MriContent(
     // Gesture coroutines persist across recompositions; always read the latest slice.
     val currentSlice by rememberUpdatedState(selectedSlice)
     val currentOnSliceChange by rememberUpdatedState(onSliceChange)
-    Column(modifier = modifier.padding(horizontal = 12.dp)) {
+    var showAdjustments by rememberSaveable { mutableStateOf(false) }
+    Column(
+        modifier = modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        // Plane switching is an ordinary, visible action—not hidden in a drawer.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                plane.label.uppercase(),
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Text(
-                "Slice ${selectedSlice + 1}/$totalSlices · " +
-                    "%.1f mm".format(
-                        java.util.Locale.US,
-                        MprRenderer.slicePosition(volume, plane, selectedSlice),
+            MriPlane.entries.forEach { option ->
+                FilterChip(
+                    selected = plane == option,
+                    onClick = { onPlaneSelect(option) },
+                    label = { Text(option.label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     ),
-                style = MaterialTheme.typography.labelMedium,
-            )
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
-
         val flingScope = rememberCoroutineScope()
         var flingJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
         val currentScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
         val currentOpenPlanePanel by rememberUpdatedState(onOpenPlanePanel)
         Box(
             modifier = Modifier.fillMaxWidth().weight(1f)
+                .clip(RoundedCornerShape(16.dp))
                 .background(Color.Black)
                 .pointerInput(volume, plane, totalSlices) {
                     val pixelsPerSlice = 18.dp.toPx()
@@ -455,75 +483,162 @@ private fun MriContent(
             } else {
                 CircularProgressIndicator()
             }
+            // The anatomical image stays neutral grayscale; contextual metadata
+            // is placed in the surrounding chrome, never drawn over the pixels.
         }
-        Text(
-            if (volume.transformSource.startsWith("NO ORIENTATION"))
-                "WARNING: Orientation unknown — anatomical labels are assumptions"
-            else MprRenderer.displayOrientation(plane) + "  ·  " + volume.transformSource,
-            color = if (volume.transformSource.startsWith("NO ORIENTATION"))
-                MaterialTheme.colorScheme.error
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(top = 6.dp),
-        )
+
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "SLICE POSITION",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "${selectedSlice + 1} / $totalSlices",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+                Slider(
+                    value = selectedSlice.toFloat(),
+                    onValueChange = {
+                        flingJob?.cancel()
+                        onScrubbingChanged(true)
+                        onSliceChange(it.roundToInt())
+                    },
+                    onValueChangeFinished = { onScrubbingChanged(false) },
+                    valueRange = 0f..(totalSlices - 1).coerceAtLeast(1).toFloat(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedButton(
+                        onClick = { onSliceChange(selectedSlice - 1) },
+                        enabled = selectedSlice > 0,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                        modifier = Modifier.height(38.dp),
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null,
+                            modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Previous")
+                    }
+                    Text(
+                        "%.1f mm".format(
+                            java.util.Locale.US,
+                            MprRenderer.slicePosition(volume, plane, selectedSlice),
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = { onSliceChange(selectedSlice + 1) },
+                        enabled = selectedSlice < totalSlices - 1,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                        modifier = Modifier.height(38.dp),
+                    ) {
+                        Text("Next")
+                        Spacer(Modifier.width(5.dp))
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
+                            modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                onClick = { onSliceChange(selectedSlice - 1) },
-                enabled = selectedSlice > 0,
-            ) { Text("− Slice") }
-            Text(
-                "Drag vertically to scroll · swipe left for planes",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TextButton(
-                onClick = { onSliceChange(selectedSlice + 1) },
-                enabled = selectedSlice < totalSlices - 1,
-            ) { Text("+ Slice") }
-        }
-        Slider(
-            value = selectedSlice.toFloat(),
-            onValueChange = {
-                flingJob?.cancel()
-                onScrubbingChanged(true)
-                onSliceChange(it.roundToInt())
-            },
-            onValueChangeFinished = { onScrubbingChanged(false) },
-            valueRange = 0f..(totalSlices - 1).coerceAtLeast(1).toFloat(),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("Brightness", style = MaterialTheme.typography.labelMedium)
-            Text("Window width", style = MaterialTheme.typography.labelMedium)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Slider(
-                value = windowCenter,
-                onValueChange = onWindowCenter,
-                valueRange = 0f..1f,
-                modifier = Modifier.weight(1f),
+            Text(
+                MprRenderer.displayOrientation(plane),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
             )
-            Slider(
-                value = windowWidth,
-                onValueChange = onWindowWidth,
-                valueRange = 0.05f..1.8f,
-                modifier = Modifier.weight(1f),
+            TextButton(onClick = { showAdjustments = !showAdjustments }) {
+                Icon(Icons.Default.Edit, contentDescription = null, Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp))
+                Text(if (showAdjustments) "Hide adjustments" else "Adjust image")
+            }
+        }
+        if (volume.transformSource.startsWith("NO ORIENTATION")) {
+            Text(
+                "Orientation unknown: anatomical labels may not match the image.",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.labelSmall,
             )
         }
         if (volume.timepoints > 1) {
             Text(
-                "4D dataset: displaying first timepoint only",
+                "4D dataset: first timepoint shown",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(bottom = 8.dp),
             )
+        }
+    }
+
+    if (showAdjustments) {
+        ModalBottomSheet(
+            onDismissRequest = { showAdjustments = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Image adjustments", style = MaterialTheme.typography.titleLarge)
+                    TextButton(onClick = {
+                        onWindowCenter(0.5f)
+                        onWindowWidth(1.0f)
+                    }) { Text("Reset") }
+                }
+                Text(
+                    "Changes only affect display contrast; the original voxel data is unchanged.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("Brightness", style = MaterialTheme.typography.titleSmall)
+                Slider(
+                    value = windowCenter,
+                    onValueChange = onWindowCenter,
+                    valueRange = 0f..1f,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Contrast / window width", style = MaterialTheme.typography.titleSmall)
+                Slider(
+                    value = windowWidth,
+                    onValueChange = onWindowWidth,
+                    valueRange = 0.05f..1.8f,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = { showAdjustments = false },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) { Text("Done") }
+                Spacer(Modifier.height(12.dp))
+            }
         }
     }
 }

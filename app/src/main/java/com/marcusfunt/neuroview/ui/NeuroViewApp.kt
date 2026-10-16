@@ -1,6 +1,7 @@
 package com.marcusfunt.neuroview.ui
 
 import android.content.Intent
+import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -63,6 +64,13 @@ fun NeuroViewApp() {
     var importMessage by remember { mutableStateOf<String?>(null) }
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedScanId by rememberSaveable { mutableStateOf<String?>(null) }
+    // The last-opened MRI ID is a tiny local preference, not a copy of scan data.
+    val navigationPrefs = remember(context.applicationContext) {
+        context.getSharedPreferences("neuroview_navigation_v1", Context.MODE_PRIVATE)
+    }
+    var lastOpenedScanId by rememberSaveable {
+        mutableStateOf(navigationPrefs.getString("last_opened_id", null))
+    }
 
     fun updateCatalog(description: String, action: suspend () -> ScanCatalogSnapshot) {
         if (importBusy || editBusy || conversions.busy) return
@@ -165,6 +173,8 @@ fun NeuroViewApp() {
     val openScan: (ScanRecord) -> Unit = { scan ->
         selectedUri = scan.documentUri
         selectedScanId = scan.id
+        lastOpenedScanId = scan.id
+        navigationPrefs.edit().putString("last_opened_id", scan.id).apply()
         navigate(Destination.Viewer(scan.id))
     }
 
@@ -175,8 +185,13 @@ fun NeuroViewApp() {
             entryProvider = entryProvider {
                 entry<Destination.Home> {
                     HomeScreen(
+                        snapshot = snapshot,
                         onView = { navigate(Destination.Series) },
                         onLibrary = { navigate(Destination.Library) },
+                        onImport = chooseDocuments,
+                        onOpenRecent = openScan,
+                        isImporting = importBusy,
+                        lastOpenedScanId = lastOpenedScanId,
                     )
                 }
                 entry<Destination.Series> {
