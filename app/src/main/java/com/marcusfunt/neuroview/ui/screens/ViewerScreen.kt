@@ -44,6 +44,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -281,6 +282,9 @@ private fun MriContent(
     windowWidth: Float,
     onWindowWidth: (Float) -> Unit,
 ) {
+    // Gesture coroutines persist across recompositions; always read the latest slice.
+    val currentSlice by rememberUpdatedState(selectedSlice)
+    val currentOnSliceChange by rememberUpdatedState(onSliceChange)
     Column(modifier = modifier.padding(horizontal = 12.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -320,7 +324,7 @@ private fun MriContent(
                                 abs(verticalDrag) >= 16f
                             ) {
                                 val steps = (verticalDrag / 16f).toInt()
-                                onSliceChange(selectedSlice - steps)
+                                currentOnSliceChange(currentSlice - steps)
                                 verticalDrag -= steps * 16f
                             }
                         },
