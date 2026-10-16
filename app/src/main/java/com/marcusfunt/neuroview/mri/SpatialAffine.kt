@@ -12,6 +12,14 @@ class SpatialAffine private constructor(
     fun world(i: Double, j: Double, k: Double): DoubleArray = transform(forward, i, j, k)
     fun voxel(x: Double, y: Double, z: Double): DoubleArray = transform(inverse, x, y, z)
 
+    /** Avoids per-pixel allocations while resampling on mobile CPUs. */
+    fun voxelInto(x: Double, y: Double, z: Double, output: DoubleArray) {
+        require(output.size >= 3)
+        output[0] = inverse[0] * x + inverse[1] * y + inverse[2] * z + inverse[3]
+        output[1] = inverse[4] * x + inverse[5] * y + inverse[6] * z + inverse[7]
+        output[2] = inverse[8] * x + inverse[9] * y + inverse[10] * z + inverse[11]
+    }
+
     fun axisSpacing(axis: Int): Double = sqrt(
         forward[axis] * forward[axis] +
             forward[4 + axis] * forward[4 + axis] +
