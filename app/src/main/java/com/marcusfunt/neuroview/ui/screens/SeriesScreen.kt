@@ -206,12 +206,21 @@ private fun ScanSeriesCard(scan: ScanRecord, catalog: ScanCatalog, onClick: () -
             ScanThumbnail(scan, catalog)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    scan.displayName,
+                    scan.label,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.titleSmall,
                 )
+                if (scan.customName != null) {
+                    Text(
+                        "Original: ${scan.displayName}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 Text(
                     scan.metadata.dimensions.joinToString(" × ") + " voxels",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -265,7 +274,7 @@ private fun ScanThumbnail(scan: ScanRecord, catalog: ScanCatalog) {
         } else {
             Image(
                 bitmap = bitmap!!.asImageBitmap(),
-                contentDescription = "Mid-volume MRI preview of ${scan.displayName}",
+                contentDescription = "Mid-volume MRI preview of ${scan.label}",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
             )
