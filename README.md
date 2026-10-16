@@ -208,3 +208,7 @@ are not changed.
 The **Brightness** slider in Image adjustments now moves from **Darker** on the
 left to **Brighter** on the right, by reversing the displayed slider position
 relative to the image window-center. The underlying NIfTI voxels are unchanged.
+
+### v1.0.2 � Gradient visual refresh
+
+The brain-first Home screen now uses a static midnight-to-teal-to-indigo background with soft radial glows. The 3-D brain card and secondary navigation card have gradient surfaces and accent outlines; the primary View MRI action has a mint/cyan/soft-indigo gradient. The Series browser and Library use matching gradients on their scrollable backgrounds and import buttons, and the viewer's slice-control panel has a subtle gradient. These effects are restricted to application chrome: the actual MRI image remains untinted grayscale against a neutral black background. No additional frame-tick animation is used for these gradients. The previous v1.0.1 brightness-slider direction, app identity and persisted library data are preserved.

@@ -64,6 +64,8 @@ import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
 import java.util.Locale
+import com.marcusfunt.neuroview.ui.theme.NeuroGradients
+import com.marcusfunt.neuroview.ui.theme.neuroGradientBackdrop
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,6 +89,7 @@ fun SeriesScreen(
     }
 
     Scaffold(
+        containerColor = NeuroGradients.midnight,
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
@@ -103,7 +106,7 @@ fun SeriesScreen(
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding).neuroGradientBackdrop(),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -126,7 +129,12 @@ fun SeriesScreen(
                     Button(
                         onClick = onImport,
                         enabled = !isImporting,
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                            .background(NeuroGradients.primary, RoundedCornerShape(50.dp)),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                        ),
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null)
                         Spacer(Modifier.width(8.dp))

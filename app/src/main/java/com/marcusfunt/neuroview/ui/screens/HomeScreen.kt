@@ -1,6 +1,8 @@
 package com.marcusfunt.neuroview.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,14 +25,21 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.ui.BrainPreview
+import com.marcusfunt.neuroview.ui.theme.NeuroGradients
+import com.marcusfunt.neuroview.ui.theme.neuroGradientBackdrop
 
 @Composable
 fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
-    Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { padding ->
+    Box(modifier = Modifier.fillMaxSize().neuroGradientBackdrop()) {
+    Scaffold(
+        contentWindowInsets = WindowInsets.safeDrawing,
+        containerColor = Color.Transparent,
+    ) { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -49,7 +58,10 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                 )
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    color = Color.Transparent,
+                    modifier = Modifier.background(
+                        brush = NeuroGradients.secondary, shape = RoundedCornerShape(50),
+                    ),
                 ) {
                     Text(
                         "ON-DEVICE",
@@ -72,19 +84,25 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                 )
             }
             Card(
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                modifier = Modifier.fillMaxWidth().weight(1f).background(
+                    brush = NeuroGradients.hero,
+                    shape = RoundedCornerShape(28.dp),
+                ),
                 shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                border = BorderStroke(1.5.dp, NeuroGradients.trim),
                 elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
             ) {
                 BrainPreview(modifier = Modifier.fillMaxSize())
             }
             Card(
                 onClick = onView,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().background(
+                    brush = NeuroGradients.primary,
+                    shape = RoundedCornerShape(20.dp),
+                ),
                 shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
+                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 17.dp),
@@ -103,10 +121,13 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
             }
             Card(
                 onClick = onLibrary,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().background(
+                    brush = NeuroGradients.secondary,
+                    shape = RoundedCornerShape(20.dp),
+                ),
                 shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, NeuroGradients.trim),
+                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
@@ -129,5 +150,6 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                 style = MaterialTheme.typography.labelSmall,
             )
         }
+    }
     }
 }
