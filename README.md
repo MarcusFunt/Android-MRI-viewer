@@ -11,6 +11,19 @@ A local-first Android application for browsing MRI series, examining volumes, an
 - Unit tests for navigation semantics; GitHub Actions Android build/test workflow
 - No network or storage permissions requested
 
+## Phase 2: Rotating brain home preview
+
+The home screen now displays a lightweight, **procedurally generated stylized brain** using native OpenGL ES 2.0. The model has distinct hemispheres, folded surfaces, a simplified cerebellum and brainstem, and diffuse/rim lighting. No assets or images are downloaded and no third-party 3D engine is required.
+
+- Automatically rotates at a gentle pace while Home is visible.
+- Drag to orbit horizontally and tilt vertically; release to resume auto-rotation.
+- Pause/resume rotation and reset the view with accessible controls.
+- Render-on-demand, approximately 30 FPS cap; stops animating while paused or off-screen.
+- Honors the system's disabled animator preference, falls back gracefully when GLES2 is absent.
+- Geometry validation tests cover normals, dimensions and GLES2 index limits.
+
+**This preview is decorative and not an anatomical ground truth or patient-derived MRI.** The real 3D MRI renderer is planned for Phase 3.
+
 **Important:** This phase intentionally uses *demo labels and empty viewer placeholders*. It does not read, render, import, convert, or store real medical images. Do not use this app for diagnosis.
 
 ## Open in Android Studio
@@ -24,7 +37,7 @@ Versions: AGP 9.4.0, Gradle 9.6.0, Kotlin 2.2.21, Compose BOM 2026.09.00, Naviga
 
 ## Planned progression
 
-- Phase 2 — Home screen 3D brain visualization.
+- Phase 2 — Home screen 3D brain visualization. **Implemented.**
 - Phase 3 — Real NIfTI loading and multiplanar viewing.
 - Phase 4 — Scan and series selection from imported datasets.
 - Phase 5 — Local library with SAF import and deletion.
