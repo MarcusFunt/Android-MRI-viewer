@@ -100,12 +100,14 @@ implementation. Version 1.3 additionally declares INTERNET permission solely
 for user-initiated BrainSuite processing. Existing viewers, catalog, thumbnail
 generation and DICOM/NIfTI conversions remain local and require no connection.
 
-- `ui/screens/ViewerScreen` has **Edit → Display** for original, non-destructive
-  window/level controls and **Edit → BrainSuite** for remote anatomy workflows.
+- `ui/screens/ViewerScreen` offers distinct **Adjust** (non-destructive
+  window/level controls) and **Process** (BrainSuite remote anatomy workflows)
+  actions.
 - `processing/BrainSuiteClient` sends the selected SAF NIfTI stream to a
   caller-configured HTTPS endpoint with bearer authentication, forbids URL
   credentials/paths and redirects, and downloads results through CreateDocument.
-  The token lives in Compose memory, not persistent storage.
+  The token lives in Compose memory, not persistent storage. Recent job references
+  exclude access tokens and patient identifiers.
 - `tools/brainsuite_bridge/server.py` wraps a single T1w volume into a minimal
   BIDS subject and runs `bids/brainsuite:v23a` in Docker, with CSE or
   CSE+SVREG. It is a loopback-only single-user service, not publicly

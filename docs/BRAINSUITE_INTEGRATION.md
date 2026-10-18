@@ -1,6 +1,6 @@
 # BrainSuite anatomical processing (optional companion)
 
-NeuroView's **Viewer → Edit → BrainSuite** panel supports the official
+NeuroView's **Viewer → Process** panel supports the official
 [BrainSuite BIDS App](https://github.com/bids-apps/BrainSuite), version 23a,
 for T1-weighted MRI. This is **not an Android implementation of BrainSuite**.
 The full upstream pipeline runs in a Docker container on a workstation;
@@ -53,21 +53,22 @@ tailscale serve status
 
 Tailscale Serve supplies a private tailnet HTTPS URL with a trusted TLS
 certificate. Use the displayed **`https://....ts.net`** address in the
-NeuroView Edit panel (not the local HTTP URL). Do not use Tailscale Funnel.
+NeuroView processing panel (not the local HTTP URL). Do not use Tailscale Funnel.
 Make sure the Android device is joined to the tailnet and your ACLs restrict
 access to trusted devices.
 
 ## Run a job
 
 1. Import and open a valid **T1-weighted** NIfTI in NeuroView.
-2. Select **Edit → BrainSuite**, then choose **Surface extraction** or
+2. Select **Process**, then choose **Surface extraction** or
    **Extract + atlas**.
 3. Enter your own HTTPS host address and the bridge access token.
 4. Read and explicitly accept the scan-transfer privacy notice before
    pressing **Send T1w scan for processing**. The app does not silently upload.
-5. Save the **job ID** shown after upload. You can paste it later and use
-   **Refresh status**. The pipeline can take considerable time; results
-   are not available until the container exits successfully.
+5. The app keeps a small local list of recent job references (job ID, host URL,
+   stage and submission timestamp; no access token or MRI file data). Jobs
+   are checked periodically while the panel remains visible. Paste a job ID
+   or select a recent job to resume monitoring. Processing can take substantial time.
 6. When status is `succeeded`, use **Save results ZIP**. Extract it outside
    NeuroView and, when relevant, import any NIfTI derivatives into the Library.
 

@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -34,6 +37,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -53,12 +58,16 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import android.content.Context
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import com.marcusfunt.neuroview.ui.BrainPreview
 
 private val Navy = Color(0xFF060F1A)
-private val Cyan = Color(0xFF54D9EE)
+private val Cyan = Color(0xFF79D6E6)
 private val Foreground = Color(0xFFF0F5FA)
 private val Secondary = Color(0xFF9EADC2)
 private val Edge = Color(0xFF385069)
@@ -69,10 +78,26 @@ private val Edge = Color(0xFF385069)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
+fun HomeScreen(
+    onBrowse: () -> Unit,
+    onImport: () -> Unit,
+    lastScanName: String? = null,
+    onResumeScan: () -> Unit = {},
+    onClearCache: suspend () -> Int = { 0 },
+) {
+    val context = LocalContext.current
+    val preferences = remember(context.applicationContext) {
+        context.getSharedPreferences("neuroview_home_appearance_v1", Context.MODE_PRIVATE)
+    }
+    val scope = rememberCoroutineScope()
+    var cacheStatus by remember { mutableStateOf<String?>(null) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
-    var autoRotate by rememberSaveable { mutableStateOf(true) }
-    var glowEnabled by rememberSaveable { mutableStateOf(true) }
+    var autoRotate by rememberSaveable {
+        mutableStateOf(preferences.getBoolean("rotate", true))
+    }
+    var glowEnabled by rememberSaveable {
+        mutableStateOf(preferences.getBoolean("glow", true))
+    }
     var resetRequest by rememberSaveable { mutableIntStateOf(0) }
 
     Box(
@@ -131,7 +156,7 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
         ) { scaffoldPadding ->
             Column(
                 modifier = Modifier.fillMaxSize().padding(scaffoldPadding)
-                    .padding(horizontal = 21.dp, vertical = 12.dp),
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(11.dp),
             ) {
                 Row(
@@ -156,9 +181,9 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                                 letterSpacing = (-0.5).sp,
                             )
                             Text(
-                                "EXPLORE  ·  VISUALIZE  ·  UNDERSTAND",
-                                fontSize = 9.sp,
-                                letterSpacing = 1.1.sp,
+                                "MRI exploration workspace",
+                                fontSize = 12.sp,
+                                letterSpacing = 0.1.sp,
                                 color = Secondary,
                                 maxLines = 1,
                             )
@@ -174,7 +199,7 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                         IconButton(onClick = { settingsOpen = true }) {
                             Icon(
                                 Icons.Default.Settings,
-                                contentDescription = "Landing page settings",
+                                contentDescription = "Settings",
                                 tint = Color(0xFFC8E4F2),
                             )
                         }
@@ -183,7 +208,9 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
 
                 // The translucent GLES viewport is intentionally unframed;
                 // no card, border, or explanatory labels sit around the brain.
-                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 180.dp),
+                ) {
                     BrainPreview(
                         modifier = Modifier.fillMaxSize(),
                         autoRotation = autoRotate,
@@ -191,13 +218,31 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                     )
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                // Keep GLSurfaceView in the fixed, non-scrolling composition.
+                // Only action controls scroll on compact displays.
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(11.dp),
                 ) {
-                    DetailPill("3D visualization", Modifier.weight(1.14f))
-                    DetailPill("NIfTI / DICOM", Modifier.weight(1.04f))
-                    DetailPill("On-device", Modifier.weight(0.91f))
+                if (!lastScanName.isNullOrBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFF11283A))
+                            .border(1.dp, Edge.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+                            .clickable(role = Role.Button, onClick = onResumeScan)
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Continue viewing", color = Secondary, fontSize = 12.sp)
+                            Text(lastScanName, color = Foreground, fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Resume most recently opened scan", tint = Cyan)
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
                 val primaryShape = RoundedCornerShape(19.dp)
@@ -206,15 +251,16 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                         .clip(primaryShape)
                         .background(
                             Brush.horizontalGradient(
-                                listOf(Color(0xFF0BBCE2), Color(0xFF1870E8)),
+                                listOf(Color(0xFF12547C), Color(0xFF1B5F9B)),
                             ),
                         )
-                        .clickable(role = Role.Button, onClick = onView)
+                        .clickable(role = Role.Button, onClick = onBrowse)
                         .padding(horizontal = 21.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Spacer(Modifier.width(24.dp))
                     Text(
-                        "Open viewer",
+                        "Browse scans",
                         modifier = Modifier.weight(1f),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -233,12 +279,13 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                         .clip(primaryShape)
                         .background(Color(0xFF111F2E))
                         .border(1.dp, Color(0xFF7796B2).copy(alpha = 0.73f), primaryShape)
-                        .clickable(role = Role.Button, onClick = onLibrary)
+                        .clickable(role = Role.Button, onClick = onImport)
                         .padding(horizontal = 20.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Spacer(Modifier.width(24.dp))
                     Text(
-                        "Import & Library",
+                        "Import MRI",
                         modifier = Modifier.weight(1f),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium,
@@ -252,14 +299,15 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                     )
                 }
                 Text(
-                    "ON-DEVICE  ·  FOR EXPLORATION, NOT DIAGNOSIS",
-                    modifier = Modifier.fillMaxWidth().padding(top = 13.dp, bottom = 7.dp),
-                    fontSize = 9.sp,
-                    letterSpacing = 1.sp,
+                    "Local viewing · For exploration, not diagnosis",
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 7.dp),
+                    fontSize = 12.sp,
+                    letterSpacing = 0.sp,
                     maxLines = 1,
                     textAlign = TextAlign.Center,
                     color = Secondary.copy(alpha = 0.8f),
                 )
+                }
             }
         }
     }
@@ -270,36 +318,62 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
             containerColor = Color(0xFF101F30),
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(13.dp),
             ) {
                 Text(
-                    "Landing settings",
+                    "Settings",
                     style = MaterialTheme.typography.headlineSmall,
                     color = Foreground,
                 )
                 Text(
-                    "Customize the home preview. Your MRI scans are unaffected.",
+                    "Appearance, privacy and local storage. These settings do not modify your MRI files.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Secondary,
                 )
+                Text("Home appearance", style = MaterialTheme.typography.titleMedium, color = Foreground)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("Automatically rotate brain", modifier = Modifier.weight(1f), color = Foreground)
-                    Switch(checked = autoRotate, onCheckedChange = { autoRotate = it })
+                    Switch(checked = autoRotate, onCheckedChange = { autoRotate = it; preferences.edit().putBoolean("rotate", it).apply() })
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("Ambient background glow", modifier = Modifier.weight(1f), color = Foreground)
-                    Switch(checked = glowEnabled, onCheckedChange = { glowEnabled = it })
+                    Switch(checked = glowEnabled, onCheckedChange = { glowEnabled = it; preferences.edit().putBoolean("glow", it).apply() })
                 }
                 TextButton(onClick = { resetRequest++ }) {
                     Text("Reset brain orientation", color = Cyan)
                 }
+                Text("Privacy & storage", style = MaterialTheme.typography.titleMedium, color = Foreground)
+                Text(
+                    "Scanning, viewing and format conversion run locally. " +
+                        "Optional BrainSuite processing only uploads after your explicit consent.",
+                    style = MaterialTheme.typography.bodySmall, color = Secondary,
+                )
+                TextButton(onClick = {
+                    scope.launch {
+                        cacheStatus = try {
+                            "Cleared ${onClearCache()} generated MRI previews. Original files unchanged."
+                        } catch (error: Exception) {
+                            "Could not clear previews: ${error.message ?: "Unknown error"}"
+                        }
+                    }
+                }) {
+                    Text("Clear cached MRI previews", color = Cyan)
+                }
+                cacheStatus?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = Secondary)
+                }
+                Text(
+                    "NeuroView is for exploration and research, not medical diagnosis.",
+                    style = MaterialTheme.typography.bodySmall, color = Secondary,
+                )
                 Button(
                     onClick = { settingsOpen = false },
                     modifier = Modifier.fillMaxWidth().height(48.dp),

@@ -255,8 +255,8 @@ The Series browser and MRI Library now use the same restrained navy surfaces, qu
 
 ## NeuroView 1.3.0 — optional BrainSuite editing
 
-The MRI viewer's **Edit** sheet now separates local display adjustments
-from **BrainSuite anatomical processing**. Select **Surface extraction** (CSE)
+The MRI viewer separates **Adjust** (local display controls) from
+**Process** (BrainSuite anatomical processing). Select **Surface extraction** (CSE)
 or **Extract + atlas** (CSE + SVReg) for a T1-weighted NIfTI file. The
 upstream BrainSuite 23a BIDS App runs on your own Docker workstation via a
 small companion service; it is not bundled into the APK. NeuroView only
@@ -270,3 +270,33 @@ automatic derivative visualization, and clinical validation are not included.
 The existing NIfTI viewer, library, conversions and Home screen continue
 to work fully offline; the optional BrainSuite panel is the only feature
 that requires network access.
+
+
+## NeuroView 1.4.0 — GUI/UX overhaul
+
+This release revises the whole normal scan-browsing workflow rather than
+redecorating the app. Home now has **Browse scans**, direct **Import MRI** and
+a conditional **Continue viewing** shortcut. The Library is the main
+thumbnail-rich browser, with collection grouping, search clearing, import-date
+and name sorting, 3D/4D filters, compact management menus and collapsed
+DICOM conversion tools. Legacy Series routes remain for backward compatibility,
+but are no longer the primary navigation path.
+
+The MRI viewer now has explicit **Zoom/Pan** and **Probe** interactions.
+Probe mode can show a measured voxel value, a temporary RAS+ crosshair and
+navigate to the same world point across the three orthogonal planes.
+The UI suppresses affirmative anatomy markers when source orientation is
+unknown. **Focus** hides the top toolbar and keeps an exit control. Display
+window presets and per-scan settings are separate from remote BrainSuite
+processing. BrainSuite now validates connections before enabling upload,
+resets consent when the selected scan/stage/endpoint changes and retains only
+non-patient job references to support monitoring.
+
+Colors, typography, CTA contrast, responsive scrolling, preview-state handling
+and accessibility labels have been tightened. No original MRI data or library
+schema is changed. See [the 1.4 UX change log and testing checklist](docs/UX_REWORK_1_4.md).
+
+**Not included:** actual 4D playback, simultaneous multi-plane rendering,
+two-scan comparison, direct BrainSuite surface mesh display, and diagnostic
+validation. A completed UI does not imply those scientific capabilities are
+implemented. The latest APK and device validation are gated by CI.

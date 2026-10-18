@@ -185,8 +185,13 @@ fun NeuroViewApp() {
             entryProvider = entryProvider {
                 entry<Destination.Home> {
                     HomeScreen(
-                        onView = { navigate(Destination.Series) },
-                        onLibrary = { navigate(Destination.Library) },
+                        onBrowse = { navigate(Destination.Library) },
+                        onImport = chooseDocuments,
+                        lastScanName = snapshot.scans.firstOrNull { it.id == lastOpenedScanId }?.label,
+                        onResumeScan = {
+                            snapshot.scans.firstOrNull { it.id == lastOpenedScanId }?.let(openScan)
+                        },
+                        onClearCache = { catalog.clearThumbnailCache() },
                     )
                 }
                 entry<Destination.Series> {
@@ -203,7 +208,14 @@ fun NeuroViewApp() {
                 entry<Destination.Library> {
                     LibraryScreen(
                         snapshot = snapshot,
+                        catalog = catalog,
                         isBusy = importBusy || editBusy || conversions.busy,
+                        activityLabel = when {
+                            importBusy -> "Importing MRI files…"
+                            conversions.busy -> conversions.message ?: "Converting MRI data…"
+                            editBusy -> "Updating library…"
+                            else -> null
+                        },
                         feedback = conversions.message ?: libraryMessage ?: importMessage,
                         onConvertDicom = conversions.selectDicomFolder,
                         onConvertDicomFiles = conversions.selectDicomSeries,
