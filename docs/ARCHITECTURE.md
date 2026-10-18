@@ -91,3 +91,28 @@ The trusted-data boundary is at the conversion integration bridge: nibabel/pydic
 `MriMemoryBudget` uses `maxMemory()/12` voxels as an **in-heap decoding threshold**, bounded by 48 million voxels. `NiftiReader` falls back to a temporary disk-backed voxel payload with 64 MiB read-only memory-mapped windows for larger viewer volumes; the catalog inspector never loads voxel data. The disk cache is deleted on release, or stale entries on later launches. Oversized thumbnails are skipped rather than decoding a second large scan. DICOM conversion is two-pass: metadata/geometry validation and sorted one-slice-at-a-time output, without keeping a full series in heap. `NiftiReader` handles metres/mm/microns explicitly. `MprRenderer` uses opaque black for geometrically outside samples, regardless of intensity window.
 
 Important blind spots: scanner-specific compressed/Enhanced DICOM not supported; physical GPU/device memory and UI interaction timing not measured; no gold-standard real-patient image compare; patient privacy and defacing must still be assessed independently. Test outputs are synthetic.
+
+
+## NeuroView 1.3: optional BrainSuite companion
+
+The historical Phase 1–7 sections above describe the originally offline-only
+implementation. Version 1.3 additionally declares INTERNET permission solely
+for user-initiated BrainSuite processing. Existing viewers, catalog, thumbnail
+generation and DICOM/NIfTI conversions remain local and require no connection.
+
+- `ui/screens/ViewerScreen` has **Edit → Display** for original, non-destructive
+  window/level controls and **Edit → BrainSuite** for remote anatomy workflows.
+- `processing/BrainSuiteClient` sends the selected SAF NIfTI stream to a
+  caller-configured HTTPS endpoint with bearer authentication, forbids URL
+  credentials/paths and redirects, and downloads results through CreateDocument.
+  The token lives in Compose memory, not persistent storage.
+- `tools/brainsuite_bridge/server.py` wraps a single T1w volume into a minimal
+  BIDS subject and runs `bids/brainsuite:v23a` in Docker, with CSE or
+  CSE+SVREG. It is a loopback-only single-user service, not publicly
+  deployable without a secure TLS reverse proxy.
+- Transfer requires explicit acknowledgement. Patient anatomy can itself
+  identify an individual. Outputs remain on the companion computer until
+  exported; no clinical quality/accuracy guarantee is implied.
+
+See [BrainSuite integration](BRAINSUITE_INTEGRATION.md) for setup,
+restrictions, host cleanup and tests.
