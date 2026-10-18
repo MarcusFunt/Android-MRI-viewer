@@ -214,7 +214,7 @@ fun ViewerScreen(
             containerColor = NeuroChrome.background,
             contentWindowInsets = WindowInsets.safeDrawing,
             topBar = {
-                TopAppBar(
+                if (!focusMode) TopAppBar(
                     title = {
                         Text(
                             displayNameOverride ?: ready?.displayName ?: "MRI viewer",
@@ -284,6 +284,12 @@ fun ViewerScreen(
                     )
                 }
 
+                if (focusMode) {
+                    TextButton(
+                        onClick = { focusMode = false },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                    ) { Text("Exit focus", color = NeuroChrome.accent) }
+                }
                 if (panelOpen) {
                     Box(
                         modifier = Modifier.fillMaxSize()
@@ -387,7 +393,7 @@ private fun MriContent(
     val currentSlice by rememberUpdatedState(selectedSlice)
     val currentOnSliceChange by rememberUpdatedState(onSliceChange)
     var showAdjustments by rememberSaveable { mutableStateOf(false) }
-    var editPage by rememberSaveable { mutableStateOf("display") }
+    var showProcessing by rememberSaveable { mutableStateOf(false) }
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
     Column(
@@ -602,15 +608,14 @@ private fun MriContent(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                MprRenderer.displayOrientation(plane),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                if (volume.transformSource.startsWith("NO ORIENTATION"))
+                    "Orientation unverified" else MprRenderer.displayOrientation(plane),
+                color = if (volume.transformSource.startsWith("NO ORIENTATION"))
+                    MaterialTheme.colorScheme.error else NeuroChrome.muted,
                 style = MaterialTheme.typography.labelSmall,
             )
-            TextButton(onClick = { showAdjustments = !showAdjustments }) {
-                Icon(Icons.Default.Edit, contentDescription = null, Modifier.size(17.dp))
-                Spacer(Modifier.width(7.dp))
-                Text(if (showAdjustments) "Close editor" else "Edit")
-            }
+            TextButton(onClick = { showAdjustments = true }) { Text("Adjust") }
+            TextButton(onClick = { showProcessing = true }) { Text("Process") }
         }
         if (volume.transformSource.startsWith("NO ORIENTATION")) {
             Text(
@@ -644,22 +649,9 @@ private fun MriContent(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Edit MRI", style = MaterialTheme.typography.titleLarge)
+                    Text("Display adjustments", style = MaterialTheme.typography.titleLarge)
                     TextButton(onClick = { showAdjustments = false }) { Text("Close") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    FilterChip(
-                        selected = editPage == "display",
-                        onClick = { editPage = "display" },
-                        label = { Text("Display") },
-                    )
-                    FilterChip(
-                        selected = editPage == "brainsuite",
-                        onClick = { editPage = "brainsuite" },
-                        label = { Text("BrainSuite") },
-                    )
-                }
-                if (editPage == "display") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -668,7 +660,7 @@ private fun MriContent(
                     TextButton(onClick = {
                         onWindowCenter(0.5f)
                         onWindowWidth(1.0f)
-                    }) { Text("Reset") }
+                    }) { Text("Reset display") }
                 }
                 Text(
                     "Changes only affect display contrast; the original voxel data is unchanged.",
@@ -742,17 +734,35 @@ private fun MriContent(
                     onClick = { showAdjustments = false },
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                 ) { Text("Done") }
-                } else {
-                    editStateHolder.SaveableStateProvider("brainsuite") {
-                        BrainSuitePanel(
-                            documentUri = selectedDocumentUri,
-                            documentName = originalDocumentName,
-                            accessToken = bridgeToken,
-                            onAccessTokenChange = { bridgeToken = it },
-                        )
-                    }
-                }
                 Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+    if (showProcessing) {
+        ModalBottomSheet(
+            onDismissRequest = { showProcessing = false },
+            containerColor = NeuroChrome.topBar,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("MRI processing", style = MaterialTheme.typography.titleLarge)
+                    TextButton(onClick = { showProcessing = false }) { Text("Close") }
+                }
+                editStateHolder.SaveableStateProvider("brainsuite") {
+                    BrainSuitePanel(
+                        documentUri = selectedDocumentUri,
+                        documentName = originalDocumentName,
+                        accessToken = bridgeToken,
+                        onAccessTokenChange = { bridgeToken = it },
+                    )
+                }
             }
         }
     }
