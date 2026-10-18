@@ -57,6 +57,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -234,7 +235,7 @@ fun HomeScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Continue viewing", color = Secondary, fontSize = 12.sp)
                             Text(lastScanName, color = Foreground, fontSize = 15.sp,
-                                fontWeight = FontWeight.Medium, maxLines = 1)
+                                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Icon(Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = "Resume most recently opened scan", tint = Cyan)
