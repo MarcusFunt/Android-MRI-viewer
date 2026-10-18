@@ -20,7 +20,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,12 +32,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.processing.BrainSuiteClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,6 +58,7 @@ fun BrainSuitePanel(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
     var address by rememberSaveable { mutableStateOf("") }
     // Don't retain the access secret through Android saved-instance-state.
     var stage by rememberSaveable { mutableStateOf("CSE") }
@@ -59,6 +67,27 @@ fun BrainSuitePanel(
     var jobStatus by remember { mutableStateOf<BrainSuiteClient.Status?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    var showToken by remember { mutableStateOf(false) }
+    var showConnection by rememberSaveable { mutableStateOf(true) }
+    val canConnect = remember(address, accessToken) {
+        runCatching { BrainSuiteClient(address, accessToken) }.isSuccess
+    }
+
+    LaunchedEffect(documentUri, address, stage) {
+        consent = false
+    }
+
+    LaunchedEffect(jobId, address, accessToken, jobStatus?.state) {
+        if (jobId.isNotBlank() && canConnect &&
+            jobStatus?.state in listOf("queued", "running")) {
+            delay(5_000)
+            try {
+                jobStatus = withContext(Dispatchers.IO) { client().status(jobId) }
+            } catch (_: Exception) {
+                // Network can be temporarily offline; manual refresh remains available.
+            }
+        }
+    }
 
     fun client() = BrainSuiteClient(address, accessToken)
 
@@ -106,7 +135,11 @@ fun BrainSuitePanel(
         modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("BrainSuite anatomical processing", style = MaterialTheme.typography.titleMedium)
+        Text("BrainSuite processing", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Selected MRI: ${documentName ?: "None"}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
         Text(
             "Run the official BrainSuite BIDS-App on your own Docker workstation. " +
                 "A selected T1-weighted NIfTI is sent over HTTPS; processing does not run on this phone.",
@@ -118,13 +151,13 @@ fun BrainSuitePanel(
             FilterChip(
                 selected = stage == "CSE",
                 onClick = { stage = "CSE" },
-                label = { Text("Surface extraction") },
+                label = { Text("Cortical surfaces") },
                 enabled = !busy,
             )
             FilterChip(
                 selected = stage == "CSE+SVREG",
                 onClick = { stage = "CSE+SVREG" },
-                label = { Text("Extract + atlas") },
+                label = { Text("Surfaces + atlas") },
                 enabled = !busy,
             )
         }
@@ -135,25 +168,54 @@ fun BrainSuitePanel(
             style = MaterialTheme.typography.bodySmall,
         )
 
-        OutlinedTextField(
-            value = address,
-            onValueChange = { address = it.trim(); jobStatus = null },
-            label = { Text("Your BrainSuite HTTPS address") },
-            placeholder = { Text("https://computer.tailnet.ts.net") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            enabled = !busy,
-        )
-        OutlinedTextField(
-            value = accessToken,
-            onValueChange = { onAccessTokenChange(it); jobStatus = null },
-            label = { Text("Access token (not saved)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            enabled = !busy,
-        )
+        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Processing computer", style = MaterialTheme.typography.titleSmall)
+                    TextButton(onClick = { showConnection = !showConnection }) {
+                        Text(if (showConnection) "Hide details" else "Edit connection")
+                    }
+                }
+                Text(
+                    if (canConnect) "Connection configured · HTTPS"
+                    else "Enter the address and token for your own computer.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (showConnection) {
+                    OutlinedTextField(
+                        value = address,
+                        onValueChange = { address = it.trim(); jobStatus = null },
+                        label = { Text("Secure HTTPS address") },
+                        placeholder = { Text("https://computer.tailnet.ts.net") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        enabled = !busy,
+                        isError = address.isNotBlank() && !address.startsWith("https://"),
+                    )
+                    OutlinedTextField(
+                        value = accessToken,
+                        onValueChange = { onAccessTokenChange(it); jobStatus = null },
+                        label = { Text("Access token (not saved)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = if (showToken) VisualTransformation.None
+                            else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        trailingIcon = {
+                            TextButton(onClick = { showToken = !showToken }) {
+                                Text(if (showToken) "Hide" else "Show")
+                            }
+                        },
+                        enabled = !busy,
+                    )
+                }
+            }
+        }
         Row(modifier = Modifier.fillMaxWidth()) {
             Checkbox(
                 checked = consent,
@@ -178,10 +240,11 @@ fun BrainSuitePanel(
                     }
                     jobId = result.id
                     jobStatus = result
+                    consent = false
                     message = "BrainSuite job submitted. Use Refresh status to check its progress."
                 }
             },
-            enabled = !busy && consent && documentUri != null && !documentName.isNullOrBlank(),
+            enabled = !busy && canConnect && consent && documentUri != null && !documentName.isNullOrBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Send T1w scan for processing")
@@ -193,14 +256,38 @@ fun BrainSuitePanel(
             style = MaterialTheme.typography.bodySmall,
         )
 
+        Text("Processing job", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
             value = jobId,
             onValueChange = { jobId = it.trim(); jobStatus = null },
-            label = { Text("Job ID (paste here to resume)") },
+            label = { Text("Job identifier (paste to resume)") },
             modifier = Modifier.fillMaxWidth(),
+            trailingIcon = if (jobId.isNotBlank()) {
+                { TextButton(onClick = { clipboard.setText(AnnotatedString(jobId)) }) { Text("Copy") } }
+            } else null,
             singleLine = true,
             enabled = !busy,
         )
+        jobStatus?.let { job ->
+            val displayState = when (job.state) {
+                "queued" -> "Queued"
+                "running" -> "Processing"
+                "succeeded" -> "Completed"
+                "failed" -> "Failed"
+                else -> "Unknown status"
+            }
+            Text("${displayState} · ${job.stages}",
+                style = MaterialTheme.typography.bodyMedium)
+            job.message?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+            if (job.state == "queued" || job.state == "running") {
+                CircularProgressIndicator(modifier = Modifier.height(24.dp))
+                Text("Status checks automatically while this panel is open.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = {
@@ -208,21 +295,12 @@ fun BrainSuitePanel(
                         jobStatus = withContext(Dispatchers.IO) { client().status(jobId) }
                     }
                 },
-                enabled = !busy && jobId.isNotBlank(),
+                enabled = !busy && canConnect && jobId.isNotBlank(),
             ) { Text("Refresh status") }
             Button(
                 onClick = { saveResults.launch("NeuroView_BrainSuite_results.zip") },
                 enabled = !busy && jobStatus?.state == "succeeded",
             ) { Text("Save results ZIP") }
-        }
-        jobStatus?.let {
-            Text(
-                "Job: ${it.state} · ${it.stages}",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            it.message?.let { explanation ->
-                Text(explanation, style = MaterialTheme.typography.bodySmall)
-            }
         }
         if (busy) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
