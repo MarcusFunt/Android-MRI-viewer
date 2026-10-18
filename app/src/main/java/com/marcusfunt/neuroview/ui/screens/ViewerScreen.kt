@@ -1,6 +1,7 @@
 package com.marcusfunt.neuroview.ui.screens
 
 import android.graphics.Bitmap
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.exponentialDecay
@@ -92,6 +93,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -130,6 +132,34 @@ fun ViewerScreen(
     var sliceIndex by rememberSaveable { mutableIntStateOf(0) }
     var windowCenter by rememberSaveable { mutableFloatStateOf(0.5f) }
     var windowWidth by rememberSaveable { mutableFloatStateOf(1.0f) }
+    val context = LocalContext.current
+    val displayPrefs = remember(context.applicationContext) {
+        context.getSharedPreferences("neuroview_display_v1", Context.MODE_PRIVATE)
+    }
+    val scanKey = remember(selectedDocumentUri) {
+        selectedDocumentUri?.let { uri ->
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(uri.toByteArray(Charsets.UTF_8))
+            digest.take(12).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
+    }
+    LaunchedEffect(scanKey) {
+        if (scanKey != null) {
+            windowCenter = displayPrefs.getFloat("${scanKey}_center", 0.5f)
+            windowWidth = displayPrefs.getFloat("${scanKey}_width", 1.0f)
+        } else {
+            windowCenter = 0.5f
+            windowWidth = 1.0f
+        }
+    }
+    fun setWindowCenter(value: Float) {
+        windowCenter = value
+        if (scanKey != null) displayPrefs.edit().putFloat("${scanKey}_center", value).apply()
+    }
+    fun setWindowWidth(value: Float) {
+        windowWidth = value
+        if (scanKey != null) displayPrefs.edit().putFloat("${scanKey}_width", value).apply()
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var isScrubbing by remember { mutableStateOf(false) }
@@ -283,9 +313,9 @@ fun ViewerScreen(
                         selectedDocumentUri = selectedDocumentUri,
                         originalDocumentName = volumeState.displayName,
                         windowCenter = windowCenter,
-                        onWindowCenter = { windowCenter = it },
+                        onWindowCenter = ::setWindowCenter,
                         windowWidth = windowWidth,
-                        onWindowWidth = { windowWidth = it },
+                        onWindowWidth = ::setWindowWidth,
                     )
                 }
 
@@ -728,6 +758,25 @@ private fun MriContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text("Display presets", style = MaterialTheme.typography.titleSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = windowWidth == 1f && windowCenter == 0.5f,
+                        onClick = { onWindowCenter(0.5f); onWindowWidth(1f) },
+                        label = { Text("Balanced") },
+                    )
+                    FilterChip(
+                        selected = windowWidth == 0.55f && windowCenter == 0.5f,
+                        onClick = { onWindowCenter(0.5f); onWindowWidth(0.55f) },
+                        label = { Text("Detail") },
+                    )
+                    FilterChip(
+                        selected = windowWidth == 1.5f && windowCenter == 0.5f,
+                        onClick = { onWindowCenter(0.5f); onWindowWidth(1.5f) },
+                        label = { Text("Wide") },
+                    )
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
