@@ -514,7 +514,7 @@ private fun MriContent(
         if (!focusMode) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
-                    .offset(y = (-2).dp).selectableGroup(),
+                    .offset(y = (-4).dp).selectableGroup(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 MriPlane.entries.forEach { option ->
@@ -530,7 +530,7 @@ private fun MriContent(
                     ) {
                         Text(
                             option.label,
-                            style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp),
+                            style = MaterialTheme.typography.labelLarge.copy(fontSize = 16.sp),
                             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                             color = if (selected) NeuroChrome.accent else NeuroChrome.muted,
                         )
@@ -894,7 +894,7 @@ private fun MriContent(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
                 .offset(y = (-4).dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+            horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
         ) {
             TextButton(onClick = {
                 zoomMode = !zoomMode
@@ -904,17 +904,20 @@ private fun MriContent(
                 panOffset = Offset.Zero
             }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.heightIn(min = 48.dp)) {
-                Text(if (zoomMode) "Scroll" else "Zoom", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    if (zoomMode) "Scroll" else "Zoom",
+                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp),
+                )
             }
             TextButton(onClick = { showAdjustments = true },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Adjust", style = MaterialTheme.typography.labelLarge)
+                Text("Adjust", style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp))
             }
             TextButton(onClick = { showProcessing = true },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Process", style = MaterialTheme.typography.labelLarge)
+                Text("Process", style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp))
             }
         }
         if (orientationUnknown) {
