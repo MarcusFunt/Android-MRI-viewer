@@ -352,7 +352,7 @@ private fun ScanSeriesCard(scan: ScanRecord, catalog: ScanCatalog, onClick: () -
 }
 
 @Composable
-private fun ScanThumbnail(scan: ScanRecord, catalog: ScanCatalog) {
+internal fun ScanThumbnail(scan: ScanRecord, catalog: ScanCatalog) {
     val bitmap by produceState<android.graphics.Bitmap?>(null, scan.id) {
         value = catalog.loadThumbnail(scan)
     }
