@@ -493,6 +493,12 @@ private fun MriContent(
                 .border(if (focusMode) 0.dp else 1.dp,
                     NeuroChrome.stroke.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
                 .onSizeChanged { imageViewport = it }
+                .pointerInput(zoomMode) {
+                    if (zoomMode) detectTapGestures(onDoubleTap = {
+                        scale = 1f
+                        panOffset = Offset.Zero
+                    })
+                }
                 .pointerInput(volume, plane, totalSlices, zoomMode, probeMode, bitmap) {
                     if (probeMode) {
                         detectTapGestures(onTap = { tap ->
@@ -632,6 +638,12 @@ private fun MriContent(
                     modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
                     style = MaterialTheme.typography.labelSmall,
                 )
+            }
+            if (zoomMode && scale > 1f) {
+                TextButton(
+                    onClick = { scale = 1f; panOffset = Offset.Zero },
+                    modifier = Modifier.align(Alignment.TopStart),
+                ) { Text("Reset zoom", color = NeuroChrome.accent) }
             }
             if (zoomMode) {
                 Text(
