@@ -74,6 +74,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -392,6 +393,8 @@ private fun MriContent(
     val currentOnSliceChange by rememberUpdatedState(onSliceChange)
     var showAdjustments by rememberSaveable { mutableStateOf(false) }
     var editPage by rememberSaveable { mutableStateOf("display") }
+    val editStateHolder = rememberSaveableStateHolder()
+    var bridgeToken by remember { mutableStateOf("") }
     Column(
         modifier = modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp),
@@ -745,10 +748,14 @@ private fun MriContent(
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                 ) { Text("Done") }
                 } else {
-                    BrainSuitePanel(
-                        documentUri = selectedDocumentUri,
-                        documentName = originalDocumentName,
-                    )
+                    editStateHolder.SaveableStateProvider("brainsuite") {
+                        BrainSuitePanel(
+                            documentUri = selectedDocumentUri,
+                            documentName = originalDocumentName,
+                            accessToken = bridgeToken,
+                            onAccessTokenChange = { bridgeToken = it },
+                        )
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
             }
