@@ -16,7 +16,7 @@ An offline-first Android application for browsing MRI series, viewing NIfTI volu
 - Four connected UI screens: Home, Series, Viewer, Library
 - Viewer navigation drawer, and a right-hand placeholder plane selector
 - Unit tests for navigation semantics; GitHub Actions Android build/test workflow
-- No network or storage permissions requested
+- No broad storage permissions requested; optional BrainSuite upload uses INTERNET only after explicit confirmation
 
 ## Phase 2: Rotating brain home preview
 
@@ -101,7 +101,7 @@ Open **Library** for the two conversion workflows:
 - Only 3D spatial volumes are output, and the NIfTI loader uses only the first frame of 4D data. Source clinical metadata cannot be losslessly recovered. Exported DICOM is **DERIVED SECONDARY CAPTURE**, not a scanner-original MR series.
 - DICOM conversion has not been validated against clinical scanners or diagnostic viewers. For educational use only; **not for diagnostic use**.
 
-All processing happens on the Android device via Storage Access Framework. The app requests no network or broad filesystem permission. If saving fails, it attempts to remove the incomplete output document and warns if cleanup is unavailable.
+All DICOM/NIfTI format conversion happens on the Android device via Storage Access Framework. Broad filesystem permissions are not requested. A separate optional BrainSuite feature uses user-confirmed HTTPS upload. If saving fails, it attempts to remove the incomplete output document and warns if cleanup is unavailable.
 
 
 ## Phase 7 — Orientation, interoperability, memory and emulator QA
@@ -251,3 +251,22 @@ unchanged.
 ### v1.2.0 � unified navigation and MRI viewer styling
 
 The Series browser and MRI Library now use the same restrained navy surfaces, quiet borders, and cyan-to-blue primary action styling as the floating-brain landing page. The MRI viewer has segmented axial/coronal/sagittal controls, a compact untinted image frame and slice-position panel, readable window/level adjustment values and a Focus button that temporarily hides peripheral controls to maximize the MRI viewing area. The original voxel data, grayscale display, windowing mapping, real-time render sessions, memory management, scrolling behavior, DICOM/NIfTI workflows and saved library entries are unchanged. The UI is fully offline and remains exploration-only, not a diagnostic viewer.
+
+
+## NeuroView 1.3.0 — optional BrainSuite editing
+
+The MRI viewer's **Edit** sheet now separates local display adjustments
+from **BrainSuite anatomical processing**. Select **Surface extraction** (CSE)
+or **Extract + atlas** (CSE + SVReg) for a T1-weighted NIfTI file. The
+upstream BrainSuite 23a BIDS App runs on your own Docker workstation via a
+small companion service; it is not bundled into the APK. NeuroView only
+uploads after explicit per-session consent to the configured HTTPS host.
+
+The app can submit processing, refresh job status, and save the result ZIP.
+Original NIfTI files remain unchanged. Functional/diffusion processing,
+automatic derivative visualization, and clinical validation are not included.
+
+**Setup and security:** [BrainSuite companion guide](docs/BRAINSUITE_INTEGRATION.md).
+The existing NIfTI viewer, library, conversions and Home screen continue
+to work fully offline; the optional BrainSuite panel is the only feature
+that requires network access.
