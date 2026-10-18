@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -106,14 +107,21 @@ fun LibraryScreen(
 
     var mode by rememberSaveable { mutableStateOf("All") }
     var sort by rememberSaveable { mutableStateOf("Recent") }
+    var frameFilter by rememberSaveable { mutableStateOf("All") }
     var conversionOpen by rememberSaveable { mutableStateOf(false) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     val query = search.trim()
     val matching = snapshot.scans.filter { scan ->
-        query.isBlank() || scan.label.contains(query, true) ||
+        val textMatches = query.isBlank() || scan.label.contains(query, true) ||
             scan.displayName.contains(query, true) ||
             scan.metadata.description.contains(query, true) ||
             snapshot.collections.any { it.id == scan.collectionId && it.label.contains(query, true) }
+        val frameMatches = when (frameFilter) {
+            "3D" -> scan.metadata.timepoints == 1
+            "4D" -> scan.metadata.timepoints > 1
+            else -> true
+        }
+        textMatches && frameMatches
     }
     val dates = remember(snapshot.collections) { snapshot.collections.associate { it.id to it.importedAt } }
     val ordered = if (sort == "Name") matching.sortedBy { it.label.lowercase() }
@@ -201,7 +209,8 @@ fun LibraryScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = mode == "All", onClick = { mode = "All" },
                             label = { Text("All scans") })
                         FilterChip(selected = mode == "Collections", onClick = { mode = "Collections" },
@@ -209,6 +218,19 @@ fun LibraryScreen(
                         FilterChip(selected = sort == "Name", onClick = {
                             sort = if (sort == "Name") "Recent" else "Name"
                         }, label = { Text(if (sort == "Name") "A–Z" else "Newest imports") })
+                    }
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Frames", color = NeuroChrome.muted,
+                            style = MaterialTheme.typography.labelSmall)
+                        listOf("All", "3D", "4D").forEach { selection ->
+                            FilterChip(selected = frameFilter == selection,
+                                onClick = { frameFilter = selection },
+                                label = { Text(selection) })
+                        }
                     }
                     if (isBusy) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
