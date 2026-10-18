@@ -83,7 +83,7 @@ class Bridge:
             opener = gzip.open if extension == "nii.gz" else open
             with opener(source_path, "rb") as nifti:
                 header = nifti.read(352)
-            if len(header) < 352 or header[344:348] != b"n+1\\x00" or int.from_bytes(
+            if len(header) < 352 or header[344:348] != b"n+1\x00" or int.from_bytes(
                 header[:4], "little"
             ) != 348 and int.from_bytes(header[:4], "big") != 348:
                 raise ValueError("Input is not a valid single-file NIfTI-1 volume")
