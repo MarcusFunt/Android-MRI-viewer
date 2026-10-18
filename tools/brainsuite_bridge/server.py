@@ -12,7 +12,6 @@ import hmac
 import json
 import os
 import re
-import secrets
 import subprocess
 import threading
 import uuid
@@ -69,8 +68,8 @@ class Bridge:
             self.jobs[identifier] = job
 
         source_path = root / "bids" / "sub-01" / "anat" / ("sub-01_T1w." + extension)
-        source_path.parent.mkdir(parents=True)
         try:
+            source_path.parent.mkdir(parents=True)
             remaining = length
             with source_path.open("wb") as target:
                 while remaining:
@@ -83,9 +82,9 @@ class Bridge:
             opener = gzip.open if extension == "nii.gz" else open
             with opener(source_path, "rb") as nifti:
                 header = nifti.read(352)
-            if len(header) < 352 or header[344:348] != b"n+1\x00" or int.from_bytes(
-                header[:4], "little"
-            ) != 348 and int.from_bytes(header[:4], "big") != 348:
+            valid_endian = (int.from_bytes(header[:4], "little") == 348 or
+                            int.from_bytes(header[:4], "big") == 348)
+            if len(header) < 352 or header[344:348] != b"n+1\x00" or not valid_endian:
                 raise ValueError("Input is not a valid single-file NIfTI-1 volume")
             (root / "bids" / "dataset_description.json").write_text(
                 json.dumps({"Name": "NeuroView local input", "BIDSVersion": "1.8.0",
@@ -128,7 +127,7 @@ class Bridge:
                 for path in sorted(files):
                     archive.write(path, arcname=str(path.relative_to(output_dir)))
             job.status = "succeeded"
-        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        except Exception:
             # Never send filenames, NIfTI metadata or processing logs to the phone.
             job.error = "Processing failed or timed out. Review processing.log on the host."
             job.status = "failed"
@@ -186,7 +185,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(202, self.server.bridge.status(job.identifier))
         except ValueError:
             self._send_json(400, {"error": "Invalid NIfTI or processing selection"})
-        except (OSError, RuntimeError):
+        except (OSError, EOFError, RuntimeError):
             self._send_json(503, {"error": "Processing service cannot accept this job"})
 
     def do_GET(self):
