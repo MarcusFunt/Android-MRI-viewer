@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.safeDrawing
@@ -126,7 +127,7 @@ import kotlin.math.sqrt
 
 internal const val VIEWER_DISPLAY_PREFERENCES = "neuroview_display_v1"
 internal const val SHOW_ORIENTATION_MARKERS_KEY = "show_orientation_markers"
-private const val DEFAULT_MRI_IMAGE_SCALE = 1.3f
+private const val DEFAULT_MRI_IMAGE_SCALE = 1.35f
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -379,8 +380,8 @@ private fun ViewerBackdrop(modifier: Modifier = Modifier) {
                     colorStops = arrayOf(
                         0f to Color.Transparent,
                         0.48f to Color.Transparent,
-                        0.82f to Color(0xFF115177).copy(alpha = 0.045f),
-                        1f to NeuroChrome.accent.copy(alpha = 0.075f),
+                        0.82f to Color(0xFF115177).copy(alpha = 0.055f),
+                        1f to NeuroChrome.accent.copy(alpha = 0.085f),
                     ),
                     center = Offset(size.width / 2f, size.height / 2f),
                     radius = radius,
@@ -512,7 +513,8 @@ private fun MriContent(
         // Plane choices stay one tap away without a second drawer or stacked cards.
         if (!focusMode) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).selectableGroup(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+                    .offset(y = (-2).dp).selectableGroup(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 MriPlane.entries.forEach { option ->
@@ -528,7 +530,7 @@ private fun MriContent(
                     ) {
                         Text(
                             option.label,
-                            style = MaterialTheme.typography.labelLarge,
+                            style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp),
                             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                             color = if (selected) NeuroChrome.accent else NeuroChrome.muted,
                         )
@@ -889,9 +891,10 @@ private fun MriContent(
             }
 
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+                .offset(y = (-4).dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
         ) {
             TextButton(onClick = {
                 zoomMode = !zoomMode
