@@ -32,6 +32,14 @@ import com.marcusfunt.neuroview.brain.BrainGlSurfaceView
 
 private const val FIRST_FRAME_TEST_TAG = "brain-preview-first-frame-drawn"
 
+internal fun shouldRotateBrain(
+    autoRotation: Boolean,
+    firstFrameDrawn: Boolean,
+    resumed: Boolean,
+    userDragging: Boolean,
+    animatorsEnabled: Boolean,
+): Boolean = autoRotation && firstFrameDrawn && resumed && !userDragging && animatorsEnabled
+
 /**
  * Pure 3D preview without chrome or descriptive text. Home owns the settings.
  * Paused off-screen and while the user drags; drawing uses RENDERMODE_WHEN_DIRTY.
@@ -67,6 +75,7 @@ internal fun BrainPreview(
         readinessModifier,
         autoRotation,
         resetRequest,
+        firstFrameDrawn,
         onFirstFrameDrawn = { firstFrameDrawn = true },
     )
 }
@@ -76,6 +85,7 @@ private fun InteractiveBrain(
     modifier: Modifier,
     autoRotation: Boolean,
     resetRequest: Int,
+    firstFrameDrawn: Boolean,
     onFirstFrameDrawn: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -139,8 +149,15 @@ private fun InteractiveBrain(
         }
     }
 
-    LaunchedEffect(autoRotation, userDragging, resumed) {
-        if (resumed && autoRotation && !userDragging && ValueAnimator.areAnimatorsEnabled()) {
+    LaunchedEffect(autoRotation, firstFrameDrawn, userDragging, resumed) {
+        if (shouldRotateBrain(
+                autoRotation = autoRotation,
+                firstFrameDrawn = firstFrameDrawn,
+                resumed = resumed,
+                userDragging = userDragging,
+                animatorsEnabled = ValueAnimator.areAnimatorsEnabled(),
+            )
+        ) {
             animator.start()
         } else {
             animator.cancel()

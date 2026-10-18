@@ -1,5 +1,11 @@
 package com.marcusfunt.neuroview.ui.components
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,8 +16,12 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.ui.operations.OperationProgress
@@ -19,6 +29,8 @@ import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
 import com.marcusfunt.neuroview.ui.operations.OperationStatus
 import com.marcusfunt.neuroview.ui.operations.OperationUnit
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
+import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
+import com.marcusfunt.neuroview.ui.theme.MotionToken
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -32,6 +44,12 @@ fun OperationProgressIndicator(
     val progress = snapshot.progress
     val fraction = progress?.fraction
     val percent = progress?.percent
+    val duration = MotionToken.QUICK.durationMs(LocalNeuroViewMotion.current)
+    val animatedFraction by animateFloatAsState(
+        targetValue = fraction ?: 0f,
+        animationSpec = tween(durationMillis = duration),
+        label = "Operation progress",
+    )
     val showIndeterminate = fraction == null && snapshot.status in setOf(
         OperationStatus.RUNNING,
         OperationStatus.WAITING_FOR_PROVIDER,
@@ -49,12 +67,18 @@ fun OperationProgressIndicator(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = snapshot.stage.label,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium,
-                color = NeuroChrome.ink,
-            )
+            AnimatedContent(
+                targetState = snapshot.stage.label,
+                transitionSpec = { fadeIn(tween(duration)) togetherWith fadeOut(tween(duration)) },
+                label = "Operation stage",
+                modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+            ) { stageLabel ->
+                Text(
+                    text = stageLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NeuroChrome.ink,
+                )
+            }
             if (percent != null) {
                 Spacer(Modifier.width(12.dp))
                 Text(
@@ -68,7 +92,7 @@ fun OperationProgressIndicator(
 
         if (fraction != null) {
             LinearProgressIndicator(
-                progress = { fraction },
+                progress = { animatedFraction },
                 modifier = Modifier.fillMaxWidth(),
                 color = NeuroChrome.accent,
                 trackColor = NeuroChrome.stroke.copy(alpha = 0.55f),

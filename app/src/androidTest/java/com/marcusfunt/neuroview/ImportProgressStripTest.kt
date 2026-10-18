@@ -1,8 +1,12 @@
 package com.marcusfunt.neuroview
 
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
 import com.marcusfunt.neuroview.catalog.ImportBatchProgress
 import com.marcusfunt.neuroview.ui.operations.OperationId
 import com.marcusfunt.neuroview.ui.operations.OperationKind
@@ -57,6 +61,9 @@ class ImportProgressStripTest {
         }
 
         compose.onNodeWithText("Checking scan-two.nii.gz · file 2 of 3").assertExists()
+        compose.onNodeWithText("Checking scan-two.nii.gz · file 2 of 3").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite),
+        )
         compose.onNodeWithText("1 added · 1 skipped · 0 failed").assertExists()
         compose.onNodeWithText("CANCEL").performClick()
         assertTrue(canceled)

@@ -6,11 +6,18 @@ import android.net.Uri
 import android.os.CancellationSignal
 import android.os.OperationCanceledException
 import android.provider.OpenableColumns
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,6 +61,9 @@ import com.marcusfunt.neuroview.ui.operations.OperationStatus
 import com.marcusfunt.neuroview.ui.operations.OperationUnit
 import com.marcusfunt.neuroview.ui.operations.RecoveryAction
 import com.marcusfunt.neuroview.ui.operations.SystemMonotonicClock
+import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
+import com.marcusfunt.neuroview.ui.theme.MotionToken
+import com.marcusfunt.neuroview.ui.theme.rememberMotionPreference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CompletableDeferred
@@ -197,6 +207,8 @@ private fun Throwable.toOperationFailure(): OperationFailure {
 @Composable
 fun NeuroViewApp() {
     val context = LocalContext.current
+    val motionPreference = rememberMotionPreference()
+    val navigationMotionMs = MotionToken.NAVIGATION.durationMs(motionPreference)
     val scope = rememberCoroutineScope()
     val conversions = rememberConversionControls()
     val catalog = remember(context.applicationContext) {
@@ -713,10 +725,38 @@ fun NeuroViewApp() {
         navigate(Destination.Viewer(scan.id))
     }
 
+    CompositionLocalProvider(LocalNeuroViewMotion provides motionPreference) {
     Surface(modifier = Modifier.fillMaxSize()) {
         NavDisplay(
             backStack = backStack,
             onBack = { NavigationActions.back(backStack) },
+            transitionSpec = {
+                fadeIn(tween(navigationMotionMs)) + slideInHorizontally(
+                    animationSpec = tween(navigationMotionMs),
+                    initialOffsetX = { fullWidth -> fullWidth / 12 },
+                ) togetherWith fadeOut(tween(navigationMotionMs)) + slideOutHorizontally(
+                    animationSpec = tween(navigationMotionMs),
+                    targetOffsetX = { fullWidth -> -fullWidth / 12 },
+                )
+            },
+            popTransitionSpec = {
+                fadeIn(tween(navigationMotionMs)) + slideInHorizontally(
+                    animationSpec = tween(navigationMotionMs),
+                    initialOffsetX = { fullWidth -> -fullWidth / 12 },
+                ) togetherWith fadeOut(tween(navigationMotionMs)) + slideOutHorizontally(
+                    animationSpec = tween(navigationMotionMs),
+                    targetOffsetX = { fullWidth -> fullWidth / 12 },
+                )
+            },
+            predictivePopTransitionSpec = { _ ->
+                fadeIn(tween(navigationMotionMs)) + slideInHorizontally(
+                    animationSpec = tween(navigationMotionMs),
+                    initialOffsetX = { fullWidth -> -fullWidth / 12 },
+                ) togetherWith fadeOut(tween(navigationMotionMs)) + slideOutHorizontally(
+                    animationSpec = tween(navigationMotionMs),
+                    targetOffsetX = { fullWidth -> fullWidth / 12 },
+                )
+            },
             entryProvider = entryProvider {
                 entry<Destination.Home> {
                     HomeScreen(
@@ -877,5 +917,6 @@ fun NeuroViewApp() {
                 }
             },
         )
+    }
     }
 }

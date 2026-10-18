@@ -9,8 +9,14 @@ import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import android.os.Trace
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -102,6 +108,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.DpSize
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
+import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
+import com.marcusfunt.neuroview.ui.theme.MotionToken
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
@@ -175,6 +183,8 @@ fun ViewerScreen(
     var windowCenter by rememberSaveable { mutableFloatStateOf(0.5f) }
     var windowWidth by rememberSaveable { mutableFloatStateOf(1.0f) }
     val context = LocalContext.current
+    val motionPreference = LocalNeuroViewMotion.current
+    val motionDuration = MotionToken.QUICK.durationMs(motionPreference)
     val displayPrefs = remember(context.applicationContext) {
         context.getSharedPreferences(VIEWER_DISPLAY_PREFERENCES, Context.MODE_PRIVATE)
     }
@@ -575,30 +585,42 @@ fun ViewerScreen(
                 containerColor = Color.Transparent,
                 contentWindowInsets = WindowInsets.safeDrawing,
                 topBar = {
-                    if (!focusMode) TopAppBar(
-                        title = {
-                            Text(
-                                displayNameOverride ?: ready?.displayName ?: firstSlice?.displayName
-                                    ?: loading?.displayName ?: "MRI viewer",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                        },
-                        navigationIcon = {
-                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Icon(Icons.Default.Menu, contentDescription = "Open navigation menu")
-                            }
-                        },
-                        actions = {
-                            IconButton(onClick = { settingsOpen = true }) {
-                                Icon(Icons.Default.Settings, contentDescription = "Viewer settings")
-                            }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = Color.Transparent,
+                    AnimatedVisibility(
+                        visible = !focusMode,
+                        enter = fadeIn(tween(motionDuration)) + slideInVertically(
+                            animationSpec = tween(motionDuration),
+                            initialOffsetY = { -it / 5 },
                         ),
-                    )
+                        exit = fadeOut(tween(motionDuration)) + slideOutVertically(
+                            animationSpec = tween(motionDuration),
+                            targetOffsetY = { -it / 5 },
+                        ),
+                    ) {
+                        TopAppBar(
+                            title = {
+                                Text(
+                                    displayNameOverride ?: ready?.displayName ?: firstSlice?.displayName
+                                        ?: loading?.displayName ?: "MRI viewer",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            },
+                            navigationIcon = {
+                                IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                    Icon(Icons.Default.Menu, contentDescription = "Open navigation menu")
+                                }
+                            },
+                            actions = {
+                                IconButton(onClick = { settingsOpen = true }) {
+                                    Icon(Icons.Default.Settings, contentDescription = "Viewer settings")
+                                }
+                            },
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = Color.Transparent,
+                            ),
+                        )
+                    }
                 },
             ) { padding ->
                 Box(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -914,6 +936,8 @@ private fun MriContent(
     windowWidth: Float,
     onWindowWidth: (Float) -> Unit,
 ) {
+    val motionPreference = LocalNeuroViewMotion.current
+    val motionDuration = MotionToken.QUICK.durationMs(LocalNeuroViewMotion.current)
     // Gesture coroutines persist across recompositions; always read the latest slice.
     val currentSlice by rememberUpdatedState(selectedSlice)
     val currentOnSliceChange by rememberUpdatedState(onSliceChange)
@@ -947,7 +971,17 @@ private fun MriContent(
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         // Plane choices stay one tap away without a second drawer or stacked cards.
-        if (!focusMode) {
+        AnimatedVisibility(
+            visible = !focusMode,
+            enter = fadeIn(tween(motionDuration)) + slideInVertically(
+                animationSpec = tween(motionDuration),
+                initialOffsetY = { it / 6 },
+            ),
+            exit = fadeOut(tween(motionDuration)) + slideOutVertically(
+                animationSpec = tween(motionDuration),
+                targetOffsetY = { it / 6 },
+            ),
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
                     .offset(y = (-4).dp).selectableGroup(),
@@ -998,7 +1032,9 @@ private fun MriContent(
                         panOffset = Offset.Zero
                     })
                 }
-                .pointerInput(volume, plane, totalSlices, zoomMode, probeCrosshairEnabled, bitmap) {
+                .pointerInput(
+                    volume, plane, totalSlices, zoomMode, probeCrosshairEnabled, bitmap, motionPreference,
+                ) {
                     if (probeCrosshairEnabled) {
                         detectTapGestures(onTap = { tap ->
                             val image = bitmap
@@ -1086,7 +1122,9 @@ private fun MriContent(
                         },
                         onDragEnd = {
                             val pixelsPerSecond = tracker.calculateVelocity().y
-                            if (scrollLocked && abs(pixelsPerSecond) > 380f) {
+                            if (motionPreference.allowsInertialMotion &&
+                                scrollLocked && abs(pixelsPerSecond) > 380f
+                            ) {
                                 val initialSlice = (anchorSlice - (verticalDrag / pixelsPerSlice).toInt())
                                     .coerceIn(0, totalSlices - 1).toFloat()
                                 flingJob = flingScope.launch {

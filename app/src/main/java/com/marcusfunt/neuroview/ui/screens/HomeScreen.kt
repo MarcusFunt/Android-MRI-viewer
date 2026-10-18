@@ -59,6 +59,7 @@ import androidx.compose.ui.res.painterResource
 import android.content.Context
 import androidx.compose.ui.unit.sp
 import com.marcusfunt.neuroview.ui.BrainPreview
+import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
 
 private val Navy = Color(0xFF060F1A)
 private val Cyan = Color(0xFF79D6E6)
@@ -80,6 +81,7 @@ fun HomeScreen(
     onClearCache: suspend () -> Int = { 0 },
 ) {
     val context = LocalContext.current
+    val motionPreference = LocalNeuroViewMotion.current
     val preferences = remember(context.applicationContext) {
         context.getSharedPreferences("neuroview_home_appearance_v1", Context.MODE_PRIVATE)
     }
@@ -212,7 +214,7 @@ fun HomeScreen(
                 ) {
                     BrainPreview(
                         modifier = Modifier.fillMaxSize(),
-                        autoRotation = autoRotate,
+                        autoRotation = autoRotate && motionPreference.allowsDecorativeMotion,
                         resetRequest = resetRequest,
                     )
                 }

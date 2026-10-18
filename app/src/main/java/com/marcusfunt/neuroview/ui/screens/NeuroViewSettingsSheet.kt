@@ -50,6 +50,10 @@ import com.marcusfunt.neuroview.mri.RenderQualityMode
 import com.marcusfunt.neuroview.mri.RenderQualityPolicy
 import com.marcusfunt.neuroview.mri.RenderQualitySettings
 import com.marcusfunt.neuroview.mri.RenderPerformanceSnapshot
+import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
+import com.marcusfunt.neuroview.ui.theme.MotionPreference
+import com.marcusfunt.neuroview.ui.theme.MOTION_PREFERENCES
+import com.marcusfunt.neuroview.ui.theme.writeMotionPreference
 import kotlin.math.roundToInt
 
 internal const val VIEWER_DISPLAY_PREFERENCES = "neuroview_display_v1"
@@ -109,6 +113,10 @@ internal fun NeuroViewSettingsSheet(
 ) {
     val context = LocalContext.current
     val showRenderDiagnostics = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    val motionPreferences = remember(context.applicationContext) {
+        context.getSharedPreferences(MOTION_PREFERENCES, Context.MODE_PRIVATE)
+    }
+    val motionPreference = LocalNeuroViewMotion.current
     val viewerPreferences = remember(context.applicationContext) {
         context.getSharedPreferences(VIEWER_DISPLAY_PREFERENCES, Context.MODE_PRIVATE)
     }
@@ -205,6 +213,20 @@ internal fun NeuroViewSettingsSheet(
                     Text("Reset brain orientation", color = SettingsCyan)
                 }
             }
+
+            HorizontalDivider(color = SettingsSecondary.copy(alpha = 0.28f))
+            Text("Motion and accessibility", style = MaterialTheme.typography.titleMedium, color = SettingsForeground)
+            SettingsChoiceRow(
+                title = "Motion",
+                selected = motionPreference.label,
+                options = MotionPreference.entries.map { it.label to it },
+                onSelected = motionPreferences::writeMotionPreference,
+            )
+            Text(
+                motionPreference.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = SettingsSecondary,
+            )
 
             HorizontalDivider(color = SettingsSecondary.copy(alpha = 0.28f))
             Text(
@@ -348,11 +370,11 @@ internal fun NeuroViewSettingsSheet(
 }
 
 @Composable
-private fun SettingsChoiceRow(
+private fun <T> SettingsChoiceRow(
     title: String,
     selected: String,
-    options: List<Pair<String, RenderQualityMode>>,
-    onSelected: (RenderQualityMode) -> Unit,
+    options: List<Pair<String, T>>,
+    onSelected: (T) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Row(

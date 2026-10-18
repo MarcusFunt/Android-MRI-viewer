@@ -1,5 +1,13 @@
 package com.marcusfunt.neuroview.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -59,11 +67,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
+import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
+import com.marcusfunt.neuroview.ui.theme.MotionToken
 import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
 import com.marcusfunt.neuroview.catalog.ImportCollection
 import com.marcusfunt.neuroview.catalog.ImportBatchProgress
@@ -114,6 +127,8 @@ fun LibraryScreen(
     onClearThumbnails: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val motionPreference = LocalNeuroViewMotion.current
+    val motionDuration = MotionToken.STANDARD.durationMs(motionPreference)
     var dialog by remember { mutableStateOf<LibraryDialog?>(null) }
     var search by rememberSaveable { mutableStateOf("") }
 
@@ -174,7 +189,10 @@ fun LibraryScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item(key = "library-controls") {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    modifier = Modifier.animateContentSize(animationSpec = tween(motionDuration)),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -401,14 +419,26 @@ fun LibraryScreen(
                 }
             }
         }
-        if (importProgress != null && importOperation != null) {
-            ImportProgressStrip(
-                progress = importProgress,
-                operation = importOperation,
-                cancelRequestedAtElapsedMs = importCancelRequestedAtElapsedMs,
-                onCancel = onCancelImport,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
-            )
+        AnimatedVisibility(
+            visible = importProgress != null && importOperation != null,
+            enter = fadeIn(tween(motionDuration)) + slideInVertically(
+                animationSpec = tween(motionDuration),
+                initialOffsetY = { it / 4 },
+            ),
+            exit = fadeOut(tween(motionDuration)) + slideOutVertically(
+                animationSpec = tween(motionDuration),
+                targetOffsetY = { it / 4 },
+            ),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+        ) {
+            if (importProgress != null && importOperation != null) {
+                ImportProgressStrip(
+                    progress = importProgress,
+                    operation = importOperation,
+                    cancelRequestedAtElapsedMs = importCancelRequestedAtElapsedMs,
+                    onCancel = onCancelImport,
+                )
+            }
         }
         }
     }
@@ -584,6 +614,11 @@ internal fun ImportProgressStrip(
     val fraction = if (progress.totalFiles == 0) 0f else {
         progress.filesProcessed.toFloat() / progress.totalFiles.toFloat()
     }.coerceIn(0f, 1f)
+    val animatedFraction by animateFloatAsState(
+        targetValue = fraction,
+        animationSpec = tween(MotionToken.QUICK.durationMs(LocalNeuroViewMotion.current)),
+        label = "Import progress",
+    )
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -613,14 +648,14 @@ internal fun ImportProgressStrip(
                 progress.currentFileName?.let {
                     "Checking $it · file ${progress.filesProcessed + 1} of ${progress.totalFiles}"
                 } ?: "Checked ${progress.filesProcessed} of ${progress.totalFiles} files",
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodySmall,
                 color = NeuroChrome.ink,
             )
             LinearProgressIndicator(
-                progress = { fraction },
+                progress = { animatedFraction },
                 modifier = Modifier.fillMaxWidth(),
                 color = NeuroChrome.accent,
                 trackColor = NeuroChrome.stroke.copy(alpha = 0.55f),
