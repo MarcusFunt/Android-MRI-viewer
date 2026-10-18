@@ -47,7 +47,7 @@ internal const val VIEWER_DISPLAY_PREFERENCES = "neuroview_display_v1"
 internal const val SHOW_ORIENTATION_MARKERS_KEY = "show_orientation_markers"
 internal const val PROBE_CROSSHAIR_ENABLED_KEY = "probe_crosshair_enabled"
 internal const val CROSSHAIR_THICKNESS_DP_KEY = "crosshair_thickness_dp"
-internal const val DEFAULT_CROSSHAIR_THICKNESS_DP = 2f
+internal const val DEFAULT_CROSSHAIR_THICKNESS_DP = 3f
 internal const val MIN_CROSSHAIR_THICKNESS_DP = 1f
 internal const val MAX_CROSSHAIR_THICKNESS_DP = 4f
 

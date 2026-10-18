@@ -32,7 +32,8 @@ class BrainAssetLoaderTest {
         assertEquals(3, mesh.indices.size)
         assertEquals(.79f, mesh.color[0], 0.0001f)
         assertArrayEquals(shortArrayOf(0, 1, 2), mesh.indices)
-        assertEquals(1f, mesh.vertices[6], 0f)
+        // The production loader deliberately applies a 2.5% Laplacian pass.
+        assertEquals(.9625f, mesh.vertices[6], 0.0001f)
     }
 
     @Test fun rejectsTruncatedOrCorruptedAssets() {

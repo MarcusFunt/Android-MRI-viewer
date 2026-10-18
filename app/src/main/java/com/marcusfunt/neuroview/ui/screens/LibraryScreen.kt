@@ -219,16 +219,20 @@ fun LibraryScreen(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        Row(modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = mode == "All", onClick = { mode = "All" },
-                                label = { Text("All scans") })
-                            FilterChip(selected = mode == "Collections", onClick = { mode = "Collections" },
-                                label = { Text("Collections") })
+                    }
+                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = mode == "All", onClick = { mode = "All" },
+                            label = { Text("All scans") })
+                        FilterChip(selected = mode == "Collections", onClick = { mode = "Collections" },
+                            label = { Text("Collections") })
+                        if (snapshot.scans.isNotEmpty()) {
                             FilterChip(selected = sort == "Name", onClick = {
                                 sort = if (sort == "Name") "Recent" else "Name"
                             }, label = { Text(if (sort == "Name") "A–Z" else "Newest imports") })
                         }
+                    }
+                    if (snapshot.scans.isNotEmpty()) {
                         Row(
                             modifier = Modifier.horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
