@@ -641,14 +641,15 @@ private fun MriContent(
                     color = NeuroChrome.muted,
                 )
             }
-            if (referenceWorld != null && bitmap != null && imageViewport.width > 0) {
+            val reference = referenceWorld
+            if (reference != null && bitmap != null && imageViewport.width > 0) {
                 val position = MprRenderer.slicePosition(volume, plane, currentSlice)
                 val count = MprRenderer.sliceCount(volume, plane)
                 val bounds = volume.affine.bounds(volume.nx, volume.ny, volume.nz)
                 val spacing = (bounds[1][plane.firstAxis] - bounds[0][plane.firstAxis]) /
                     (count - 1).coerceAtLeast(1)
-                if (abs(referenceWorld[plane.firstAxis] - position) <= spacing * 0.55) {
-                    val (fx, fy) = MprProbe.fractionsForWorld(volume, plane, referenceWorld)
+                if (abs(reference[plane.firstAxis] - position) <= spacing * 0.55) {
+                    val (fx, fy) = MprProbe.fractionsForWorld(volume, plane, reference)
                     val fit = minOf(imageViewport.width.toFloat() / bitmap.width,
                         imageViewport.height.toFloat() / bitmap.height)
                     val imageWidth = bitmap.width * fit
