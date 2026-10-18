@@ -15,17 +15,17 @@ class NeuroViewNavigationSmokeTest {
     @Test
     fun homeExposesPrimaryActionsWithoutOpeningAnotherScreen() {
         compose.onNodeWithText("NeuroView").assertExists()
-        compose.onNodeWithText("Open viewer").assertExists()
-        compose.onNodeWithText("Import & Library").assertExists()
+        compose.onNodeWithText("Browse scans").assertExists()
+        compose.onNodeWithText("Import MRI").assertExists()
         compose.onNodeWithContentDescription("Landing page settings").assertExists()
     }
 
     @Test
-    fun homeCanOpenSeriesBrowser() {
+    fun homeCanOpenUnifiedLibrary() {
         compose.onNodeWithText("NeuroView").assertExists()
-        compose.onNodeWithText("Open viewer").performClick()
-        compose.onNodeWithText("Series browser").assertExists()
-        compose.onNodeWithText("Import NIfTI volumes").assertExists()
+        compose.onNodeWithText("Browse scans").performClick()
+        compose.onNodeWithText("MRI Library").assertExists()
+        compose.onNodeWithText("Import MRI volumes").assertExists()
     }
 
     @Test
@@ -35,7 +35,7 @@ class NeuroViewNavigationSmokeTest {
         compose.onNodeWithText("Ambient background glow").assertExists()
         compose.onNodeWithText("Reset brain orientation").performClick()
         compose.onNodeWithText("Done").performClick()
-        compose.onNodeWithText("Open viewer").assertExists()
+        compose.onNodeWithText("Browse scans").assertExists()
     }
 
     @Test
@@ -51,11 +51,13 @@ class NeuroViewNavigationSmokeTest {
 
     @Test
     fun libraryShowsConversionAndManagementActions() {
-        compose.onNodeWithText("Import & Library").performClick()
+        compose.onNodeWithText("Browse scans").performClick()
         compose.onNodeWithText("MRI Library").assertExists()
-        compose.onNodeWithText("New collection").assertExists()
-        compose.onNodeWithText("Choose DICOM folder").assertExists()
-        compose.onNodeWithText("Select individual files instead").assertExists()
-        compose.onNodeWithText("Import NIfTI volumes").assertExists()
+        compose.onNodeWithText("Collections").performClick()
+        compose.onNodeWithText("+ New collection").assertExists()
+        compose.onNodeWithText("Conversion tools").performClick()
+        compose.onNodeWithText("Select DICOM folder").assertExists()
+        compose.onNodeWithText("Select DICOM files instead").assertExists()
+        compose.onNodeWithText("Import MRI volumes").assertExists()
     }
 }
