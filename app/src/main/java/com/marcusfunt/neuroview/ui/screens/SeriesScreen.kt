@@ -353,8 +353,10 @@ private fun ScanSeriesCard(scan: ScanRecord, catalog: ScanCatalog, onClick: () -
 
 @Composable
 internal fun ScanThumbnail(scan: ScanRecord, catalog: ScanCatalog) {
-    val bitmap by produceState<android.graphics.Bitmap?>(null, scan.id) {
-        value = catalog.loadThumbnail(scan)
+    data class Preview(val bitmap: android.graphics.Bitmap?, val loaded: Boolean)
+    val preview by produceState(Preview(null, false), scan.id) {
+        val result = runCatching { catalog.loadThumbnail(scan) }.getOrNull()
+        value = Preview(result, true)
     }
     Box(
         modifier = Modifier.size(90.dp)
@@ -362,12 +364,14 @@ internal fun ScanThumbnail(scan: ScanRecord, catalog: ScanCatalog) {
             .background(Color(0xFF03080D)),
         contentAlignment = Alignment.Center,
     ) {
-        if (bitmap == null) {
-            Text("MRI", color = MaterialTheme.colorScheme.primary,
+        if (!preview.loaded) {
+            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+        } else if (preview.bitmap == null) {
+            Text("No preview", color = NeuroChrome.muted,
                 style = MaterialTheme.typography.labelSmall)
         } else {
             Image(
-                bitmap = bitmap!!.asImageBitmap(),
+                bitmap = preview.bitmap!!.asImageBitmap(),
                 contentDescription = "MRI preview of ${scan.label}",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
