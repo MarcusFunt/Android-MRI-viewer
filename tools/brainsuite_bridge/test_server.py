@@ -8,6 +8,7 @@ import json
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -75,7 +76,7 @@ class BridgeTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            with http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5) as client:
+            with closing(http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)) as client:
                 client.request("GET", "/v1/jobs/00000000-0000-0000-0000-000000000000")
                 response = client.getresponse()
                 self.assertEqual(response.status, 401)
@@ -83,7 +84,7 @@ class BridgeTests(unittest.TestCase):
 
             with patch("server.subprocess.run") as runner:
                 runner.return_value.returncode = 1
-                with http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5) as client:
+                with closing(http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)) as client:
                     payload = nii()
                     client.request("POST", "/v1/jobs", body=payload, headers={
                         "Authorization": "Bearer " + TOKEN,
@@ -97,7 +98,7 @@ class BridgeTests(unittest.TestCase):
                     self.assertEqual(job["stages"], "CSE")
                 self.bridge.worker.shutdown(wait=True)
 
-            with http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5) as client:
+            with closing(http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)) as client:
                 client.request("GET", "/v1/jobs/" + job["id"], headers={
                     "Authorization": "Bearer " + TOKEN,
                 })
