@@ -1,120 +1,67 @@
-# Phase 1 architecture
+# NeuroView architecture (current source: v1.4.0)
 
-## Technology
+This document describes the Android source on `main` as inspected on 2026-10-18, **not the older v0.7 tagged APK**. Historical phase-by-phase implementation notes live in the [development log](DEVELOPMENT_LOG.md).
 
-- Kotlin + Jetpack Compose + Material 3
-- One Activity (MainActivity) with edge-to-edge content
-- Navigation 3 stable: type-safe serializable destination keys and saveable back stack
-- Unit-tested navigation rules (push, avoid duplicate, pop-to-existing, return Home)
-- Dark theme via Material3 `darkColorScheme`
+## Application structure
 
-## Screens and flow
+NeuroView is a Kotlin Android application with a single `MainActivity`, Jetpack Compose / Material 3, Navigation 3 saveable destinations, and local state. The Android package/namespace is `com.marcusfunt.neuroview`. Compile SDK 37, target SDK 36, minimum SDK 26; the dependency versions live in `gradle/libs.versions.toml`.
 
-Home → Series → Viewer
-Home → Library
+The main navigation path is **Home → Library → Viewer**. Home includes direct import and conditional resume actions. The older **Series** screen remains reachable for compatibility, but the Library is the main browsing and management experience. Viewer provides a navigation drawer, always-available plane switching, and separate display-adjustment and optional processing sheets.
 
-The Viewer has two **distinct** overlays:
-- Top-left hamburger → app destinations (Home, Series, Library)
-- Left swipe / plane control → end-aligned axial, coronal, sagittal plane selector
+Key implementation locations:
 
-Screen data is explicitly placeholder-only in Phase 1, not a real scan. Later phases add a real library repository, series metadata, volume rendering, and file converters behind separate interfaces.
+- `ui/NeuroViewApp.kt` — app navigation, SAF import launcher, catalog state, scan selection, and volume lifetime.
+- `ui/screens/HomeScreen.kt` — rotating decorative brain, entry points, recent scan, appearance settings.
+- `ui/screens/LibraryScreen.kt` / `SeriesScreen.kt` — collections, scan cards, search, sorting/filtering, entry management and conversions.
+- `ui/screens/ViewerScreen.kt` — reconstructed MRI image, plane selection, slice gestures, zoom/pan, probe, Focus, and Adjust/Process sheets.
+- `ui/screens/BrainSuitePanel.kt` — optional consent-driven remote processing client UI.
 
-## Privacy and safety
+## Import and catalog data flow
 
-- No INTERNET or broad filesystem permissions
-- Android Storage Access Framework (future) rather than granting unrestricted storage access
-- Future imports should use app-private encrypted-at-rest options and avoid logging PHI
-- Conversion from NIfTI to DICOM cannot recreate discarded DICOM acquisition metadata; mark output as derived
-- Always display medical image orientation with validated affine / DICOM patient-space mapping
-- Not intended for diagnosis or medical decisions
+1. Android's **Storage Access Framework** picker returns document URIs. `ScanCatalog` inspects NIfTI headers with `NiftiSeriesInspector`, checks supported files, and takes persistable read permission.
+2. `ScanCatalog` stores collection IDs, per-scan metadata and optional local display aliases in **app-private SharedPreferences**. A collection is an import grouping or user-defined organization tool, **not a validated DICOM study**.
+3. Files remain in their original provider locations; NeuroView does not own or copy them by default. Missing/revoked URIs may stop opening. User-triggered removal edits the local catalog only and releases unneeded permissions.
+4. Small preview images are derived lazily and cached in `cacheDir/scan_thumbnails`. They may be evicted or explicitly cleared; the original files are not modified. Large volumes may use placeholders instead.
 
-## Boundaries
+`CatalogEdits` contains pure management operations. Serialized catalog writes update persistent metadata before cleaning removed thumbnail and URI references. The last-opened scan ID is stored as a local navigation preference. Window/level preferences are kept per selected document; neither changes source voxel data.
 
-Phase 1 deliberately does **not** include the 3D brain asset, image decoding/rendering, DICOM conversion, image-file import, library persistence, or clinical measurement tools.
+## NIfTI decoding, geometry and rendering
 
-## Phase 2 brain preview rendering
+- `mri/NiftiReader.kt` handles supported NIfTI-1 scalar `.nii` and `.nii.gz` input, little/big endian headers and data, intensity scaling, and only the **first timepoint** of a 4D file. 4D playback does not exist.
+- `mri/SpatialAffine.kt` maps voxel indices to world-space **RAS+ millimetres**, preferring available NIfTI sform/qform information. Missing orientation information is warned about; this is not proof of correct patient orientation.
+- `mri/MprRenderer.kt`, `MprRenderSession.kt` and `MprProbe.kt` reconstruct axial, coronal, and sagittal slices with trilinear interpolation, manage fast scrubbing and refined preview rendering, and inspect voxel values/reference positions across planes.
+- One active volume is loaded for viewing at a time. `MriMemoryBudget` limits **in-heap** decoding; larger supported volumes can use temporary uncompressed files in `cacheDir/nifti_mapped` and memory-mapped access via `MappedNiftiStore`. This is not an unlimited memory or storage guarantee.
+- Display operations (window/level, presets, zoom, crosshair, focus) do not rewrite the MRI. Decorative Home gradients and the bundled `landing_brain.nvbm` never tint the diagnostic-style grayscale image.
 
-The Home Card hosts `BrainPreview`, which embeds `BrainGlSurfaceView` (OpenGL ES 2.0) via Compose `AndroidView`. Meshes are synthesized by the pure Kotlin `BrainGeometry` builder (two hemispheres, two cerebellar lobes, one stylized stem) and lit using a compact custom GLSL shader. Model geometry is only a decorative visualization and is not a medical atlas.
+**Current scientific boundary:** the planes are viewed separately; simultaneous tri-planar panes, registration/two-scan comparison, true time navigation, and direct 3D patient-derived surface viewing are not implemented.
 
-`BrainGlSurfaceView` uses `RENDERMODE_WHEN_DIRTY`; touch gestures modify yaw/pitch, while an Activity-lifecycle-bound animator issues approximately 30 render requests per second. Pausing the Activity stops both animation and the GL thread. When Android disables animators or GLES2 isn't supported, animation stops or a text fallback is shown. The preview has no dependency on MRI input, which remains separate for Phase 3.
+## Format conversion
 
-Manual QA for device/emulator: Home displays the shaded brain, yaw changes with drag, pitch is clamped, Pause holds the view still, Resume restarts, Reset returns to the default angle, Android back navigation still works, and opening Library/Series stops the home rendering. Test portrait/landscape, dark theme, and Android 8.0+; no medical use is intended.
+`ui/ConversionWorkflow.kt` exposes both conversions via Android document picker/export destinations:
 
-## Phase 3: MRI volume and MPR
+- **DICOM → NIfTI:** `DicomFolderScanner` recursively scans a chosen folder or accepts manually selected files; `DicomReader` checks supported uncompressed Part 10 single-frame grayscale images; `DicomSeriesAssembler` verifies consistent Study/Series UIDs, orientation and geometry, orders slices in patient coordinates, and converts DICOM **LPS** to NIfTI **RAS+**. `NiftiSeriesWriter` outputs gzip-compressed 3D float32 NIfTI using streamed slice data.
+- **NIfTI → DICOM ZIP:** `DerivedDicomWriter` creates new **Secondary Capture** objects with new UIDs and derived spatial/intensity mappings. These are not restored originals and cannot reconstruct lost DICOM acquisition metadata.
+- Conversion writes a **new user-selected destination document**, leaving source input untouched. Failure handling attempts cleanup of incomplete output.
 
-- `mri/NiftiReader`: bounded, streamed NIfTI-1 `.nii` or `.nii.gz` decoder, with datatype/bitpix validation, endian handling, proper slope/intercept semantics, first-frame 4D behavior, and volume-size limits.
-- `mri/SpatialAffine`: sform/qform/fallback voxel-to-RAS+ mm transforms and inverse mapping. The header's qform/sform are defined in NIfTI RAS+; they are not DICOM LPS without conversion.
-- `mri/MprRenderer`: world-coordinate axial/coronal/sagittal slices, 384-pixel max width/height, trilinear sampling, grayscale window/level. Radiological viewing convention is patient-right screen-left for axial/coronal; anterior screen-left for sagittal. Medical use is NOT supported.
-- `ui/NeuroViewApp`: Android Storage Access Framework OpenDocument with read-only URI permission. Only one open NIfTI is held as a session-wide active volume, reloaded on activity recreation. No custom storage or sync.
-- `ui/screens/ViewerScreen`: asynchronous bitmap updates, orientation warning, vertical image drag and slider slice navigation, right-hand MPR selector, and brightness/window-width sliders. No DICOM yet.
-- Tests use small synthetic volumes (including big endian and gzip) to catch spatial flips, reading errors, and bad affine inverses.
+The reader deliberately rejects compressed transfer syntaxes, Enhanced multiframe DICOM, incompatible geometries and other unsupported encodings. Header anonymization cannot remove identifying facial anatomy from voxels.
 
-### Safety boundaries and limitations
+## Optional BrainSuite boundary
 
-No network permission and no PHI logging are introduced. The app does not upload data. Arbitrarily large volumes are rejected rather than attempting to allocate beyond device capacity. NIfTI-2, vector/RGB/complex data, masks with unusual intent, 5D/6D series and DICOM are not supported. Slices are resampled (not independently acquired images), and anisotropic scans can look blurry in off-axis views. Volumes without orientation metadata are flagged with an explicit warning. This app has not undergone medical-device or diagnostic validation.
+The application declares `INTERNET` for the optional `Viewer → Process` feature. `processing/BrainSuiteClient.kt` requires a caller-configured **HTTPS** host and bearer token; Android only streams the selected T1w file after explicit consent. The access token is held in transient UI state and is not saved to preferences.
 
-## Phase 4: Scan and series browsing
+`processing/BrainSuiteJobHistory.kt` saves a limited recent-job reference list (ID, endpoint, stage, submission time), but no scan pixels or credentials. The job history is not a durable host-side processing queue.
 
-- `mri/NiftiSeriesInspector` reads only the initial 348-byte NIfTI-1 header (gzip supported) to index dimensions, voxel spacing, dtype, timepoints, spatial metadata provenance, and descriptive text, without allocating the complete volume.
-- `catalog/ScanCatalog` persists a small JSON catalog in app-private SharedPreferences and retains SAF read permissions. Imported files are **referenced, not duplicated**; no network permission or external file writes. A collection groups files selected in a single import operation, not a verified clinical study.
-- `ui/screens/SeriesScreen` is a real grouped, lazy scrolling series browser with searchable-by-eye metadata labels and preview cards. Touching one opens its selected NIfTI volume in Phase 3's `ViewerScreen`.
-- Preview generation uses a `Mutex` to serialize full-volume loads, avoiding concurrent NIfTI allocations, and caches 144-pixel axial center-slice thumbnails as private PNGs in `cacheDir`. This cache may be evicted by Android and will be rebuilt on demand.
-- `ui/NeuroViewApp` uses `OpenMultipleDocuments` and routes selected series IDs through Navigation 3. Only one selected NIfTI volume is held in memory at a time.
+The separate Python `tools/brainsuite_bridge/server.py` listens on **127.0.0.1** and invokes `bids/brainsuite:v23a` in Docker, serializing jobs and providing a ZIP of derivatives. It must sit behind a **private trusted HTTPS** reverse proxy (for example Tailscale Serve); it is not suitable as an internet-facing multi-user processing service. Results are not automatically imported or rendered as 3D DFS meshes. See [BrainSuite setup, threat boundaries and cleanup](BRAINSUITE_INTEGRATION.md).
 
-**Not a full study library.** No patient grouping, DICOM study UID assignment, metadata mutation, scanner/protocol inference, deletion or conversion is performed. Plain NIfTI generally cannot prove a series belongs to a given study; Phase 5 should introduce explicit user-owned collections rather than implicit patient matching. Preserve privacy by never logging scan filenames or descriptions.
+## Privacy and safeguards
 
-## Phase 5: Collection management and safe un-linking
+- Standard viewing, Library operations, and format conversion do **not upload scans**.
+- SAF avoids broad file permissions. Local catalog preferences are app-private **but not encrypted**; cached previews and temporary uncompressed voxels can contain sensitive information. Android automatic backup is disabled.
+- Never treat a local label, import collection, or derived output as proof of patient/study identity.
+- NIfTI orientation and scanner interoperability need independent verification before research interpretations. There is no clinical/diagnostic approval or validation.
 
-- `catalog/CatalogEdits` provides pure, unit-tested immutable operations: create/rename collection, add/remove local display alias, move series, remove series, or cascade-remove a collection's catalog references. It validates nonempty bounded user labels and target IDs.
-- `catalog/ScanCatalog` serializes writes with a coroutine `Mutex`, performs SharedPreferences `commit()` before cleanup, and preserves Phase 4 JSON compatibility by adding optional `customName` fields. Existing v4 catalog entries load without migration.
-- Removal never mutates/deletes source NIfTI files. It evicts a removed entry's app-private thumbnail and relinquishes the SAF persisted read permission only if the source URI is no longer catalog-referenced. The currently selected volume is also cleared if its library entry was removed.
-- `ui/screens/LibraryScreen` exposes search, create/rename, move, remove with explicit confirmation prompts, original filename restoration and private thumbnail cache cleanup.
-- The Series browser and Viewer display local aliases while retaining original file names for provenance.
+## Verification architecture
 
-**Limitations:** Catalog metadata is stored in app-private but unencrypted SharedPreferences; thumbnails are app-private cache files. No medical PHI is transmitted. Collections are user organizational labels, not evidence that scans share a clinical study or patient. No filesystem deletion, rename of source NIfTI files, DICOM conversions or study UID inference. More comprehensive local storage ownership and diagnostic validation are future work.
+`app/src/test` covers geometry, parsing, catalog, conversions, memory-backed volumes, and probe mapping. `app/src/androidTest` exercises Compose navigation. `scripts/qa/reference_interop.py` produces and verifies **synthetic**, externally generated NIfTI/DICOM fixtures using NumPy/nibabel/pydicom. `tools/brainsuite_bridge/test_server.py` mocks the Docker execution path. CI builds, lints, tests, and runs an Android 15 emulator smoke test with screenshot artifacts.
 
-## Phase 6: Conservative, reversible-geometry conversions
-
-- `conversion/DicomReader` reads a single native Part 10 DICOM file, Explicit/Implicit LE only; it validates integer MONOCHROME2 pixel data and mandatory image geometry. It rejects compressed pixel streams, undefined-length sequences, multiframe, mixed/invalid VR and incompatible pixel encodings. Patient identity tags are ignored.
-- `conversion/DicomSeriesAssembler` groups by existing Study/Series UIDs, checks orientation/pixel spacing/dimensions and regular slice positions, sorts slices along their normal, then maps DICOM **LPS** physical vectors to NIfTI **RAS+** sform. It retains linear per-slice rescale into physical float32 values.
-- `conversion/NiftiSeriesWriter` writes 352-byte NIfTI-1 header + little-endian float32 voxel stream into a gzip file without assembling a duplicate full-volume voxel array.
-- `conversion/DerivedDicomWriter` creates new UIDs and a ZIP of Part 10 **DERIVED Secondary Capture** images (not original MR IOD), converts NIfTI RAS spatial vectors to DICOM LPS, maps finite float32 pixels linearly to uint16, and writes RescaleSlope/Intercept for approximate reconstruction. It deliberately omits original acquisition parameters and patient identity fields.
-- `conversion/DicomFolderScanner` walks a SAF OpenDocumentTree directory (up to 8,192 entries, 16 directory levels), recognizes extensionless DICOM Part 10 files by the DICM preamble, and ignores unrelated sidecar files. The existing series assembler rejects mixed Study/Series UIDs and incompatible slice geometry.
-- `ui/ConversionWorkflow` runs conversions on `Dispatchers.IO`, supports both whole-folder and manual multiple-document input, uses CreateDocument output, gives per-operation error status, and tries to clean up partial output documents. `LibraryScreen` exposes both input modes and export controls.
-
-**Safety/privacy:** The image content itself may still identify a patient, e.g. facial anatomy. "Anonymized" means new identifiers and no copied header patient identity, not certified anonymization or defacing. A clinical original DICOM cannot be recovered from a NIfTI volume alone. The conversion paths are intentionally strict, not a replacement for a full DICOM toolkit. Validation should include external dcm2niix, nibabel and pydicom/gdcm comparisons, and real Android device testing; existing unit tests exercise synthetic round-trip geometry and intensity only.
-
-## Phase 7 validation architecture
-
-The trusted-data boundary is at the conversion integration bridge: nibabel/pydicom create synthetic input fixtures independently, Kotlin reads/writes output, and Python checks the exported spatial geometry/intensities. This catches self-confirming reader/writer defects that pure Kotlin round trips might miss. Android Compose tests launch the UI on an API-35 emulator and save one fresh-install screenshot. This is an automated QA baseline, not a clinical evaluation.
-
-`MriMemoryBudget` uses `maxMemory()/12` voxels as an **in-heap decoding threshold**, bounded by 48 million voxels. `NiftiReader` falls back to a temporary disk-backed voxel payload with 64 MiB read-only memory-mapped windows for larger viewer volumes; the catalog inspector never loads voxel data. The disk cache is deleted on release, or stale entries on later launches. Oversized thumbnails are skipped rather than decoding a second large scan. DICOM conversion is two-pass: metadata/geometry validation and sorted one-slice-at-a-time output, without keeping a full series in heap. `NiftiReader` handles metres/mm/microns explicitly. `MprRenderer` uses opaque black for geometrically outside samples, regardless of intensity window.
-
-Important blind spots: scanner-specific compressed/Enhanced DICOM not supported; physical GPU/device memory and UI interaction timing not measured; no gold-standard real-patient image compare; patient privacy and defacing must still be assessed independently. Test outputs are synthetic.
-
-
-## NeuroView 1.3: optional BrainSuite companion
-
-The historical Phase 1–7 sections above describe the originally offline-only
-implementation. Version 1.3 additionally declares INTERNET permission solely
-for user-initiated BrainSuite processing. Existing viewers, catalog, thumbnail
-generation and DICOM/NIfTI conversions remain local and require no connection.
-
-- `ui/screens/ViewerScreen` offers distinct **Adjust** (non-destructive
-  window/level controls) and **Process** (BrainSuite remote anatomy workflows)
-  actions.
-- `processing/BrainSuiteClient` sends the selected SAF NIfTI stream to a
-  caller-configured HTTPS endpoint with bearer authentication, forbids URL
-  credentials/paths and redirects, and downloads results through CreateDocument.
-  The token lives in Compose memory, not persistent storage. Recent job references
-  exclude access tokens and patient identifiers.
-- `tools/brainsuite_bridge/server.py` wraps a single T1w volume into a minimal
-  BIDS subject and runs `bids/brainsuite:v23a` in Docker, with CSE or
-  CSE+SVREG. It is a loopback-only single-user service, not publicly
-  deployable without a secure TLS reverse proxy.
-- Transfer requires explicit acknowledgement. Patient anatomy can itself
-  identify an individual. Outputs remain on the companion computer until
-  exported; no clinical quality/accuracy guarantee is implied.
-
-See [BrainSuite integration](BRAINSUITE_INTEGRATION.md) for setup,
-restrictions, host cleanup and tests.
+Automated results do **not** establish physical-device performance, real-scanner correctness, BrainSuite scientific accuracy, or medical suitability. See [Testing and validation](TESTING.md) for commands and outstanding gates.
