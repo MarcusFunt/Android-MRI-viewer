@@ -21,6 +21,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CardDefaults
@@ -35,6 +38,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -44,6 +49,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -57,6 +63,7 @@ import com.marcusfunt.neuroview.ui.theme.NeuroChrome
 import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
 import com.marcusfunt.neuroview.catalog.ImportCollection
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
+import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanRecord
 
 private sealed interface LibraryDialog {
@@ -73,6 +80,7 @@ private sealed interface LibraryDialog {
 @Composable
 fun LibraryScreen(
     snapshot: ScanCatalogSnapshot,
+    catalog: ScanCatalog,
     isBusy: Boolean,
     feedback: String?,
     onImport: () -> Unit,
@@ -94,6 +102,23 @@ fun LibraryScreen(
     var dialog by remember { mutableStateOf<LibraryDialog?>(null) }
     var search by rememberSaveable { mutableStateOf("") }
 
+
+    var mode by rememberSaveable { mutableStateOf("All") }
+    var sort by rememberSaveable { mutableStateOf("Recent") }
+    var conversionOpen by rememberSaveable { mutableStateOf(false) }
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    val query = search.trim()
+    val matching = snapshot.scans.filter { scan ->
+        query.isBlank() || scan.label.contains(query, true) ||
+            scan.displayName.contains(query, true) ||
+            scan.metadata.description.contains(query, true) ||
+            snapshot.collections.any { it.id == scan.collectionId && it.label.contains(query, true) }
+    }
+    val dates = remember(snapshot.collections) { snapshot.collections.associate { it.id to it.importedAt } }
+    val ordered = if (sort == "Name") matching.sortedBy { it.label.lowercase() }
+        else matching.sortedWith(compareByDescending<ScanRecord> { dates[it.collectionId] ?: 0L }
+            .thenBy { it.label.lowercase() })
+
     Scaffold(
         containerColor = NeuroChrome.background,
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -105,263 +130,216 @@ fun LibraryScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = NeuroChrome.topBar,
-                ),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = NeuroChrome.topBar),
             )
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).neuroWorkspaceBackground().padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).neuroWorkspaceBackground(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 16.dp, end = 16.dp, top = 12.dp, bottom = 28.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item {
+            item(key = "library-controls") {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        "ON-DEVICE WORKSPACE",
-                        color = NeuroChrome.accent,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    Text("Your library", style = MaterialTheme.typography.headlineMedium)
-                    Text(
-                        "${snapshot.scans.size} volume${if (snapshot.scans.size == 1) "" else "s"} · ${snapshot.collections.size} collection${if (snapshot.collections.size == 1) "" else "s"}",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        "Rename, organize and remove library references. " +
-                            "Original MRI files and filenames are never changed.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            "${snapshot.scans.size} scans · ${snapshot.collections.size} collections",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NeuroChrome.muted,
+                        )
+                        TextButton(onClick = { conversionOpen = !conversionOpen }) {
+                            Text(if (conversionOpen) "Hide tools" else "Conversion tools")
+                        }
+                    }
                     Button(
                         onClick = onImport,
                         enabled = !isBusy,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
-                            .background(NeuroChrome.primaryGradient, RoundedCornerShape(16.dp)),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                            containerColor = Color.Transparent,
-                            contentColor = Color.White,
-                        ),
-                    ) { Text("Import NIfTI volumes") }
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(20.dp),
-                        border = BorderStroke(1.dp, NeuroChrome.stroke),
-                        colors = CardDefaults.cardColors(
-                            containerColor = NeuroChrome.panel,
-                        ),
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                    ) { Text("Import MRI volumes") }
+                    if (conversionOpen) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = NeuroChrome.panel,
+                            border = BorderStroke(1.dp, NeuroChrome.stroke),
                         ) {
-                            Text("DICOM conversion", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "Convert a DICOM series into a .nii.gz volume.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            OutlinedButton(
-                                onClick = onConvertDicom,
-                                enabled = !isBusy,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Choose DICOM folder") }
-                            TextButton(onClick = onConvertDicomFiles, enabled = !isBusy) {
-                                Text("Select individual files instead")
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text("DICOM → NIfTI", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "Select a compatible DICOM series and export it to NIfTI.",
+                                    style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted,
+                                )
+                                OutlinedButton(
+                                    onClick = onConvertDicom, enabled = !isBusy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) { Text("Select DICOM folder") }
+                                TextButton(onClick = onConvertDicomFiles, enabled = !isBusy) {
+                                    Text("Select DICOM files instead")
+                                }
                             }
                         }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = { dialog = LibraryDialog.CreateCollection },
-                            enabled = !isBusy,
-                            modifier = Modifier.weight(1f),
-                        ) { Text("New collection") }
-                        OutlinedButton(
-                            onClick = onBrowse,
-                            modifier = Modifier.weight(1f),
-                        ) { Text("Browse series") }
-                    }
-                    if (isBusy) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.padding(4.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Text("Saving library changes…")
-                        }
-                    }
-                    if (!feedback.isNullOrBlank()) {
-                        Text(
-                            feedback,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
                     }
                     OutlinedTextField(
                         value = search,
                         onValueChange = { search = it },
-                        label = { Text("Search library") },
-                        placeholder = { Text("Series or collection name") },
+                        label = { Text("Search scans and collections") },
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        shape = MaterialTheme.shapes.medium,
+                        trailingIcon = if (search.isNotEmpty()) {
+                            { IconButton(onClick = { search = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            } }
+                        } else null,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = mode == "All", onClick = { mode = "All" },
+                            label = { Text("All scans") })
+                        FilterChip(selected = mode == "Collections", onClick = { mode = "Collections" },
+                            label = { Text("Collections") })
+                        FilterChip(selected = sort == "Name", onClick = {
+                            sort = if (sort == "Name") "Recent" else "Name"
+                        }, label = { Text(if (sort == "Name") "A–Z" else "Recent first") })
+                    }
+                    if (isBusy) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.padding(4.dp), strokeWidth = 2.dp,
+                            )
+                            Text("Working on selected MRI operation…", color = NeuroChrome.muted)
+                        }
+                    }
+                    if (!feedback.isNullOrBlank()) {
+                        Surface(
+                            color = NeuroChrome.panel, shape = MaterialTheme.shapes.medium,
+                        ) {
+                            Text(feedback, modifier = Modifier.padding(12.dp),
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (mode == "Collections") {
+                        TextButton(onClick = { dialog = LibraryDialog.CreateCollection }, enabled = !isBusy) {
+                            Text("+ New collection")
+                        }
+                    }
                 }
             }
-
-            snapshot.collections.forEach { collection ->
-                val all = snapshot.inCollection(collection.id)
-                val query = search.trim()
-                val groupMatches = collection.label.contains(query, ignoreCase = true)
-                val visible = if (query.isBlank() || groupMatches) all else all.filter { scan ->
-                    scan.label.contains(query, ignoreCase = true) ||
-                        scan.displayName.contains(query, ignoreCase = true) ||
-                        scan.metadata.description.contains(query, ignoreCase = true)
-                }
-                if (query.isBlank() || groupMatches || visible.isNotEmpty()) {
-                    item(key = "group-${collection.id}") {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            border = BorderStroke(1.dp, NeuroChrome.stroke),
-                            colors = CardDefaults.cardColors(containerColor = NeuroChrome.panel),
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                Text(
-                                    collection.label,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Text(
-                                    "${all.size} linked MRI files · Collection names are local labels",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    TextButton(
-                                        onClick = { dialog = LibraryDialog.RenameCollection(collection) },
-                                        enabled = !isBusy,
-                                    ) { Text("Rename") }
-                                    TextButton(
-                                        onClick = {
-                                            dialog = LibraryDialog.RemoveCollection(collection, all.size)
-                                        },
-                                        enabled = !isBusy,
-                                    ) { Text("Remove") }
-                                }
+            if (matching.isEmpty()) {
+                item(key = "empty") {
+                    Surface(
+                        color = NeuroChrome.panel,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.dp, NeuroChrome.stroke),
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                if (snapshot.scans.isEmpty()) "Your library is empty"
+                                else "No matching scans",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                if (snapshot.scans.isEmpty()) "Import a NIfTI volume or convert a DICOM series to get started."
+                                else "Try another name or clear the search filter.",
+                                color = NeuroChrome.muted,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            if (search.isNotBlank()) {
+                                TextButton(onClick = { search = "" }) { Text("Clear search") }
                             }
                         }
                     }
-                    items(visible, key = { "scan-${it.id}" }) { scan ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            border = BorderStroke(1.dp, NeuroChrome.stroke),
-                            colors = CardDefaults.cardColors(containerColor = NeuroChrome.panel),
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text(
-                                    scan.label,
-                                    modifier = Modifier.fillMaxWidth().clickable { onOpenScan(scan) },
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                if (scan.customName != null) {
-                                    Text(
-                                        "Original: ${scan.displayName}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Text(
-                                    scan.metadata.dimensions.joinToString(" × ") + " voxels · " +
-                                        scan.metadata.orientation,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                }
+            } else if (mode == "All") {
+                items(ordered, key = { "all-${it.id}" }) { scan ->
+                    LibraryScanRow(
+                        scan = scan, catalog = catalog, busy = isBusy,
+                        onOpen = { onOpenScan(scan) },
+                        onRename = { dialog = LibraryDialog.RenameScan(scan) },
+                        onMove = { dialog = LibraryDialog.MoveScan(scan) },
+                        onExport = { onExportDicom(scan) },
+                        onRemove = { dialog = LibraryDialog.RemoveScan(scan) },
+                    )
+                }
+            } else {
+                snapshot.collections.sortedByDescending { it.importedAt }.forEach { collection ->
+                    val records = ordered.filter { it.collectionId == collection.id }
+                    if (records.isNotEmpty() || query.isBlank()) {
+                        item(key = "collection-${collection.id}") {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = NeuroChrome.raised,
+                            ) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
+                                    modifier = Modifier.fillMaxWidth()
+                                        .clickable { expanded[collection.id] = expanded[collection.id] == false }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    TextButton(onClick = { onOpenScan(scan) }) {
-                                        Text("Open volume")
+                                    Icon(
+                                        if (expanded[collection.id] == false)
+                                            Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                                        contentDescription = "Expand or collapse collection",
+                                        tint = NeuroChrome.accent,
+                                    )
+                                    Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                                        Text(collection.label, style = MaterialTheme.typography.titleSmall)
+                                        Text("${records.size} matching scans", style = MaterialTheme.typography.labelSmall,
+                                            color = NeuroChrome.muted)
                                     }
+                                    var menu by remember(collection.id) { mutableStateOf(false) }
                                     Box {
-                                        var actionsOpen by remember(scan.id) { mutableStateOf(false) }
-                                        IconButton(onClick = { actionsOpen = true }) {
-                                            Icon(
-                                                Icons.Default.MoreVert,
-                                                contentDescription = "More actions for ${scan.label}",
-                                            )
+                                        IconButton(onClick = { menu = true }) {
+                                            Icon(Icons.Default.MoreVert, contentDescription = "Collection actions")
                                         }
-                                        DropdownMenu(
-                                            expanded = actionsOpen,
-                                            onDismissRequest = { actionsOpen = false },
-                                        ) {
+                                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                             DropdownMenuItem(
-                                                text = { Text("Rename") },
-                                                onClick = {
-                                                    actionsOpen = false
-                                                    dialog = LibraryDialog.RenameScan(scan)
-                                                },
+                                                text = { Text("Rename collection") },
                                                 enabled = !isBusy,
+                                                onClick = { menu = false; dialog = LibraryDialog.RenameCollection(collection) },
                                             )
                                             DropdownMenuItem(
-                                                text = { Text("Move to collection") },
-                                                onClick = {
-                                                    actionsOpen = false
-                                                    dialog = LibraryDialog.MoveScan(scan)
-                                                },
+                                                text = { Text("Remove collection") },
                                                 enabled = !isBusy,
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text("Export derived DICOM ZIP") },
-                                                onClick = {
-                                                    actionsOpen = false
-                                                    onExportDicom(scan)
-                                                },
-                                                enabled = !isBusy,
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text("Remove from library") },
-                                                onClick = {
-                                                    actionsOpen = false
-                                                    dialog = LibraryDialog.RemoveScan(scan)
-                                                },
-                                                enabled = !isBusy,
+                                                onClick = { menu = false; dialog = LibraryDialog.RemoveCollection(collection, snapshot.inCollection(collection.id).size) },
                                             )
                                         }
                                     }
                                 }
                             }
                         }
+                        if (expanded[collection.id] != false) {
+                            items(records, key = { "collection-scan-${it.id}" }) { scan ->
+                                LibraryScanRow(
+                                    scan = scan, catalog = catalog, busy = isBusy,
+                                    onOpen = { onOpenScan(scan) },
+                                    onRename = { dialog = LibraryDialog.RenameScan(scan) },
+                                    onMove = { dialog = LibraryDialog.MoveScan(scan) },
+                                    onExport = { onExportDicom(scan) },
+                                    onRemove = { dialog = LibraryDialog.RemoveScan(scan) },
+                                )
+                            }
+                        }
                     }
                 }
             }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (snapshot.scans.isEmpty()) {
-                        Text(
-                            "No MRI entries yet. Import NIfTI files or create a collection.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+            item(key = "library-footer") {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     TextButton(onClick = onClearThumbnails, enabled = !isBusy) {
-                        Text("Clear cached MRI thumbnails")
+                        Text("Clear preview cache")
                     }
                     Text(
-                        "Removing entries here removes only in-app references, not files " +
-                            "from device storage. DICOM exports are anonymized, derived " +
-                            "Secondary Capture images, not reconstructed scanner originals.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        "Collections are personal labels, not verified clinical studies. " +
+                            "Removing an entry never deletes its original MRI document.",
+                        style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted,
                     )
                 }
             }
