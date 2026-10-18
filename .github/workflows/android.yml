@@ -88,12 +88,13 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
-            ./gradlew --no-daemon :app:connectedDebugAndroidTest
+            ./gradlew --no-daemon :app:assembleDebug
             mkdir -p app/build/emulator-qa
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb shell am start -n com.marcusfunt.neuroview/.MainActivity
             sleep 5
             adb exec-out screencap -p > app/build/emulator-qa/home.png
+            ./gradlew --no-daemon :app:connectedDebugAndroidTest
       - name: Upload emulator home screenshot and test XML
         if: always()
         uses: actions/upload-artifact@v4
