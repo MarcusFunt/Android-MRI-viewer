@@ -39,6 +39,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.processing.BrainSuiteClient
+import com.marcusfunt.neuroview.processing.BrainSuiteJobHistory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -59,6 +60,8 @@ fun BrainSuitePanel(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
+    val history = remember(context) { BrainSuiteJobHistory(context.applicationContext) }
+    var previousJobs by remember { mutableStateOf(history.list()) }
     var address by rememberSaveable { mutableStateOf("") }
     // Don't retain the access secret through Android saved-instance-state.
     var stage by rememberSaveable { mutableStateOf("CSE") }
@@ -77,14 +80,14 @@ fun BrainSuitePanel(
         consent = false
     }
 
-    LaunchedEffect(jobId, address, accessToken, jobStatus?.state) {
-        if (jobId.isNotBlank() && canConnect &&
+    LaunchedEffect(jobId, address, accessToken) {
+        while (jobId.isNotBlank() && canConnect &&
             jobStatus?.state in listOf("queued", "running")) {
             delay(5_000)
             try {
                 jobStatus = withContext(Dispatchers.IO) { client().status(jobId) }
             } catch (_: Exception) {
-                // Network can be temporarily offline; manual refresh remains available.
+                // Server may be busy/offline. Retry at a modest interval while visible.
             }
         }
     }
@@ -241,6 +244,8 @@ fun BrainSuitePanel(
                     jobId = result.id
                     jobStatus = result
                     consent = false
+                    history.add(result.id, address, stage)
+                    previousJobs = history.list()
                     message = "BrainSuite job submitted. Use Refresh status to check its progress."
                 }
             },
@@ -256,6 +261,26 @@ fun BrainSuitePanel(
             style = MaterialTheme.typography.bodySmall,
         )
 
+        if (previousJobs.isNotEmpty()) {
+            Text("Recent jobs", style = MaterialTheme.typography.titleSmall)
+            previousJobs.take(5).forEach { entry ->
+                Row(modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = {
+                        address = entry.endpoint
+                        jobId = entry.id
+                        jobStatus = null
+                        consent = false
+                    }, modifier = Modifier.weight(1f)) {
+                        Text("${entry.stages} · ${entry.id.take(8)}…")
+                    }
+                    TextButton(onClick = {
+                        history.forget(entry.id)
+                        previousJobs = history.list()
+                    }) { Text("Forget") }
+                }
+            }
+        }
         Text("Processing job", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
             value = jobId,
