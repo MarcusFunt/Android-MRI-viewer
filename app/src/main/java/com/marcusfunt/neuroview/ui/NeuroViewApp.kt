@@ -210,6 +210,12 @@ fun NeuroViewApp() {
                         snapshot = snapshot,
                         catalog = catalog,
                         isBusy = importBusy || editBusy || conversions.busy,
+                        activityLabel = when {
+                            importBusy -> "Importing MRI files…"
+                            conversions.busy -> conversions.message ?: "Converting MRI data…"
+                            editBusy -> "Updating library…"
+                            else -> null
+                        },
                         feedback = conversions.message ?: libraryMessage ?: importMessage,
                         onConvertDicom = conversions.selectDicomFolder,
                         onConvertDicomFiles = conversions.selectDicomSeries,
