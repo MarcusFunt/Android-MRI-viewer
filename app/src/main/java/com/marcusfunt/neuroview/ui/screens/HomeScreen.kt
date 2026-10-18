@@ -200,7 +200,7 @@ fun HomeScreen(
                         IconButton(onClick = { settingsOpen = true }) {
                             Icon(
                                 Icons.Default.Settings,
-                                contentDescription = "Home appearance settings",
+                                contentDescription = "Settings",
                                 tint = Color(0xFFC8E4F2),
                             )
                         }
