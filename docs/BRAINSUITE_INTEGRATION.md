@@ -26,8 +26,7 @@ validate a BrainSuite result or display DFS meshes yet.
 ## Prepare a computer
 
 Use Python 3.10+ and Docker Engine or Docker Desktop with enough disk space,
-memory and CPU for BrainSuite. The published BrainSuite 23a image is large
-(roughly 17 GB). On the host:
+memory and CPU for BrainSuite. The BrainSuite 23a image is large; budget substantial download space and additional disk capacity for per-job inputs and derivatives. On the host:
 
 ```bash
 docker pull bids/brainsuite:v23a
@@ -106,6 +105,14 @@ is not a general multi-session BIDS importer.
 - No client progress percentages, remote cancellation, desktop auto-start,
   DSM/clinical validation or automatic viewing of cortical-surface meshes.
 - Not for diagnosis, therapy, or clinical treatment decisions.
+
+## Troubleshooting and service lifecycle
+
+- **Connection rejected:** verify that the Android device can reach the **private HTTPS** tailnet address (not the loopback HTTP service), that Tailscale Serve is active, and that the token matches the host environment. The app does not allow insecure HTTP or redirect-based uploads.
+- **A job disappeared after restart:** the bridge stores job state in memory only. Existing files may remain under `NEUROVIEW_BRAINSUITE_DATA`, but their job IDs are no longer retrievable from the restarted service; the phone's recent-job list does not restore server state.
+- **Job failed or appears stuck:** review the matching host-side `processing.log` and Docker status. Check CPU, RAM, disk space and the 12-hour timeout. Do not share host logs containing sensitive MRI metadata publicly.
+- **Result not visible in the app:** the current client downloads a ZIP. Extract it using a trusted tool; supported NIfTI derivatives can be imported separately, but BrainSuite DFS meshes and direct ZIP ingestion are not implemented.
+- **Disk usage keeps increasing:** clean obsolete job folders on your host after verifying that needed derivative ZIPs are safely retained. Stopping the service does not automatically erase originals or outputs.
 
 ## Development checks
 

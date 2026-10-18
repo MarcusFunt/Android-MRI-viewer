@@ -1,3 +1,5 @@
+> **Historical v1.4 change record and release checklist.** For current setup and features see [README](../README.md). For up-to-date test commands and outstanding validation, see [Testing](TESTING.md). This checklist documents intended checks and does not certify that they passed.
+
 # NeuroView 1.4 — interface overhaul and QA checklist
 
 This pass follows the full-screen and micro-interaction review of NeuroView
