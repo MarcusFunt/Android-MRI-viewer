@@ -2,9 +2,11 @@ package com.marcusfunt.neuroview.mri
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.file.Files
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.CancellationException
 import java.util.zip.GZIPOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -12,6 +14,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NiftiReaderTest {
+    private class CloseTrackingInputStream(bytes: ByteArray) : ByteArrayInputStream(bytes) {
+        var closed = false
+
+        override fun close() {
+            closed = true
+            super.close()
+        }
+    }
+
     private fun synthetic(
         nx: Int = 3,
         ny: Int = 2,
@@ -159,6 +170,140 @@ class NiftiReaderTest {
             }
         } finally {
             dir.listFiles()?.forEach { it.delete() }
+            dir.delete()
+        }
+    }
+
+    @Test fun reportsExactMonotonicCountsForLittleEndianInMemoryRead() {
+        val events = mutableListOf<NiftiReadProgress>()
+
+        NiftiReader.read(
+            ByteArrayInputStream(synthetic()),
+            NiftiReadOptions(progressSink = events::add),
+        )
+
+        val decode = events.filter { it.stage == NiftiReadStage.DECODING_VOLUME }
+        assertEquals(listOf(0L, 12L), decode.map { it.completedUnits })
+        assertEquals(listOf(12L, 12L), decode.map { it.totalUnits })
+        val sampling = events.filter { it.stage == NiftiReadStage.SAMPLING_INTENSITY }
+        assertEquals(12L, sampling.last().completedUnits)
+        assertEquals(12L, sampling.last().totalUnits)
+    }
+
+    @Test fun publishesMonotonicChunkCountsForADeepInMemoryVolume() {
+        val voxelCount = 100_000L
+        val events = mutableListOf<NiftiReadProgress>()
+
+        NiftiReader.read(
+            ByteArrayInputStream(synthetic(nx = 500, ny = 200, nz = 1, datatype = 16)),
+            NiftiReadOptions(progressSink = events::add),
+        )
+
+        val decode = events.filter { it.stage == NiftiReadStage.DECODING_VOLUME }
+        assertTrue(decode.size > 2)
+        assertEquals(0L, decode.first().completedUnits)
+        assertEquals(voxelCount, decode.last().completedUnits)
+        assertEquals(NiftiReadUnit.VOXELS, decode.last().unit)
+        assertTrue(decode.zipWithNext().all { (before, after) ->
+            requireNotNull(after.completedUnits) >= requireNotNull(before.completedUnits)
+        })
+        assertTrue(decode.all { it.totalUnits == voxelCount })
+    }
+
+    @Test fun reportsDecodedVoxelsForBigEndianGzipWithoutUsingCompressedLength() {
+        val compressed = ByteArrayOutputStream().also { output ->
+            GZIPOutputStream(output).use {
+                it.write(synthetic(nx = 500, ny = 200, nz = 1, datatype = 4, order = ByteOrder.BIG_ENDIAN))
+            }
+        }.toByteArray()
+        val events = mutableListOf<NiftiReadProgress>()
+
+        NiftiReader.read(
+            ByteArrayInputStream(compressed),
+            NiftiReadOptions(progressSink = events::add),
+        )
+
+        val decode = events.filter { it.stage == NiftiReadStage.DECODING_VOLUME }
+        assertEquals(100_000L, decode.last().completedUnits)
+        assertEquals(100_000L, decode.last().totalUnits)
+        assertEquals(NiftiReadUnit.VOXELS, decode.last().unit)
+        assertTrue(decode.zipWithNext().all { (before, after) ->
+            requireNotNull(after.completedUnits) >= requireNotNull(before.completedUnits)
+        })
+    }
+
+    @Test fun reportsWrittenBytesAndSampleCountsForMappedRead() {
+        val dir = Files.createTempDirectory("nifti-progress-disk-test").toFile()
+        val events = mutableListOf<NiftiReadProgress>()
+        try {
+            val volume = NiftiReader.read(
+                ByteArrayInputStream(synthetic(
+                    nx = 250, ny = 200, nz = 1, datatype = 4,
+                    order = ByteOrder.BIG_ENDIAN,
+                )),
+                NiftiReadOptions(maxVoxels = 2, backingDirectory = dir, progressSink = events::add),
+            )
+
+            val backing = events.filter { it.stage == NiftiReadStage.PREPARING_DISK_BACKING }
+            assertTrue(backing.size > 2)
+            assertEquals(100_000L, backing.last().completedUnits)
+            assertEquals(100_000L, backing.last().totalUnits)
+            assertEquals(NiftiReadUnit.BYTES, backing.last().unit)
+            assertTrue(backing.zipWithNext().all { (before, after) ->
+                requireNotNull(after.completedUnits) >= requireNotNull(before.completedUnits)
+            })
+            val sampling = events.filter { it.stage == NiftiReadStage.SAMPLING_INTENSITY }
+            assertEquals(48_000L, sampling.last().completedUnits)
+            assertEquals(48_000L, sampling.last().totalUnits)
+            assertTrue(sampling.zipWithNext().all { (before, after) ->
+                requireNotNull(after.completedUnits) >= requireNotNull(before.completedUnits)
+            })
+            volume.close()
+        } finally {
+            dir.listFiles()?.forEach { it.delete() }
+            dir.delete()
+        }
+    }
+
+    @Test fun cancellationDuringDecodeClosesTheInputStream() {
+        val input = CloseTrackingInputStream(synthetic(nx = 500, ny = 200, nz = 1))
+        var cancelRequested = false
+        val options = NiftiReadOptions(
+            progressSink = { event ->
+                if (event.stage == NiftiReadStage.DECODING_VOLUME &&
+                    (event.completedUnits ?: 0L) > 0L) cancelRequested = true
+            },
+            cancellationCheck = {
+                if (cancelRequested) throw CancellationException("Test cancellation")
+            },
+        )
+
+        assertThrows(CancellationException::class.java) { NiftiReader.read(input, options) }
+        assertTrue(input.closed)
+    }
+
+    @Test fun cancellationDuringDiskBackingDeletesPartialFileAndClosesInput() {
+        val input = CloseTrackingInputStream(synthetic(nx = 500, ny = 200, nz = 1))
+        val dir = Files.createTempDirectory("nifti-cancel-disk-test").toFile()
+        var cancelRequested = false
+        val options = NiftiReadOptions(
+            maxVoxels = 2,
+            backingDirectory = dir,
+            progressSink = { event ->
+                if (event.stage == NiftiReadStage.PREPARING_DISK_BACKING &&
+                    (event.completedUnits ?: 0L) > 0L) cancelRequested = true
+            },
+            cancellationCheck = {
+                if (cancelRequested) throw CancellationException("Test cancellation")
+            },
+        )
+
+        try {
+            assertThrows(CancellationException::class.java) { NiftiReader.read(input, options) }
+            assertTrue(input.closed)
+            assertEquals(0, dir.listFiles()?.size ?: -1)
+        } finally {
+            dir.listFiles()?.forEach(File::delete)
             dir.delete()
         }
     }

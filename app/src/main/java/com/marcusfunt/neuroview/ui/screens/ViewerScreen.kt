@@ -68,11 +68,13 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
@@ -112,6 +114,11 @@ import com.marcusfunt.neuroview.mri.MriPlane
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.navigation.Destination
 import com.marcusfunt.neuroview.ui.VolumeLoadState
+import com.marcusfunt.neuroview.ui.components.OperationProgressIndicator
+import com.marcusfunt.neuroview.ui.operations.OperationId
+import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
+import com.marcusfunt.neuroview.ui.operations.OperationStatus
+import com.marcusfunt.neuroview.ui.operations.SystemMonotonicClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -135,6 +142,13 @@ fun ViewerScreen(
     volumeState: VolumeLoadState,
     displayNameOverride: String? = null,
     selectedDocumentUri: String? = null,
+    onFirstSliceBitmapReady: (OperationId) -> Unit,
+    onFirstSliceDisplayed: (OperationId) -> Unit,
+    onFirstSliceRenderStarted: (OperationId, NiftiVolume, Job) -> Unit,
+    onFirstSliceRenderFinished: (OperationId, NiftiVolume, Job) -> Unit,
+    onCancelLoad: () -> Unit,
+    onRetryLoad: () -> Unit,
+    onReturnToLibrary: () -> Unit,
     onImport: () -> Unit,
     onNavigate: (Destination) -> Unit,
     onClearCache: suspend () -> Int = { 0 },
@@ -231,7 +245,10 @@ fun ViewerScreen(
     }
 
     val ready = volumeState as? VolumeLoadState.Ready
-    val volume = ready?.volume
+    val firstSlice = volumeState as? VolumeLoadState.FirstSliceReady
+    val loading = volumeState as? VolumeLoadState.Loading
+    val volume = ready?.volume ?: firstSlice?.volume ?: loading?.decodedVolume
+    val contentDisplayName = ready?.displayName ?: firstSlice?.displayName
     var referenceWorld by remember(volume) { mutableStateOf<DoubleArray?>(null) }
     val sliceCount = if (volume != null) MprRenderer.sliceCount(volume, plane) else 1
     val selectedSlice = sliceIndex.coerceIn(0, sliceCount - 1)
@@ -251,38 +268,67 @@ fun ViewerScreen(
     // once the gesture/slider settles. Cached scalar slices avoid costly rereads
     // when changing window levels or moving backwards through the stack.
     var bitmap by remember(volume, plane) { mutableStateOf<Bitmap?>(null) }
+    var firstSliceReported by remember(loading?.operation?.id) { mutableStateOf(false) }
+    LaunchedEffect(bitmap, loading?.operation?.id) {
+        val operationId = loading?.operation?.id ?: return@LaunchedEffect
+        if (loading.decodedVolume != null && bitmap != null && !firstSliceReported) {
+            firstSliceReported = true
+            onFirstSliceBitmapReady(operationId)
+        }
+    }
+    var firstSliceDisplayedReported by remember(firstSlice?.operation?.id) { mutableStateOf(false) }
+    SideEffect {
+        val operationId = firstSlice?.operation?.id
+        if (operationId != null && !firstSliceDisplayedReported) {
+            firstSliceDisplayedReported = true
+            onFirstSliceDisplayed(operationId)
+        }
+    }
     LaunchedEffect(volume, plane) {
         if (volume == null) return@LaunchedEffect
-        val preview = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 160) }
-        val full = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 384) }
-        // Observe the mutable sliceIndex directly. The composable's selectedSlice
-        // is a recomposition-local value and would be captured at initial launch,
-        // leaving the image frozen even when the slice counter changes.
-        snapshotFlow {
-            SliceRenderRequest(sliceIndex.coerceIn(0, sliceCount - 1), windowCenter, windowWidth, isScrubbing)
-        }.distinctUntilChanged().conflate().collect { request ->
-            val quick = withContext(Dispatchers.Default) {
-                val context = currentCoroutineContext()
-                val image = preview.render(
-                    request.slice, request.center, request.width,
-                ) { context.ensureActive() }
-                createViewerBitmap(image)
-            }
-            // Present completed previews during continuous drag. For still frames,
-            // do not display a request superseded by another slider/plane setting.
-            fun latest() = SliceRenderRequest(sliceIndex.coerceIn(0, sliceCount - 1), windowCenter, windowWidth, isScrubbing)
-            if (request.scrubbing || latest() == request) bitmap = quick
-            if (!request.scrubbing && latest() == request) {
-                delay(72)
-                if (latest() != request) return@collect
-                val refined = withContext(Dispatchers.Default) {
+        val operationId = loading?.operation?.id
+        val renderJob = currentCoroutineContext()[Job]
+        if (operationId != null && renderJob != null) {
+            onFirstSliceRenderStarted(operationId, volume, renderJob)
+        }
+        try {
+            val preview = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 160) }
+            val full = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 384) }
+            // Observe the mutable sliceIndex directly. The composable's selectedSlice
+            // is a recomposition-local value and would be captured at initial launch,
+            // leaving the image frozen even when the slice counter changes.
+            snapshotFlow {
+                SliceRenderRequest(sliceIndex.coerceIn(0, sliceCount - 1), windowCenter, windowWidth, isScrubbing)
+            }.distinctUntilChanged().conflate().collect { request ->
+                val quick = withContext(Dispatchers.Default) {
                     val context = currentCoroutineContext()
-                    val image = full.render(
+                    val image = preview.render(
                         request.slice, request.center, request.width,
                     ) { context.ensureActive() }
                     createViewerBitmap(image)
                 }
-                if (latest() == request) bitmap = refined
+                // Present completed previews during continuous drag. For still frames,
+                // do not display a request superseded by another slider/plane setting.
+                fun latest() = SliceRenderRequest(
+                    sliceIndex.coerceIn(0, sliceCount - 1), windowCenter, windowWidth, isScrubbing,
+                )
+                if (request.scrubbing || latest() == request) bitmap = quick
+                if (!request.scrubbing && latest() == request) {
+                    delay(72)
+                    if (latest() != request) return@collect
+                    val refined = withContext(Dispatchers.Default) {
+                        val context = currentCoroutineContext()
+                        val image = full.render(
+                            request.slice, request.center, request.width,
+                        ) { context.ensureActive() }
+                        createViewerBitmap(image)
+                    }
+                    if (latest() == request) bitmap = refined
+                }
+            }
+        } finally {
+            if (operationId != null && renderJob != null) {
+                onFirstSliceRenderFinished(operationId, volume, renderJob)
             }
         }
     }
@@ -327,7 +373,8 @@ fun ViewerScreen(
                     if (!focusMode) TopAppBar(
                         title = {
                             Text(
-                                displayNameOverride ?: ready?.displayName ?: "MRI viewer",
+                                displayNameOverride ?: ready?.displayName ?: firstSlice?.displayName
+                                    ?: loading?.displayName ?: "MRI viewer",
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.titleMedium,
@@ -356,13 +403,26 @@ fun ViewerScreen(
                             detail = "Select a .nii or .nii.gz NIfTI volume to begin.",
                             onImport = onImport,
                         )
-                        VolumeLoadState.Loading -> ViewerLoadingScreen()
+                        is VolumeLoadState.Loading -> ViewerLoadingScreen(
+                            operation = volumeState.operation,
+                            displayName = volumeState.displayName,
+                            cancelRequestedAtElapsedMs = volumeState.cancelRequestedAtElapsedMs,
+                            onCancel = onCancelLoad,
+                            onReturnToLibrary = onReturnToLibrary,
+                        )
                         is VolumeLoadState.Failed -> ViewerMessage(
                             title = "Could not open MRI",
                             detail = volumeState.explanation,
                             onImport = onImport,
+                            onRetry = onRetryLoad,
                         )
-                        is VolumeLoadState.Ready -> MriContent(
+                        is VolumeLoadState.Canceled -> ViewerMessage(
+                            title = "MRI load canceled",
+                            detail = "The selected volume was not changed. You can retry or choose another file.",
+                            onImport = onImport,
+                            onRetry = onRetryLoad,
+                        )
+                        is VolumeLoadState.FirstSliceReady, is VolumeLoadState.Ready -> MriContent(
                             modifier = Modifier.fillMaxSize(),
                             focusMode = focusMode,
                             onFocusToggle = { focusMode = !focusMode },
@@ -373,7 +433,7 @@ fun ViewerScreen(
                                 displayPrefs.edit().putBoolean(PROBE_CROSSHAIR_ENABLED_KEY, enabled).apply()
                             },
                             crosshairThicknessDp = crosshairThicknessDp,
-                            volume = volumeState.volume,
+                            volume = requireNotNull(volume),
                             plane = plane,
                             bitmap = bitmap,
                             selectedSlice = selectedSlice,
@@ -382,7 +442,7 @@ fun ViewerScreen(
                             onScrubbingChanged = { isScrubbing = it },
                             onPlaneSelect = { plane = it },
                             selectedDocumentUri = selectedDocumentUri,
-                            originalDocumentName = volumeState.displayName,
+                            originalDocumentName = contentDisplayName,
                             referenceWorld = referenceWorld,
                             onReferenceWorldChange = { referenceWorld = it },
                             windowCenter = windowCenter,
@@ -455,7 +515,22 @@ private fun ViewerBackdrop(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ViewerLoadingScreen() {
+private fun ViewerLoadingScreen(
+    operation: OperationSnapshot,
+    displayName: String?,
+    cancelRequestedAtElapsedMs: Long?,
+    onCancel: () -> Unit,
+    onReturnToLibrary: () -> Unit,
+) {
+    var elapsedNow by remember(operation.id) {
+        mutableLongStateOf(SystemMonotonicClock.nowMs())
+    }
+    LaunchedEffect(operation.id) {
+        while (true) {
+            elapsedNow = SystemMonotonicClock.nowMs()
+            delay(1_000L)
+        }
+    }
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center,
@@ -464,20 +539,12 @@ private fun ViewerLoadingScreen() {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Box(modifier = Modifier.size(84.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(
-                    modifier = Modifier.fillMaxSize(),
-                    color = NeuroChrome.accent,
-                    trackColor = NeuroChrome.stroke.copy(alpha = 0.45f),
-                    strokeWidth = 2.dp,
-                )
-                Image(
-                    painter = painterResource(com.marcusfunt.neuroview.R.drawable.neuroview_logo),
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                )
-            }
-            Spacer(Modifier.height(24.dp))
+            Image(
+                painter = painterResource(com.marcusfunt.neuroview.R.drawable.neuroview_logo),
+                contentDescription = null,
+                modifier = Modifier.size(56.dp),
+            )
+            Spacer(Modifier.height(16.dp))
             Text(
                 "NEUROVIEW",
                 color = NeuroChrome.accent,
@@ -491,12 +558,43 @@ private fun ViewerLoadingScreen() {
                 style = MaterialTheme.typography.titleLarge,
             )
             Spacer(Modifier.height(8.dp))
-            Text(
-                "Reading the volume and building the first slice…",
-                color = NeuroChrome.muted,
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center,
+            if (displayName != null) {
+                Text(
+                    displayName,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = NeuroChrome.muted,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(24.dp))
+            } else {
+                Spacer(Modifier.height(24.dp))
+            }
+            OperationProgressIndicator(
+                snapshot = operation,
+                elapsedMs = (elapsedNow - operation.startedAtElapsedMs).coerceAtLeast(0L),
+                modifier = Modifier.fillMaxWidth(),
             )
+            Spacer(Modifier.height(24.dp))
+            if (operation.status == OperationStatus.CANCELING) {
+                Text("Stopping…", color = NeuroChrome.muted, style = MaterialTheme.typography.labelLarge)
+                if (cancelRequestedAtElapsedMs != null &&
+                    elapsedNow - cancelRequestedAtElapsedMs >= 8_000L
+                ) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "The selected file provider is still responding slowly. You can return to the Library.",
+                        color = NeuroChrome.muted,
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                    )
+                    TextButton(onClick = onReturnToLibrary) { Text("RETURN TO LIBRARY") }
+                }
+            } else {
+                Button(onClick = onCancel) { Text("CANCEL") }
+            }
         }
     }
 }
@@ -509,7 +607,12 @@ private data class SliceRenderRequest(
 )
 
 @Composable
-private fun ViewerMessage(title: String, detail: String, onImport: () -> Unit) {
+private fun ViewerMessage(
+    title: String,
+    detail: String,
+    onImport: () -> Unit,
+    onRetry: (() -> Unit)? = null,
+) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -522,7 +625,12 @@ private fun ViewerMessage(title: String, detail: String, onImport: () -> Unit) {
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Button(onClick = onImport) { Text("OPEN NIFTI") }
+        if (onRetry != null) {
+            Button(onClick = onRetry) { Text("RETRY") }
+            TextButton(onClick = onImport) { Text("OPEN NIFTI") }
+        } else {
+            Button(onClick = onImport) { Text("OPEN NIFTI") }
+        }
     }
 }
 

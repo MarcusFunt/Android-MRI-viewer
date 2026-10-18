@@ -2,6 +2,7 @@ package com.marcusfunt.neuroview.mri
 
 import java.io.BufferedInputStream
 import java.io.DataInputStream
+import java.io.EOFException
 import java.io.File
 import java.io.FileOutputStream
 import java.io.Closeable
@@ -83,19 +84,73 @@ object NiftiReader {
         input: InputStream,
         maxVoxels: Long = MAX_VOXELS,
         backingDirectory: File? = null,
-    ): NiftiVolume {
+    ): NiftiVolume = read(
+        input,
+        NiftiReadOptions(maxVoxels = maxVoxels, backingDirectory = backingDirectory),
+    )
+
+    fun read(input: InputStream, options: NiftiReadOptions): NiftiVolume {
+        val maxVoxels = options.maxVoxels
+        val backingDirectory = options.backingDirectory
         require(maxVoxels in 1..MAX_VOXELS) { "Invalid voxel memory budget" }
+        fun report(
+            stage: NiftiReadStage,
+            completed: Long? = null,
+            total: Long? = null,
+            unit: NiftiReadUnit? = null,
+        ) {
+            options.cancellationCheck()
+            options.progressSink(NiftiReadProgress(stage, completed, total, unit))
+        }
+        fun readFullyChecked(stream: DataInputStream, target: ByteArray, length: Int) {
+            var offset = 0
+            while (offset < length) {
+                options.cancellationCheck()
+                val amount = stream.read(target, offset, minOf(64 * 1024, length - offset))
+                if (amount < 0) throw EOFException()
+                if (amount == 0) continue
+                offset += amount
+            }
+        }
+        fun sampleValues(
+            count: Long,
+            sampleCount: Int,
+            valueAt: (Long) -> Float,
+        ): FloatArray {
+            val samples = FloatArray(sampleCount)
+            val stride = max(1L, count / sampleCount)
+            report(NiftiReadStage.SAMPLING_INTENSITY, 0, sampleCount.toLong(), NiftiReadUnit.SAMPLES)
+            for (sampleIndex in samples.indices) {
+                if (sampleIndex % 1024 == 0) options.cancellationCheck()
+                val voxelIndex = minOf(sampleIndex.toLong() * stride, count - 1)
+                samples[sampleIndex] = valueAt(voxelIndex)
+                val completed = sampleIndex + 1
+                if (completed % 1024 == 0 || completed == samples.size) {
+                    report(
+                        NiftiReadStage.SAMPLING_INTENSITY,
+                        completed.toLong(),
+                        sampleCount.toLong(),
+                        NiftiReadUnit.SAMPLES,
+                    )
+                }
+            }
+            return samples
+        }
+
         val buffered = BufferedInputStream(input, 64 * 1024)
-        buffered.mark(2)
-        val first = buffered.read()
-        val second = buffered.read()
-        buffered.reset()
-        val source = if (first == 0x1f && second == 0x8b) {
-            GZIPInputStream(buffered, 64 * 1024)
-        } else buffered
-        DataInputStream(source).use { stream ->
+        return buffered.use {
+            options.cancellationCheck()
+            buffered.mark(2)
+            val first = buffered.read()
+            val second = buffered.read()
+            buffered.reset()
+            val source = if (first == 0x1f && second == 0x8b) {
+                GZIPInputStream(buffered, 64 * 1024)
+            } else buffered
+            DataInputStream(source).use { stream ->
+            report(NiftiReadStage.READING_HEADER)
             val headerBytes = ByteArray(348)
-            stream.readFully(headerBytes)
+            readFullyChecked(stream, headerBytes, headerBytes.size)
             val initial = ByteBuffer.wrap(headerBytes).order(ByteOrder.LITTLE_ENDIAN)
             val order = when {
                 initial.getInt(0) == 348 -> ByteOrder.LITTLE_ENDIAN
@@ -126,6 +181,7 @@ object NiftiReader {
             require(!diskBacked || backingDirectory != null) {
                 "Volume requires disk-backed loading (${count} voxels)"
             }
+            report(NiftiReadStage.VALIDATING_VOLUME)
 
             val datatype = header.getShort(70).toInt()
             val bitpix = header.getShort(72).toInt()
@@ -191,11 +247,23 @@ object NiftiReader {
             } else 0.0
             // header was 348 bytes; the remaining data offset includes extension bytes.
             var remaining = intOffset - 348L
-            val discard = ByteArray(16 * 1024)
-            while (remaining > 0) {
-                val n = stream.read(discard, 0, minOf(remaining, discard.size.toLong()).toInt())
-                require(n > 0) { "Truncated NIfTI header/extension" }
-                remaining -= n
+            if (remaining > 0L) {
+                val extensionBytes = remaining
+                val discard = ByteArray(16 * 1024)
+                report(NiftiReadStage.SKIPPING_EXTENSIONS, 0, extensionBytes, NiftiReadUnit.BYTES)
+                while (remaining > 0L) {
+                    options.cancellationCheck()
+                    val n = stream.read(discard, 0, minOf(remaining, discard.size.toLong()).toInt())
+                    if (n < 0) throw EOFException("Truncated NIfTI header/extension")
+                    if (n == 0) continue
+                    remaining -= n
+                    report(
+                        NiftiReadStage.SKIPPING_EXTENSIONS,
+                        extensionBytes - remaining,
+                        extensionBytes,
+                        NiftiReadUnit.BYTES,
+                    )
+                }
             }
 
             val data = if (diskBacked) FloatArray(0) else FloatArray(count.toInt())
@@ -214,52 +282,70 @@ object NiftiReader {
                 }
                 val file = File.createTempFile("nifti-disk-", ".raw", directory)
                 val sampleCount = minOf(48_000L, count).toInt()
-                val stride = max(1L, count / sampleCount)
-                samples = FloatArray(sampleCount)
+                report(NiftiReadStage.PREPARING_DISK_BACKING, 0, needed, NiftiReadUnit.BYTES)
                 try {
                     FileOutputStream(file).use { output ->
                         var index = 0L
-                        var nextSample = 0
+                        var bytesWritten = 0L
                         while (index < count) {
+                            options.cancellationCheck()
                             val batch = minOf(voxelsPerChunk.toLong(), count - index).toInt()
-                            stream.readFully(chunk, 0, batch * bytesPerVoxel)
-                            output.write(chunk, 0, batch * bytesPerVoxel)
-                            val bytes = ByteBuffer.wrap(chunk, 0, batch * bytesPerVoxel).order(order)
-                            while (nextSample < sampleCount) {
-                                val target = minOf(nextSample.toLong() * stride, count - 1)
-                                if (target >= index + batch) break
-                                bytes.position((target - index).toInt() * bytesPerVoxel)
-                                val scaled = sampleNumber(bytes, datatype) * slope + intercept
-                                samples[nextSample++] = if (scaled.isFinite()) scaled.toFloat() else 0f
-                            }
+                            val batchBytes = batch * bytesPerVoxel
+                            readFullyChecked(stream, chunk, batchBytes)
+                            options.cancellationCheck()
+                            output.write(chunk, 0, batchBytes)
+                            bytesWritten += batchBytes
                             index += batch
+                            report(
+                                NiftiReadStage.PREPARING_DISK_BACKING,
+                                bytesWritten,
+                                needed,
+                                NiftiReadUnit.BYTES,
+                            )
                         }
                     }
+                    options.cancellationCheck()
                     backing = MappedNiftiStore(file, count, bytesPerVoxel, datatype, order, slope, intercept)
+                    options.cancellationCheck()
+                    samples = sampleValues(count, sampleCount) { voxelIndex ->
+                        requireNotNull(backing).value(voxelIndex)
+                    }
                 } catch (error: Throwable) {
+                    runCatching { backing?.close() }
                     file.delete()
                     throw error
                 }
             } else {
+                report(NiftiReadStage.DECODING_VOLUME, 0, count, NiftiReadUnit.VOXELS)
                 var index = 0
                 while (index < data.size) {
+                    options.cancellationCheck()
                     val batch = minOf(voxelsPerChunk, data.size - index)
-                    stream.readFully(chunk, 0, batch * bytesPerVoxel)
+                    readFullyChecked(stream, chunk, batch * bytesPerVoxel)
                     val bytes = ByteBuffer.wrap(chunk, 0, batch * bytesPerVoxel).order(order)
                     repeat(batch) {
                         val result = sampleNumber(bytes, datatype) * slope + intercept
                         data[index++] = if (result.isFinite()) result.toFloat() else 0f
                     }
+                    report(
+                        NiftiReadStage.DECODING_VOLUME,
+                        index.toLong(),
+                        count,
+                        NiftiReadUnit.VOXELS,
+                    )
                 }
-                samples = FloatArray(minOf(48_000, data.size))
-                val stride = max(1, data.size / samples.size)
-                for (i in samples.indices) samples[i] = data[(i * stride).coerceAtMost(data.lastIndex)]
+                samples = sampleValues(count, minOf(48_000L, count).toInt()) { voxelIndex ->
+                    data[voxelIndex.toInt()]
+                }
             }
+            options.cancellationCheck()
             samples.sort()
+            options.cancellationCheck()
             val low = samples[(samples.lastIndex * 0.02).toInt()]
             val high = samples[(samples.lastIndex * 0.98).toInt()]
             val upper = if (high > low) high else low + 1f
-            return NiftiVolume(nx, ny, nz, data, affine, low, upper, transformSource, timepoints, backing)
+            NiftiVolume(nx, ny, nz, data, affine, low, upper, transformSource, timepoints, backing)
+            }
         }
     }
 

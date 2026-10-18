@@ -3,6 +3,8 @@ package com.marcusfunt.neuroview.ui
 import android.content.Intent
 import android.content.Context
 import android.net.Uri
+import android.os.CancellationSignal
+import android.os.OperationCanceledException
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,9 +12,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -26,6 +29,10 @@ import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
 import com.marcusfunt.neuroview.mri.MriMemoryBudget
+import com.marcusfunt.neuroview.mri.NiftiReadOptions
+import com.marcusfunt.neuroview.mri.NiftiReadProgress
+import com.marcusfunt.neuroview.mri.NiftiReadStage
+import com.marcusfunt.neuroview.mri.NiftiReadUnit
 import com.marcusfunt.neuroview.mri.NiftiReader
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.navigation.Destination
@@ -34,17 +41,155 @@ import com.marcusfunt.neuroview.ui.screens.HomeScreen
 import com.marcusfunt.neuroview.ui.screens.LibraryScreen
 import com.marcusfunt.neuroview.ui.screens.SeriesScreen
 import com.marcusfunt.neuroview.ui.screens.ViewerScreen
+import com.marcusfunt.neuroview.ui.operations.OperationCoordinator
+import com.marcusfunt.neuroview.ui.operations.OperationFailure
+import com.marcusfunt.neuroview.ui.operations.OperationFailureKind
+import com.marcusfunt.neuroview.ui.operations.OperationId
+import com.marcusfunt.neuroview.ui.operations.OperationKind
+import com.marcusfunt.neuroview.ui.operations.OperationProgress
+import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
+import com.marcusfunt.neuroview.ui.operations.OperationStage
+import com.marcusfunt.neuroview.ui.operations.OperationStatus
+import com.marcusfunt.neuroview.ui.operations.OperationUnit
+import com.marcusfunt.neuroview.ui.operations.RecoveryAction
+import com.marcusfunt.neuroview.ui.operations.SystemMonotonicClock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
+import java.io.EOFException
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 sealed interface VolumeLoadState {
     data object Empty : VolumeLoadState
-    data object Loading : VolumeLoadState
+    data class Loading(
+        val operation: OperationSnapshot,
+        val displayName: String? = null,
+        val decodedVolume: NiftiVolume? = null,
+        val cancelRequestedAtElapsedMs: Long? = null,
+    ) : VolumeLoadState
+    data class FirstSliceReady(
+        val operation: OperationSnapshot,
+        val displayName: String,
+        val volume: NiftiVolume,
+    ) : VolumeLoadState
     data class Ready(val displayName: String, val volume: NiftiVolume) : VolumeLoadState
-    data class Failed(val explanation: String) : VolumeLoadState
+    data class Failed(val operation: OperationSnapshot, val explanation: String) : VolumeLoadState
+    data class Canceled(val operation: OperationSnapshot) : VolumeLoadState
+}
+
+private class ViewerLoadSession(
+    val operationId: OperationId,
+    val firstSliceReady: CompletableDeferred<Unit>,
+    val job: Job,
+    val cancellationSignal: AtomicReference<CancellationSignal>,
+    val workerJob: AtomicReference<Job?> = AtomicReference(null),
+    val renderJob: AtomicReference<Job?> = AtomicReference(null),
+) {
+    @Volatile
+    var userRequestedCancel: Boolean = false
+
+    fun cancelReader() {
+        userRequestedCancel = true
+        cancellationSignal.get().cancel()
+        workerJob.get()?.cancel(CancellationException("MRI load canceled by user"))
+        renderJob.get()?.cancel(CancellationException("First-slice render canceled by user"))
+        firstSliceReady.cancel(CancellationException("MRI load canceled by user"))
+    }
+
+    suspend fun stopAndJoinOwnedWork() = withContext(NonCancellable) {
+        workerJob.get()?.cancelAndJoin()
+        renderJob.get()?.cancelAndJoin()
+    }
+}
+
+private data class LoadedViewerVolume(val displayName: String, val volume: NiftiVolume)
+
+private fun NiftiReadStage.toOperationStage(): OperationStage = when (this) {
+    NiftiReadStage.READING_HEADER -> OperationStage.READING_HEADER
+    NiftiReadStage.VALIDATING_VOLUME -> OperationStage.VALIDATING_VOLUME
+    NiftiReadStage.SKIPPING_EXTENSIONS -> OperationStage.SKIPPING_EXTENSIONS
+    NiftiReadStage.DECODING_VOLUME -> OperationStage.DECODING_VOLUME
+    NiftiReadStage.PREPARING_DISK_BACKING -> OperationStage.PREPARING_DISK_BACKING
+    NiftiReadStage.SAMPLING_INTENSITY -> OperationStage.SAMPLING_INTENSITY
+}
+
+private fun NiftiReadProgress.toOperationProgress(): OperationProgress? {
+    if (completedUnits == null && totalUnits == null) return null
+    val operationUnit = when (unit) {
+        NiftiReadUnit.BYTES -> OperationUnit.BYTES
+        NiftiReadUnit.VOXELS -> OperationUnit.VOXELS
+        NiftiReadUnit.SAMPLES -> OperationUnit.ITEMS
+        null -> return null
+    }
+    return OperationProgress(completedUnits, totalUnits, operationUnit)
+}
+
+private fun Throwable.toOperationFailure(): OperationFailure {
+    val detail = message.orEmpty()
+    return when {
+        this is OutOfMemoryError -> OperationFailure(
+            kind = OperationFailureKind.OUT_OF_MEMORY,
+            safeMessage = "This device is low on memory. Try a smaller MRI volume, then try again.",
+            retryable = true,
+            actions = setOf(RecoveryAction.RETRY, RecoveryAction.CLEAR_DERIVED_CACHE),
+        )
+        detail.contains("Insufficient storage", ignoreCase = true) -> OperationFailure(
+            kind = OperationFailureKind.INSUFFICIENT_STORAGE,
+            safeMessage = "There is not enough free storage to prepare this MRI on this device.",
+            retryable = true,
+            actions = setOf(RecoveryAction.CLEAR_DERIVED_CACHE, RecoveryAction.RETRY),
+        )
+        this is FileNotFoundException || this is SecurityException -> OperationFailure(
+            kind = OperationFailureKind.SOURCE_UNAVAILABLE,
+            safeMessage = "This MRI is no longer accessible. Select its file again.",
+            retryable = true,
+            actions = setOf(RecoveryAction.RECONNECT_SOURCE, RecoveryAction.RETRY),
+        )
+        detail.contains("Unsupported NIfTI datatype", ignoreCase = true) ||
+            detail.contains("NIfTI-2", ignoreCase = true) ||
+            detail.contains("Analyze", ignoreCase = true) ||
+            detail.contains("not supported yet", ignoreCase = true) -> OperationFailure(
+            kind = OperationFailureKind.UNSUPPORTED_DATA,
+            safeMessage = "This NIfTI format is not supported yet. Choose another MRI file.",
+            retryable = false,
+            actions = setOf(RecoveryAction.RECONNECT_SOURCE),
+        )
+        this is EOFException || this is IllegalArgumentException -> OperationFailure(
+            kind = OperationFailureKind.INVALID_DATA,
+            safeMessage = "The MRI header or voxel data is incomplete or invalid.",
+            retryable = false,
+            actions = setOf(RecoveryAction.RECONNECT_SOURCE),
+        )
+        this is IOException || this is OperationCanceledException -> OperationFailure(
+            kind = OperationFailureKind.PROVIDER_ERROR,
+            safeMessage = "The selected file provider could not supply the MRI data. Check access and try again.",
+            retryable = true,
+            actions = setOf(RecoveryAction.RECONNECT_SOURCE, RecoveryAction.RETRY),
+        )
+        else -> OperationFailure(
+            kind = OperationFailureKind.INTERNAL_ERROR,
+            safeMessage = "NeuroView could not open this MRI. Try selecting the file again.",
+            retryable = true,
+            actions = setOf(RecoveryAction.RETRY, RecoveryAction.RECONNECT_SOURCE),
+        )
+    }
 }
 
 /** Phase 4 separates a persisted read-only series catalog from one active in-memory volume. */
@@ -94,49 +239,302 @@ fun NeuroViewApp() {
     val backStack = rememberNavBackStack(Destination.Home)
     val navigate: (Destination) -> Unit = { NavigationActions.navigate(backStack, it) }
 
-    val volumeState by produceState<VolumeLoadState>(VolumeLoadState.Empty, selectedUri) {
+    val operationCoordinator = remember { OperationCoordinator() }
+    val viewerRenderJobs = remember { ConcurrentHashMap<Job, NiftiVolume>() }
+    var volumeState by remember { mutableStateOf<VolumeLoadState>(VolumeLoadState.Empty) }
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    var activeLoadSession by remember { mutableStateOf<ViewerLoadSession?>(null) }
+    val viewerVisible = backStack.lastOrNull() is Destination.Viewer
+
+    LaunchedEffect(selectedUri, viewerVisible, loadAttempt) {
         val source = selectedUri
-        if (source == null) {
-            value = VolumeLoadState.Empty
-        } else {
-            value = VolumeLoadState.Loading
-            value = try {
-                withContext(Dispatchers.IO) {
+        val attemptAtStart = loadAttempt
+        if (source == null || !viewerVisible) {
+            volumeState = VolumeLoadState.Empty
+            return@LaunchedEffect
+        }
+
+        val previousSession = activeLoadSession
+        if (previousSession != null && !previousSession.job.isCompleted) {
+            operationCoordinator.state(previousSession.operationId)?.let { previous ->
+                volumeState = VolumeLoadState.Loading(previous)
+            }
+            previousSession.job.join()
+        }
+        if (source != selectedUri || backStack.lastOrNull() !is Destination.Viewer) {
+            return@LaunchedEffect
+        }
+
+        val operationId = operationCoordinator.begin(
+            OperationKind.VIEWER_LOAD,
+            OperationStage.OPENING_SOURCE,
+        )
+        val signal = CancellationSignal()
+        val session = ViewerLoadSession(
+            operationId = operationId,
+            firstSliceReady = CompletableDeferred(),
+            job = currentCoroutineContext()[Job] ?: error("Viewer load needs a coroutine job"),
+            cancellationSignal = AtomicReference(signal),
+        )
+        activeLoadSession = session
+        var volumeTransferredToUi = false
+        val decodedVolume = AtomicReference<NiftiVolume?>(null)
+        volumeState = VolumeLoadState.Loading(
+            requireNotNull(operationCoordinator.state(operationId)),
+        )
+
+        val progressCollector = launch {
+            operationCoordinator.states.collect { operations ->
+                val current = volumeState as? VolumeLoadState.Loading ?: return@collect
+                val updated = operations.firstOrNull { it.id == operationId } ?: return@collect
+                if (operationCoordinator.isCurrent(operationId)) {
+                    volumeState = current.copy(operation = updated)
+                }
+            }
+        }
+        val watchdog = launch {
+            while (isActive) {
+                delay(250)
+                if (operationCoordinator.isCurrent(operationId)) {
+                    val current = operationCoordinator.state(operationId)
+                    operationCoordinator.classifyStall(
+                        operationId,
+                        waitingForProvider = current?.status == OperationStatus.WAITING_FOR_PROVIDER,
+                    )
+                }
+            }
+        }
+
+        fun markCanceled() {
+            if (!operationCoordinator.isCurrent(operationId)) return
+            val current = operationCoordinator.state(operationId) ?: return
+            if (!current.status.isTerminal && current.status != OperationStatus.CANCELING) {
+                operationCoordinator.requestCancel(operationId)
+            }
+            val stopping = operationCoordinator.state(operationId)
+            if (stopping?.status == OperationStatus.CANCELING) {
+                operationCoordinator.confirmCanceled(operationId)
+            }
+            operationCoordinator.state(operationId)?.let { canceled ->
+                volumeState = VolumeLoadState.Canceled(canceled)
+            }
+        }
+
+        try {
+            operationCoordinator.transition(operationId, OperationStatus.WAITING_FOR_PROVIDER)
+            val worker = async(Dispatchers.IO) {
+                val workerContext = currentCoroutineContext()
+                val cancellationBridge = launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        signal.cancel()
+                    }
+                }
+                try {
                     val uri = Uri.parse(source)
-                    val name = runCatching {
+                    val displayName = runCatching {
                         context.contentResolver.query(
-                            uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null,
+                            uri,
+                            arrayOf(OpenableColumns.DISPLAY_NAME),
+                            null,
+                            null,
+                            null,
+                            signal,
                         )?.use { cursor ->
                             if (cursor.moveToFirst()) cursor.getString(0) else null
                         }
-                    }.getOrNull() ?: "Opened NIfTI volume"
-                    val volume = context.contentResolver.openInputStream(uri)?.use {
+                    }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Selected MRI"
+                    workerContext.ensureActive()
+                    val descriptor = context.contentResolver.openAssetFileDescriptor(uri, "r", signal)
+                        ?: throw FileNotFoundException("Selected MRI is unavailable")
+                    val volume = descriptor.use { asset ->
                         NiftiReader.read(
-                            it,
-                            MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory()),
-                            File(context.cacheDir, "nifti_mapped"),
+                            asset.createInputStream(),
+                            NiftiReadOptions(
+                                maxVoxels = MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory()),
+                                backingDirectory = File(context.cacheDir, "nifti_mapped"),
+                                cancellationCheck = { workerContext.ensureActive() },
+                                progressSink = { progress ->
+                                    operationCoordinator.reportProgress(
+                                        operationId,
+                                        progress.stage.toOperationStage(),
+                                        progress.toOperationProgress(),
+                                    )
+                                },
+                            ),
                         )
-                    } ?: throw IllegalArgumentException("Unable to open selected volume")
-                    VolumeLoadState.Ready(name, volume)
+                    }
+                    decodedVolume.set(volume)
+                    operationCoordinator.reportProgress(
+                        operationId,
+                        OperationStage.RENDERING_FIRST_SLICE,
+                        null,
+                    )
+                    LoadedViewerVolume(displayName, volume)
+                } finally {
+                    cancellationBridge.cancel()
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (exception: Exception) {
-                VolumeLoadState.Failed(
-                    exception.message ?: "Could not access or decode the NIfTI volume",
+            }
+            session.workerJob.set(worker)
+            val loaded = worker.await()
+            if (!operationCoordinator.isCurrent(operationId)) {
+                throw CancellationException("A newer viewer load replaced this request")
+            }
+            val rendering = operationCoordinator.state(operationId)
+                ?: throw CancellationException("Viewer load state was cleared")
+            volumeState = VolumeLoadState.Loading(rendering, loaded.displayName, loaded.volume)
+            volumeTransferredToUi = true
+
+            session.firstSliceReady.await()
+            val completed = operationCoordinator.state(operationId)
+            if (operationCoordinator.isCurrent(operationId) &&
+                completed?.status == OperationStatus.SUCCEEDED
+            ) {
+                volumeState = VolumeLoadState.Ready(loaded.displayName, loaded.volume)
+            }
+        } catch (canceled: CancellationException) {
+            if (!session.job.isActive) throw canceled
+            if (session.userRequestedCancel) {
+                session.stopAndJoinOwnedWork()
+                markCanceled()
+            } else {
+                val failure = OperationFailure(
+                    kind = OperationFailureKind.PROVIDER_ERROR,
+                    safeMessage = "The selected file provider stopped responding. Try opening the file again.",
+                    retryable = true,
+                    actions = setOf(RecoveryAction.RETRY, RecoveryAction.RECONNECT_SOURCE),
                 )
-            } catch (_: OutOfMemoryError) {
-                VolumeLoadState.Failed(
-                    "Device is low on memory. Try a smaller NIfTI volume.",
+                if (operationCoordinator.isCurrent(operationId)) {
+                    operationCoordinator.fail(operationId, failure)
+                    volumeState = VolumeLoadState.Failed(
+                        requireNotNull(operationCoordinator.state(operationId)),
+                        failure.safeMessage,
+                    )
+                }
+            }
+        } catch (canceled: OperationCanceledException) {
+            if (!session.job.isActive) throw CancellationException("Viewer load canceled", canceled)
+            if (session.userRequestedCancel) {
+                session.stopAndJoinOwnedWork()
+                markCanceled()
+            } else {
+                val failure = canceled.toOperationFailure()
+                if (operationCoordinator.isCurrent(operationId)) {
+                    operationCoordinator.fail(operationId, failure)
+                    volumeState = VolumeLoadState.Failed(
+                        requireNotNull(operationCoordinator.state(operationId)),
+                        failure.safeMessage,
+                    )
+                }
+            }
+        } catch (error: OutOfMemoryError) {
+            val failure = error.toOperationFailure()
+            if (operationCoordinator.isCurrent(operationId)) {
+                operationCoordinator.fail(operationId, failure)
+                volumeState = VolumeLoadState.Failed(
+                    requireNotNull(operationCoordinator.state(operationId)),
+                    failure.safeMessage,
                 )
+            }
+        } catch (error: Exception) {
+            val failure = error.toOperationFailure()
+            if (operationCoordinator.isCurrent(operationId)) {
+                operationCoordinator.fail(operationId, failure)
+                volumeState = VolumeLoadState.Failed(
+                    requireNotNull(operationCoordinator.state(operationId)),
+                    failure.safeMessage,
+                )
+            }
+        } finally {
+            signal.cancel()
+            progressCollector.cancel()
+            watchdog.cancel()
+            val succeeded = operationCoordinator.state(operationId)?.status == OperationStatus.SUCCEEDED
+            if (!succeeded && operationCoordinator.isCurrent(operationId)) {
+                val operation = operationCoordinator.state(operationId)
+                if (operation != null && !operation.status.isTerminal) {
+                    if (operation.status != OperationStatus.CANCELING) {
+                        operationCoordinator.requestCancel(operationId)
+                    }
+                    val stopping = operationCoordinator.state(operationId)
+                    val currentLoad = volumeState as? VolumeLoadState.Loading
+                    if (stopping != null && currentLoad?.operation?.id == operationId) {
+                        volumeState = currentLoad.copy(
+                            operation = stopping,
+                            cancelRequestedAtElapsedMs = currentLoad.cancelRequestedAtElapsedMs
+                                ?: SystemMonotonicClock.nowMs(),
+                        )
+                    }
+                }
+            }
+            if (!succeeded) session.stopAndJoinOwnedWork()
+            if (!volumeTransferredToUi) decodedVolume.getAndSet(null)?.close()
+            val currentOperation = operationCoordinator.state(operationId)
+            if (operationCoordinator.isCurrent(operationId) &&
+                currentOperation?.status == OperationStatus.CANCELING
+            ) {
+                if (session.workerJob.get()?.isCompleted != false &&
+                    session.renderJob.get()?.isCompleted != false
+                ) {
+                    operationCoordinator.confirmCanceled(operationId)
+                }
+            }
+            val currentLoad = volumeState as? VolumeLoadState.Loading
+            if (currentLoad?.operation?.id == operationId &&
+                !session.userRequestedCancel &&
+                (selectedUri != source || backStack.lastOrNull() !is Destination.Viewer || loadAttempt != attemptAtStart)
+            ) {
+                volumeState = VolumeLoadState.Empty
+            }
+            if (activeLoadSession == session &&
+                (succeeded || (session.workerJob.get()?.isCompleted != false &&
+                    session.renderJob.get()?.isCompleted != false))
+            ) activeLoadSession = null
+        }
+    }
+
+    // A volume remains owned by this screen state across progress updates and is closed on replacement.
+    val activeVolume = when (val state = volumeState) {
+        is VolumeLoadState.Loading -> state.decodedVolume
+        is VolumeLoadState.FirstSliceReady -> state.volume
+        is VolumeLoadState.Ready -> state.volume
+        else -> null
+    }
+    DisposableEffect(activeVolume) {
+        onDispose {
+            val jobsToStop = viewerRenderJobs.entries
+                .filter { it.value === activeVolume }
+                .mapNotNull { entry ->
+                    if (viewerRenderJobs.remove(entry.key, activeVolume)) entry.key else null
+                }
+            if (jobsToStop.isEmpty()) {
+                activeVolume?.close()
+            } else {
+                jobsToStop.forEach { it.cancel(CancellationException("Viewer volume was released")) }
+                scope.launch {
+                    jobsToStop.forEach { it.join() }
+                    activeVolume?.close()
+                }
             }
         }
     }
 
-    // Release temporary voxel files on series changes or viewer disposal.
-    DisposableEffect(volumeState) {
-        val volume = (volumeState as? VolumeLoadState.Ready)?.volume
-        onDispose { volume?.close() }
+    fun cancelViewerLoad() {
+        val session = activeLoadSession ?: return
+        val loading = volumeState as? VolumeLoadState.Loading ?: return
+        if (loading.operation.id != session.operationId) return
+        if (operationCoordinator.requestCancel(session.operationId)) {
+            volumeState = loading.copy(
+                operation = requireNotNull(operationCoordinator.state(session.operationId)),
+                cancelRequestedAtElapsedMs = SystemMonotonicClock.nowMs(),
+            )
+            session.cancelReader()
+        }
+    }
+
+    fun retryViewerLoad() {
+        loadAttempt += 1
     }
 
     val picker = rememberLauncherForActivityResult(
@@ -288,6 +686,49 @@ fun NeuroViewApp() {
                         displayNameOverride = snapshot.scans.firstOrNull {
                             it.id == destination.seriesId
                         }?.label,
+                        onFirstSliceBitmapReady = { operationId ->
+                            val session = activeLoadSession
+                            val loading = volumeState as? VolumeLoadState.Loading
+                            if (session?.operationId == operationId &&
+                                loading?.decodedVolume != null &&
+                                operationCoordinator.isCurrent(operationId) &&
+                                operationCoordinator.markFirstSliceReady(operationId)
+                            ) {
+                                volumeState = VolumeLoadState.FirstSliceReady(
+                                    operation = requireNotNull(operationCoordinator.state(operationId)),
+                                    displayName = loading.displayName ?: "Selected MRI",
+                                    volume = loading.decodedVolume,
+                                )
+                            }
+                        },
+                        onFirstSliceDisplayed = { operationId ->
+                            val session = activeLoadSession
+                            val ready = volumeState as? VolumeLoadState.FirstSliceReady
+                            if (session?.operationId == operationId &&
+                                ready?.operation?.id == operationId &&
+                                operationCoordinator.isCurrent(operationId) &&
+                                operationCoordinator.succeed(operationId, operationId.value.toString())
+                            ) {
+                                session.firstSliceReady.complete(Unit)
+                            }
+                        },
+                        onFirstSliceRenderStarted = { operationId, volume, renderJob ->
+                            viewerRenderJobs[renderJob] = volume
+                            activeLoadSession
+                                ?.takeIf { it.operationId == operationId }
+                                ?.renderJob
+                                ?.set(renderJob)
+                        },
+                        onFirstSliceRenderFinished = { operationId, volume, renderJob ->
+                            viewerRenderJobs.remove(renderJob, volume)
+                            activeLoadSession
+                                ?.takeIf { it.operationId == operationId }
+                                ?.renderJob
+                                ?.compareAndSet(renderJob, null)
+                        },
+                        onCancelLoad = ::cancelViewerLoad,
+                        onRetryLoad = ::retryViewerLoad,
+                        onReturnToLibrary = { navigate(Destination.Library) },
                         onImport = chooseDocuments,
                         onNavigate = navigate,
                         onClearCache = { catalog.clearThumbnailCache() },
