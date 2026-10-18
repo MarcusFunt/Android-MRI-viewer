@@ -70,5 +70,45 @@ class BridgeTests(unittest.TestCase):
 
 
 
+    def test_http_auth_and_upload(self):
+        server = BridgeHTTPServer(("127.0.0.1", 0), self.bridge)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5) as client:
+                client.request("GET", "/v1/jobs/00000000-0000-0000-0000-000000000000")
+                response = client.getresponse()
+                self.assertEqual(response.status, 401)
+                response.read()
+
+            with patch("server.subprocess.run") as runner:
+                runner.return_value.returncode = 1
+                with http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5) as client:
+                    payload = nii()
+                    client.request("POST", "/v1/jobs", body=payload, headers={
+                        "Authorization": "Bearer " + TOKEN,
+                        "X-NeuroView-Format": "nii",
+                        "X-BrainSuite-Stages": "CSE",
+                    })
+                    response = client.getresponse()
+                    self.assertEqual(response.status, 202)
+                    job = json.loads(response.read())
+                    self.assertIn(job["status"], ("queued", "running", "failed"))
+                    self.assertEqual(job["stages"], "CSE")
+                self.bridge.worker.shutdown(wait=True)
+
+            with http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5) as client:
+                client.request("GET", "/v1/jobs/" + job["id"], headers={
+                    "Authorization": "Bearer " + TOKEN,
+                })
+                response = client.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read())["status"], "failed")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+
 if __name__ == "__main__":
     unittest.main()
