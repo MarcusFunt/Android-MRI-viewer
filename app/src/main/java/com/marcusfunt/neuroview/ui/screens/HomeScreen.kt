@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -54,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.sp
 import com.marcusfunt.neuroview.ui.BrainPreview
 
@@ -69,7 +73,12 @@ private val Edge = Color(0xFF385069)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
+fun HomeScreen(
+    onBrowse: () -> Unit,
+    onImport: () -> Unit,
+    lastScanName: String? = null,
+    onResumeScan: () -> Unit = {},
+) {
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var autoRotate by rememberSaveable { mutableStateOf(true) }
     var glowEnabled by rememberSaveable { mutableStateOf(true) }
@@ -131,7 +140,8 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
         ) { scaffoldPadding ->
             Column(
                 modifier = Modifier.fillMaxSize().padding(scaffoldPadding)
-                    .padding(horizontal = 21.dp, vertical = 12.dp),
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(11.dp),
             ) {
                 Row(
@@ -156,9 +166,9 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                                 letterSpacing = (-0.5).sp,
                             )
                             Text(
-                                "EXPLORE  ·  VISUALIZE  ·  UNDERSTAND",
-                                fontSize = 9.sp,
-                                letterSpacing = 1.1.sp,
+                                "MRI exploration workspace",
+                                fontSize = 12.sp,
+                                letterSpacing = 0.1.sp,
                                 color = Secondary,
                                 maxLines = 1,
                             )
@@ -174,7 +184,7 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                         IconButton(onClick = { settingsOpen = true }) {
                             Icon(
                                 Icons.Default.Settings,
-                                contentDescription = "Landing page settings",
+                                contentDescription = "Home appearance settings",
                                 tint = Color(0xFFC8E4F2),
                             )
                         }
@@ -183,7 +193,11 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
 
                 // The translucent GLES viewport is intentionally unframed;
                 // no card, border, or explanatory labels sit around the brain.
-                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(
+                        (LocalConfiguration.current.screenHeightDp.dp * 0.42f).coerceIn(220.dp, 390.dp),
+                    ),
+                ) {
                     BrainPreview(
                         modifier = Modifier.fillMaxSize(),
                         autoRotation = autoRotate,
@@ -191,13 +205,25 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                     )
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    DetailPill("3D visualization", Modifier.weight(1.14f))
-                    DetailPill("NIfTI / DICOM", Modifier.weight(1.04f))
-                    DetailPill("On-device", Modifier.weight(0.91f))
+                if (!lastScanName.isNullOrBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFF11283A))
+                            .border(1.dp, Edge.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+                            .clickable(role = Role.Button, onClick = onResumeScan)
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Continue viewing", color = Secondary, fontSize = 12.sp)
+                            Text(lastScanName, color = Foreground, fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium, maxLines = 1)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Resume most recently opened scan", tint = Cyan)
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
                 val primaryShape = RoundedCornerShape(19.dp)
@@ -209,12 +235,13 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                                 listOf(Color(0xFF0BBCE2), Color(0xFF1870E8)),
                             ),
                         )
-                        .clickable(role = Role.Button, onClick = onView)
+                        .clickable(role = Role.Button, onClick = onBrowse)
                         .padding(horizontal = 21.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Spacer(Modifier.width(24.dp))
                     Text(
-                        "Open viewer",
+                        "Browse scans",
                         modifier = Modifier.weight(1f),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -233,12 +260,13 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                         .clip(primaryShape)
                         .background(Color(0xFF111F2E))
                         .border(1.dp, Color(0xFF7796B2).copy(alpha = 0.73f), primaryShape)
-                        .clickable(role = Role.Button, onClick = onLibrary)
+                        .clickable(role = Role.Button, onClick = onImport)
                         .padding(horizontal = 20.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Spacer(Modifier.width(24.dp))
                     Text(
-                        "Import & Library",
+                        "Import MRI",
                         modifier = Modifier.weight(1f),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium,
@@ -252,10 +280,10 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                     )
                 }
                 Text(
-                    "ON-DEVICE  ·  FOR EXPLORATION, NOT DIAGNOSIS",
-                    modifier = Modifier.fillMaxWidth().padding(top = 13.dp, bottom = 7.dp),
-                    fontSize = 9.sp,
-                    letterSpacing = 1.sp,
+                    "Local viewing · For exploration, not diagnosis",
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 7.dp),
+                    fontSize = 12.sp,
+                    letterSpacing = 0.sp,
                     maxLines = 1,
                     textAlign = TextAlign.Center,
                     color = Secondary.copy(alpha = 0.8f),
@@ -274,7 +302,7 @@ fun HomeScreen(onView: () -> Unit, onLibrary: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(13.dp),
             ) {
                 Text(
-                    "Landing settings",
+                    "Home appearance",
                     style = MaterialTheme.typography.headlineSmall,
                     color = Foreground,
                 )
