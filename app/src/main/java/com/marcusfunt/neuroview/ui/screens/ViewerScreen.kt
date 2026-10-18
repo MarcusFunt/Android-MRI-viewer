@@ -15,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -79,6 +81,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
 import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
 import androidx.compose.ui.draw.clip
@@ -396,6 +402,10 @@ private fun MriContent(
     var showProcessing by rememberSaveable { mutableStateOf(false) }
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
+    var zoomMode by rememberSaveable { mutableStateOf(false) }
+    var scale by remember(volume, plane) { mutableFloatStateOf(1f) }
+    var panOffset by remember(volume, plane) { mutableStateOf(Offset.Zero) }
+    var imageViewport by remember { mutableStateOf(IntSize.Zero) }
     Column(
         modifier = modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp),
@@ -437,8 +447,26 @@ private fun MriContent(
             modifier = Modifier.fillMaxWidth().weight(1f)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color.Black)
-                .border(1.dp, NeuroChrome.stroke.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
-                .pointerInput(volume, plane, totalSlices) {
+                .border(if (focusMode) 0.dp else 1.dp,
+                    NeuroChrome.stroke.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
+                .onSizeChanged { imageViewport = it }
+                .pointerInput(volume, plane, totalSlices, zoomMode) {
+                    if (zoomMode) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            val newScale = (scale * zoom).coerceIn(1f, 6f)
+                            scale = newScale
+                            if (newScale <= 1f) {
+                                panOffset = Offset.Zero
+                            } else {
+                                val limitX = imageViewport.width * (newScale - 1f) / 2f
+                                val limitY = imageViewport.height * (newScale - 1f) / 2f
+                                panOffset = Offset(
+                                    (panOffset.x + pan.x).coerceIn(-limitX, limitX),
+                                    (panOffset.y + pan.y).coerceIn(-limitY, limitY),
+                                )
+                            }
+                        }
+                    } else {
                     val pixelsPerSlice = 18.dp.toPx()
                     var horizontalDrag = 0f
                     var verticalDrag = 0f
@@ -503,6 +531,7 @@ private fun MriContent(
                         },
                         onDragCancel = { currentScrubbingChanged(false) },
                     )
+                    }
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -510,14 +539,39 @@ private fun MriContent(
                 Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "Real ${plane.label} MRI slice",
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = panOffset.x
+                        translationY = panOffset.y
+                    },
                     contentScale = ContentScale.Fit,
                 )
             } else {
                 CircularProgressIndicator()
             }
-            // The anatomical image stays neutral grayscale; contextual metadata
-            // is placed in the surrounding chrome, never drawn over the pixels.
+            if (!volume.transformSource.startsWith("NO ORIENTATION")) {
+                Text(
+                    if (plane == MriPlane.SAGITTAL) "A" else "R",
+                    color = NeuroChrome.muted,
+                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Text(
+                    if (plane == MriPlane.SAGITTAL) "P" else "L",
+                    color = NeuroChrome.muted,
+                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            if (zoomMode) {
+                Text(
+                    "${(scale * 100).roundToInt()}% · drag to pan · pinch to zoom",
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NeuroChrome.muted,
+                )
+            }
         }
 
         if (!focusMode) {
@@ -556,6 +610,7 @@ private fun MriContent(
                     },
                     onValueChangeFinished = { onScrubbingChanged(false) },
                     valueRange = 0f..(totalSlices - 1).coerceAtLeast(1).toFloat(),
+                    enabled = totalSlices > 1,
                     modifier = Modifier.fillMaxWidth(),
                     colors = SliderDefaults.colors(
                         thumbColor = NeuroChrome.accent,
@@ -572,7 +627,7 @@ private fun MriContent(
                         onClick = { onSliceChange(selectedSlice - 1) },
                         enabled = selectedSlice > 0,
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        modifier = Modifier.height(38.dp),
+                        modifier = Modifier.height(48.dp),
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null,
                             modifier = Modifier.size(16.dp))
@@ -591,7 +646,7 @@ private fun MriContent(
                         onClick = { onSliceChange(selectedSlice + 1) },
                         enabled = selectedSlice < totalSlices - 1,
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        modifier = Modifier.height(38.dp),
+                        modifier = Modifier.height(48.dp),
                     ) {
                         Text("Next")
                         Spacer(Modifier.width(5.dp))
@@ -614,6 +669,15 @@ private fun MriContent(
                     MaterialTheme.colorScheme.error else NeuroChrome.muted,
                 style = MaterialTheme.typography.labelSmall,
             )
+            TextButton(onClick = {
+                zoomMode = !zoomMode
+                scale = 1f
+                panOffset = Offset.Zero
+            }) {
+                Icon(Icons.Default.ZoomIn, contentDescription = null, Modifier.size(16.dp))
+                Spacer(Modifier.width(3.dp))
+                Text(if (zoomMode) "Scroll" else "Zoom")
+            }
             TextButton(onClick = { showAdjustments = true }) { Text("Adjust") }
             TextButton(onClick = { showProcessing = true }) { Text("Process") }
         }
