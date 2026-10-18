@@ -30,6 +30,7 @@ enum class OperationStage(val label: String) {
     IMPORTING_FILE("Checking selected MRI files"),
     GENERATING_THUMBNAIL("Creating scan preview"),
     SCANNING_DICOM("Scanning DICOM files"),
+    READING_DICOM_HEADERS("Reading DICOM headers"),
     ASSEMBLING_SERIES("Building DICOM series"),
     WRITING_NIFTI("Writing NIfTI output"),
     UPLOADING("Uploading to processing host"),

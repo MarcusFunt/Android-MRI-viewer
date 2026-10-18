@@ -1,6 +1,7 @@
 package com.marcusfunt.neuroview.ui.screens
 
 import android.net.Uri
+import android.os.CancellationSignal
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +25,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,9 +42,31 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.processing.BrainSuiteClient
 import com.marcusfunt.neuroview.processing.BrainSuiteJobHistory
+import com.marcusfunt.neuroview.processing.BrainSuiteServiceException
+import com.marcusfunt.neuroview.processing.brainSuiteFailureMessage
+import com.marcusfunt.neuroview.ui.components.OperationProgressIndicator
+import com.marcusfunt.neuroview.ui.operations.OperationCoordinator
+import com.marcusfunt.neuroview.ui.operations.OperationFailure
+import com.marcusfunt.neuroview.ui.operations.OperationFailureKind
+import com.marcusfunt.neuroview.ui.operations.OperationId
+import com.marcusfunt.neuroview.ui.operations.OperationKind
+import com.marcusfunt.neuroview.ui.operations.OperationProgress
+import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
+import com.marcusfunt.neuroview.ui.operations.OperationStage
+import com.marcusfunt.neuroview.ui.operations.OperationStatus
+import com.marcusfunt.neuroview.ui.operations.OperationUnit
+import com.marcusfunt.neuroview.ui.operations.SystemMonotonicClock
+import java.io.IOException
+import java.util.Date
+import java.text.SimpleDateFormat
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -60,6 +84,8 @@ fun BrainSuitePanel(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
+    val coordinator = remember { OperationCoordinator() }
+    val operationSnapshots by coordinator.states.collectAsState()
     val history = remember(context) { BrainSuiteJobHistory(context.applicationContext) }
     var previousJobs by remember { mutableStateOf(history.list()) }
     var address by rememberSaveable { mutableStateOf("") }
@@ -68,6 +94,11 @@ fun BrainSuitePanel(
     var consent by rememberSaveable { mutableStateOf(false) }
     var jobId by rememberSaveable { mutableStateOf("") }
     var jobStatus by remember { mutableStateOf<BrainSuiteClient.Status?>(null) }
+    var operationId by remember { mutableStateOf<OperationId?>(null) }
+    var activeSignal by remember { mutableStateOf<CancellationSignal?>(null) }
+    var activeJob by remember { mutableStateOf<Job?>(null) }
+    var lastSuccessfulStatusAt by remember { mutableStateOf<Long?>(null) }
+    var statusError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var showToken by remember { mutableStateOf(false) }
@@ -78,36 +109,111 @@ fun BrainSuitePanel(
 
     fun client() = BrainSuiteClient(address, accessToken)
 
+    fun applyRemoteStatus(
+        status: BrainSuiteClient.Status,
+        id: OperationId?,
+        isStatusCheck: Boolean = true,
+    ) {
+        jobStatus = status
+        if (isStatusCheck) lastSuccessfulStatusAt = System.currentTimeMillis()
+        statusError = null
+        val current = id?.let(coordinator::state) ?: return
+        if (current.status.isTerminal || current.status == OperationStatus.CANCELING) return
+        when (status.state) {
+            "succeeded" -> coordinator.succeed(current.id, current.id.value.toString())
+            "failed" -> coordinator.fail(
+                current.id,
+                OperationFailure(
+                    kind = OperationFailureKind.REMOTE_ERROR,
+                    safeMessage = status.message?.takeIf { it.isNotBlank() }
+                        ?: "The BrainSuite processing job failed on the configured computer.",
+                    retryable = false,
+                ),
+            )
+            else -> {
+                coordinator.reportProgress(current.id, OperationStage.WAITING_FOR_REMOTE, null)
+                coordinator.heartbeat(current.id)
+            }
+        }
+    }
+
+    fun transferFailure(error: Throwable): OperationFailure {
+        val serviceError = error as? BrainSuiteServiceException
+        val retryable = when {
+            serviceError != null -> serviceError.responseCode == 429 ||
+                serviceError.responseCode == 503 || serviceError.responseCode in 500..599
+            error is IOException -> true
+            else -> false
+        }
+        return OperationFailure(
+            kind = if (error is IOException && serviceError == null) {
+                OperationFailureKind.NETWORK_ERROR
+            } else {
+                OperationFailureKind.REMOTE_ERROR
+            },
+            safeMessage = brainSuiteFailureMessage(error),
+            retryable = retryable,
+        )
+    }
+
+    fun cancelTransfer() {
+        val id = operationId ?: return
+        val stage = coordinator.state(id)?.stage
+        if (!busy || stage !in setOf(OperationStage.UPLOADING, OperationStage.DOWNLOADING) ||
+            !coordinator.requestCancel(id)
+        ) return
+        activeSignal?.cancel()
+        activeJob?.cancel(CancellationException("BrainSuite transfer canceled by user"))
+    }
+
     LaunchedEffect(documentUri, address, stage) {
         consent = false
     }
 
-    LaunchedEffect(jobId, address, accessToken) {
+    LaunchedEffect(jobId, address, accessToken, canConnect, jobStatus?.state, busy) {
         while (jobId.isNotBlank() && canConnect &&
             jobStatus?.state in listOf("queued", "running")) {
             delay(5_000)
+            if (busy) continue
             try {
-                jobStatus = withContext(Dispatchers.IO) { client().status(jobId) }
-            } catch (_: Exception) {
-                // Server may be busy/offline. Retry at a modest interval while visible.
+                val result = withContext(Dispatchers.IO) { client().status(jobId) }
+                applyRemoteStatus(result, operationId)
+            } catch (error: Exception) {
+                statusError = brainSuiteFailureMessage(error)
             }
         }
     }
 
 
-    fun perform(operation: suspend () -> Unit) {
+    fun perform(
+        initialStage: OperationStage,
+        operation: suspend (OperationId, CancellationSignal) -> Unit,
+    ) {
         if (busy) return
+        val id = coordinator.begin(OperationKind.BRAIN_SUITE, initialStage)
+        val signal = CancellationSignal()
+        operationId = id
+        activeSignal = signal
         busy = true
         message = null
-        scope.launch {
+        statusError = null
+        activeJob = scope.launch {
             try {
-                operation()
+                operation(id, signal)
             } catch (cancelled: CancellationException) {
+                withContext(NonCancellable) {
+                    coordinator.confirmCanceled(id)
+                    message = "Transfer canceled."
+                }
                 throw cancelled
             } catch (error: Exception) {
-                message = error.message ?: "BrainSuite operation failed."
+                val failure = transferFailure(error)
+                coordinator.fail(id, failure)
+                message = failure.safeMessage
             } finally {
                 busy = false
+                activeSignal = null
+                activeJob = null
             }
         }
     }
@@ -117,19 +223,40 @@ fun BrainSuitePanel(
     ) { destination ->
         if (destination != null && jobId.isNotBlank()) {
             val selected = jobId
-            perform {
+            perform(OperationStage.DOWNLOADING) { id, signal ->
+                val workerContext = currentCoroutineContext()
+                var completed = false
                 try {
                     withContext(Dispatchers.IO) {
                         context.contentResolver.openOutputStream(destination, "wt")?.use { stream ->
-                            client().download(selected, stream)
+                            client().download(
+                                selected,
+                                stream,
+                                onProgress = { complete, total ->
+                                    coordinator.reportProgress(
+                                        id,
+                                        OperationStage.DOWNLOADING,
+                                        OperationProgress(complete, total, OperationUnit.BYTES),
+                                    )
+                                },
+                                cancellationCheck = {
+                                    workerContext.ensureActive()
+                                    if (signal.isCanceled) throw CancellationException("Download canceled")
+                                },
+                            )
                         } ?: error("Cannot write the ZIP destination.")
                     }
+                    completed = true
+                    coordinator.succeed(id, id.value.toString())
                     message = "BrainSuite results saved. Extract the ZIP to inspect derivatives."
-                } catch (error: Exception) {
-                    withContext(Dispatchers.IO) {
-                        runCatching { DocumentsContract.deleteDocument(context.contentResolver, destination) }
+                } finally {
+                    if (!completed) {
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            runCatching {
+                                DocumentsContract.deleteDocument(context.contentResolver, destination)
+                            }
+                        }
                     }
-                    throw error
                 }
             }
         }
@@ -193,7 +320,10 @@ fun BrainSuitePanel(
                 if (showConnection) {
                     OutlinedTextField(
                         value = address,
-                        onValueChange = { address = it.trim(); jobStatus = null },
+                        onValueChange = {
+                            address = it.trim(); jobStatus = null; operationId = null
+                            lastSuccessfulStatusAt = null; statusError = null
+                        },
                         label = { Text("Secure HTTPS address") },
                         placeholder = { Text("https://computer.tailnet.ts.net") },
                         modifier = Modifier.fillMaxWidth(),
@@ -203,7 +333,10 @@ fun BrainSuitePanel(
                     )
                     OutlinedTextField(
                         value = accessToken,
-                        onValueChange = { onAccessTokenChange(it); jobStatus = null },
+                        onValueChange = {
+                            onAccessTokenChange(it); jobStatus = null; operationId = null
+                            lastSuccessfulStatusAt = null; statusError = null
+                        },
                         label = { Text("Access token (not saved)") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
@@ -235,18 +368,35 @@ fun BrainSuitePanel(
         }
         Button(
             onClick = {
-                perform {
+                perform(OperationStage.UPLOADING) { id, signal ->
                     val source = requireNotNull(documentUri) { "Open a NIfTI series first." }
                     val label = requireNotNull(documentName)
                     require(consent) { "Confirm the privacy notice before sending MRI data." }
+                    val workerContext = currentCoroutineContext()
                     val result = withContext(Dispatchers.IO) {
-                        client().submit(context.contentResolver, Uri.parse(source), label, stage)
+                        client().submit(
+                            context.contentResolver,
+                            Uri.parse(source),
+                            label,
+                            stage,
+                            onProgress = { complete, total ->
+                                coordinator.reportProgress(
+                                    id,
+                                    OperationStage.UPLOADING,
+                                    OperationProgress(complete, total, OperationUnit.BYTES),
+                                )
+                            },
+                            cancellationCheck = {
+                                workerContext.ensureActive()
+                                if (signal.isCanceled) throw CancellationException("Upload canceled")
+                            },
+                        )
                     }
                     jobId = result.id
-                    jobStatus = result
                     consent = false
                     history.add(result.id, address, stage)
                     previousJobs = history.list()
+                    applyRemoteStatus(result, id, isStatusCheck = false)
                     message = "BrainSuite job submitted. Use Refresh status to check its progress."
                 }
             },
@@ -271,6 +421,9 @@ fun BrainSuitePanel(
                         address = entry.endpoint
                         jobId = entry.id
                         jobStatus = null
+                        operationId = null
+                        lastSuccessfulStatusAt = null
+                        statusError = null
                         consent = false
                     }, modifier = Modifier.weight(1f)) {
                         Text("${entry.stages} · ${entry.id.take(8)}…")
@@ -285,7 +438,10 @@ fun BrainSuitePanel(
         Text("Processing job", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
             value = jobId,
-            onValueChange = { jobId = it.trim(); jobStatus = null },
+            onValueChange = {
+                jobId = it.trim(); jobStatus = null; operationId = null
+                lastSuccessfulStatusAt = null; statusError = null
+            },
             label = { Text("Job identifier (paste to resume)") },
             modifier = Modifier.fillMaxWidth(),
             trailingIcon = if (jobId.isNotBlank()) {
@@ -314,11 +470,34 @@ fun BrainSuitePanel(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        operationId?.let { id ->
+            operationSnapshots.lastOrNull { it.id == id }?.let { operation ->
+                BrainSuiteOperationCard(
+                    operation = operation,
+                    canCancelTransfer = busy && operation.stage in setOf(
+                        OperationStage.UPLOADING, OperationStage.DOWNLOADING,
+                    ),
+                    onCancel = ::cancelTransfer,
+                )
+            }
+        }
+        lastSuccessfulStatusAt?.let { timestamp ->
+            val time = remember(timestamp) {
+                SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+            }
+            Text("Last successful status check · $time", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        statusError?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = {
-                    perform {
-                        jobStatus = withContext(Dispatchers.IO) { client().status(jobId) }
+                    perform(OperationStage.WAITING_FOR_REMOTE) { id, _ ->
+                        val result = withContext(Dispatchers.IO) { client().status(jobId) }
+                        applyRemoteStatus(result, id)
                     }
                 },
                 enabled = !busy && canConnect && jobId.isNotBlank(),
@@ -328,12 +507,6 @@ fun BrainSuitePanel(
                 enabled = !busy && jobStatus?.state == "succeeded",
             ) { Text("Save results ZIP") }
         }
-        if (busy) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CircularProgressIndicator(modifier = Modifier.height(22.dp))
-                Text("Communicating with your processing computer…")
-            }
-        }
         message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         Spacer(Modifier.height(8.dp))
         Text(
@@ -342,5 +515,44 @@ fun BrainSuitePanel(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+internal fun BrainSuiteOperationCard(
+    operation: OperationSnapshot,
+    canCancelTransfer: Boolean,
+    onCancel: () -> Unit,
+) {
+    var elapsedNow by remember(operation.id) {
+        androidx.compose.runtime.mutableLongStateOf(SystemMonotonicClock.nowMs())
+    }
+    LaunchedEffect(operation.id) {
+        while (true) {
+            elapsedNow = SystemMonotonicClock.nowMs()
+            delay(1_000L)
+        }
+    }
+    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("BrainSuite operation", style = MaterialTheme.typography.titleSmall)
+                if (canCancelTransfer && operation.status != OperationStatus.CANCELING) {
+                    TextButton(onClick = onCancel) { Text("CANCEL") }
+                } else if (operation.status == OperationStatus.CANCELING) {
+                    Text("Stopping…", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+            OperationProgressIndicator(
+                snapshot = operation,
+                elapsedMs = elapsedNow - operation.startedAtElapsedMs,
+            )
+        }
     }
 }

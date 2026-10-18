@@ -5,6 +5,7 @@ import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.mri.SpatialAffine
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.CancellationException
 import java.util.zip.ZipInputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -160,5 +161,99 @@ class ConversionRoundTripTest {
         for (i in original.values.indices) assertEquals(original.values[i], output.values[i], 0.002f)
         assertEquals(original.affine.world(0.0, 0.0, 0.0).toList(),
             output.affine.world(0.0, 0.0, 0.0).toList())
+    }
+
+    @Test fun conversionWritersReportEachCompletedOutputSlice() {
+        val dicomSlices = slicesFromZip()
+        val series = DicomSeriesAssembler.assemble(dicomSlices)
+        val niftiProgress = mutableListOf<Pair<Int, Int>>()
+        NiftiSeriesWriter.writeGzWithProgress(
+            series,
+            ByteArrayOutputStream(),
+            onProgress = { complete, total -> niftiProgress += complete to total },
+        )
+        val dicomProgress = mutableListOf<Pair<Int, Int>>()
+        DerivedDicomWriter.writeZip(
+            volume(),
+            ByteArrayOutputStream(),
+            onProgress = { complete, total -> dicomProgress += complete to total },
+        )
+
+        assertEquals(listOf(1 to 3, 2 to 3, 3 to 3), niftiProgress)
+        assertEquals(listOf(1 to 3, 2 to 3, 3 to 3), dicomProgress)
+    }
+
+    @Test fun conversionWritersCheckCancellationBeforeStartingOutputWork() {
+        assertThrows(CancellationException::class.java) {
+            NiftiSeriesWriter.writeGzWithProgress(
+                DicomSeriesAssembler.assemble(slicesFromZip()),
+                ByteArrayOutputStream(),
+                cancellationCheck = { throw CancellationException("stop conversion") },
+            )
+        }
+        assertThrows(CancellationException::class.java) {
+            DerivedDicomWriter.writeZip(
+                volume(),
+                ByteArrayOutputStream(),
+                cancellationCheck = { throw CancellationException("stop conversion") },
+            )
+        }
+    }
+
+    @Test fun dicomSeriesAssemblyReportsValidatedSlicesAndChecksCancellation() {
+        val slices = slicesFromZip()
+        val progress = mutableListOf<Pair<Int, Int>>()
+        DicomSeriesAssembler.assemble(
+            slices,
+            onProgress = { complete, total -> progress += complete to total },
+        )
+        assertEquals(listOf(1 to 3, 2 to 3, 3 to 3), progress)
+        var stop = false
+        val partialProgress = mutableListOf<Pair<Int, Int>>()
+        assertThrows(CancellationException::class.java) {
+            DicomSeriesAssembler.assemble(
+                slices,
+                onProgress = { complete, total ->
+                    partialProgress += complete to total
+                    if (complete == 1) stop = true
+                },
+                cancellationCheck = { if (stop) throw CancellationException("stop assembly") },
+            )
+        }
+        assertEquals(listOf(1 to 3), partialProgress)
+    }
+
+    @Test fun conversionWritersStopAfterTheCurrentSliceWhenCanceled() {
+        val dicomSlices = slicesFromZip()
+        val series = DicomSeriesAssembler.assemble(dicomSlices)
+        var stop = false
+        val niftiProgress = mutableListOf<Pair<Int, Int>>()
+        assertThrows(CancellationException::class.java) {
+            NiftiSeriesWriter.writeGzWithProgress(
+                series,
+                ByteArrayOutputStream(),
+                onProgress = { complete, total ->
+                    niftiProgress += complete to total
+                    if (complete == 1) stop = true
+                },
+                cancellationCheck = { if (stop) throw CancellationException("stop after slice") },
+            )
+        }
+        assertEquals(listOf(1 to 3), niftiProgress)
+
+        stop = false
+        val dicomProgress = mutableListOf<Pair<Int, Int>>()
+        assertThrows(CancellationException::class.java) {
+            DerivedDicomWriter.writeZip(
+                volume(),
+                ByteArrayOutputStream(),
+                onProgress = { complete, total ->
+                    dicomProgress += complete to total
+                    if (complete == 1) stop = true
+                },
+                cancellationCheck = { if (stop) throw CancellationException("stop after slice") },
+            )
+        }
+        assertEquals(listOf(1 to 3), dicomProgress)
     }
 }

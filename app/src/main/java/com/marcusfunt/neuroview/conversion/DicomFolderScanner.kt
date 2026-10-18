@@ -2,6 +2,7 @@ package com.marcusfunt.neuroview.conversion
 
 import android.content.ContentResolver
 import android.net.Uri
+import android.os.CancellationSignal
 import android.provider.DocumentsContract
 import java.util.ArrayDeque
 
@@ -21,7 +22,13 @@ object DicomFolderScanner {
     private const val MAX_ENTRIES = 8192
     private const val MAX_DEPTH = 16
 
-    fun scan(resolver: ContentResolver, treeUri: Uri): DicomFolderSelection {
+    fun scan(
+        resolver: ContentResolver,
+        treeUri: Uri,
+        cancellationSignal: CancellationSignal? = null,
+        cancellationCheck: () -> Unit = {},
+        onProgress: (inspectedEntries: Int) -> Unit = {},
+    ): DicomFolderSelection {
         val rootId = DocumentsContract.getTreeDocumentId(treeUri)
         val pending = ArrayDeque<Pair<String, Int>>()
         val visited = mutableSetOf<String>()
@@ -40,14 +47,16 @@ object DicomFolderScanner {
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                 DocumentsContract.Document.COLUMN_MIME_TYPE,
             )
-            val cursor = resolver.query(childrenUri, projection, null, null, null)
+            val cursor = resolver.query(childrenUri, projection, null, null, null, cancellationSignal)
                 ?: throw IllegalArgumentException("Cannot list the selected folder")
             cursor.use {
                 val idColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
                 val nameColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
                 val typeColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
                 while (it.moveToNext()) {
+                    cancellationCheck()
                     inspected++
+                    onProgress(inspected)
                     require(inspected <= MAX_ENTRIES) {
                         "Folder contains too many entries (limit $MAX_ENTRIES). Select one series folder."
                     }

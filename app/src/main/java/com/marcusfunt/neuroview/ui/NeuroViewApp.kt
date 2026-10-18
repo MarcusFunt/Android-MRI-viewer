@@ -790,8 +790,9 @@ fun NeuroViewApp() {
                         importOperation = importOperation,
                         importCancelRequestedAtElapsedMs = importCancelRequestedAt,
                         onCancelImport = ::cancelImport,
+                        conversionOperation = conversions.operation,
+                        onCancelConversion = conversions.cancel,
                         activityLabel = when {
-                            conversions.busy -> conversions.message ?: "Converting MRI data…"
                             editBusy -> "Updating library…"
                             else -> null
                         },

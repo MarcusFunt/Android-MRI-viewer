@@ -16,7 +16,16 @@ object NiftiSeriesWriter {
         series: DicomSeries,
         destination: OutputStream,
         readPixels: (DicomSlice) -> FloatArray = { it.pixels },
+    ) = writeGzWithProgress(series, destination, readPixels = readPixels)
+
+    fun writeGzWithProgress(
+        series: DicomSeries,
+        destination: OutputStream,
+        onProgress: (completedSlices: Int, totalSlices: Int) -> Unit = { _, _ -> },
+        cancellationCheck: () -> Unit = {},
+        readPixels: (DicomSlice) -> FloatArray = { it.pixels },
     ) {
+        cancellationCheck()
         val header = ByteBuffer.allocate(352).order(ByteOrder.LITTLE_ENDIAN)
         header.putInt(0, 348)
         header.putShort(40, 3)                        // 3 spatial dimensions
@@ -55,18 +64,23 @@ object NiftiSeriesWriter {
         GZIPOutputStream(BufferedOutputStream(destination, 64 * 1024), 64 * 1024).use { out ->
             out.write(header.array())
             val bytes = ByteBuffer.allocate(64 * 1024).order(ByteOrder.LITTLE_ENDIAN)
-            for (slice in series.slices) {
+            for ((sliceIndex, slice) in series.slices.withIndex()) {
+                cancellationCheck()
                 val pixels = readPixels(slice)
                 require(pixels.size == series.nx * series.ny) { "DICOM slice size changed during conversion" }
-                for (pixel in pixels) {
+                for ((pixelIndex, pixel) in pixels.withIndex()) {
+                    if (pixelIndex % 8192 == 0) cancellationCheck()
                     if (bytes.remaining() < 4) {
                         out.write(bytes.array(), 0, bytes.position())
                         bytes.clear()
                     }
                     bytes.putFloat(pixel)
                 }
+                if (bytes.position() > 0) out.write(bytes.array(), 0, bytes.position())
+                bytes.clear()
+                out.flush()
+                onProgress(sliceIndex + 1, series.nz)
             }
-            if (bytes.position() > 0) out.write(bytes.array(), 0, bytes.position())
             out.finish()
         }
     }

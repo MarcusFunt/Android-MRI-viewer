@@ -86,6 +86,7 @@ import com.marcusfunt.neuroview.catalog.ScanRecord
 import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
 import com.marcusfunt.neuroview.ui.operations.OperationStatus
 import com.marcusfunt.neuroview.ui.operations.SystemMonotonicClock
+import com.marcusfunt.neuroview.ui.components.OperationProgressIndicator
 import kotlinx.coroutines.delay
 
 private sealed interface LibraryDialog {
@@ -109,6 +110,8 @@ fun LibraryScreen(
     importOperation: OperationSnapshot?,
     importCancelRequestedAtElapsedMs: Long?,
     onCancelImport: () -> Unit,
+    conversionOperation: OperationSnapshot?,
+    onCancelConversion: () -> Unit,
     activityLabel: String? = null,
     feedback: String?,
     onImport: () -> Unit,
@@ -279,7 +282,12 @@ fun LibraryScreen(
                             }
                         }
                     }
-                    if (isBusy) {
+                    if (conversionOperation != null) {
+                        ConversionProgressCard(
+                            operation = conversionOperation,
+                            onCancel = onCancelConversion,
+                        )
+                    } else if (isBusy) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(
                                 modifier = Modifier.padding(4.dp), strokeWidth = 2.dp,
@@ -689,6 +697,51 @@ internal fun ImportProgressStrip(
                 "Elapsed ${String.format(java.util.Locale.ROOT, "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = NeuroChrome.muted,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun ConversionProgressCard(
+    operation: OperationSnapshot,
+    onCancel: () -> Unit,
+) {
+    var elapsedNow by remember(operation.id) {
+        mutableLongStateOf(SystemMonotonicClock.nowMs())
+    }
+    LaunchedEffect(operation.id) {
+        while (true) {
+            elapsedNow = SystemMonotonicClock.nowMs()
+            delay(1_000L)
+        }
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = NeuroChrome.raised,
+        border = BorderStroke(1.dp, NeuroChrome.stroke),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("Converting MRI data", style = MaterialTheme.typography.titleSmall)
+                if (operation.status == OperationStatus.CANCELING) {
+                    Text("Stopping…", color = NeuroChrome.muted,
+                        style = MaterialTheme.typography.labelLarge)
+                } else {
+                    TextButton(onClick = onCancel) { Text("CANCEL") }
+                }
+            }
+            OperationProgressIndicator(
+                snapshot = operation,
+                elapsedMs = elapsedNow - operation.startedAtElapsedMs,
             )
         }
     }

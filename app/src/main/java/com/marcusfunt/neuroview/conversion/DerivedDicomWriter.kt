@@ -27,7 +27,13 @@ object DerivedDicomWriter {
     private const val IMPLEMENTATION_UID = "2.25.180848462823764534621857403973065946951"
     private val longVr = setOf("OB", "OD", "OF", "OL", "OV", "OW", "SQ", "UC", "UR", "UT", "UN", "SV", "UV")
 
-    fun writeZip(volume: NiftiVolume, destination: OutputStream) {
+    fun writeZip(
+        volume: NiftiVolume,
+        destination: OutputStream,
+        onProgress: (completedSlices: Int, totalSlices: Int) -> Unit = { _, _ -> },
+        cancellationCheck: () -> Unit = {},
+    ) {
+        cancellationCheck()
         require(!volume.transformSource.startsWith("NO ORIENTATION")) {
             "Cannot write spatial DICOM when the NIfTI orientation is unknown"
         }
@@ -53,7 +59,8 @@ object DerivedDicomWriter {
         val orientation = rowDirection + colDirection
         var min = Float.POSITIVE_INFINITY
         var max = Float.NEGATIVE_INFINITY
-        for (v in volume.values) {
+        for ((index, v) in volume.values.withIndex()) {
+            if (index % 65_536 == 0) cancellationCheck()
             if (v.isFinite()) {
                 if (v < min) min = v
                 if (v > max) max = v
@@ -72,6 +79,7 @@ object DerivedDicomWriter {
         val sequence = ZipOutputStream(destination.buffered(65536))
         sequence.use { zip ->
             for (k in 0 until volume.nz) {
+                cancellationCheck()
                 val sop = newUid()
                 zip.putNextEntry(ZipEntry("DERIVED_${(k + 1).toString().padStart(4, '0')}.dcm"))
                 val point = lps(affine.world(0.0, 0.0, k.toDouble()))
@@ -80,9 +88,11 @@ object DerivedDicomWriter {
                     series = series, frame = frame,
                     date = date, time = time, orientation = orientation,
                     position = point, rowSpacing = rowSpacing, colSpacing = colSpacing,
-                    minimum = min.toDouble(), slope = slope,
+                    minimum = min.toDouble(), slope = slope, cancellationCheck = cancellationCheck,
                 )
                 zip.closeEntry()
+                zip.flush()
+                onProgress(k + 1, volume.nz)
             }
             zip.finish()
         }
@@ -96,6 +106,7 @@ object DerivedDicomWriter {
         orientation: DoubleArray, position: DoubleArray,
         rowSpacing: String, colSpacing: String,
         minimum: Double, slope: Double,
+        cancellationCheck: () -> Unit,
     ) {
         zip.write(ByteArray(128))
         zip.write("DICM".toByteArray(Charsets.US_ASCII))
@@ -152,6 +163,7 @@ object DerivedDicomWriter {
         val packed = ByteBuffer.allocate(volume.nx * volume.ny * 2).order(ByteOrder.LITTLE_ENDIAN)
         val offset = slice * volume.nx * volume.ny
         for (pixel in 0 until volume.nx * volume.ny) {
+            if (pixel % 8192 == 0) cancellationCheck()
             val raw = volume.values[offset + pixel]
             val normalized = if (!raw.isFinite()) 0 else {
                 ((raw.toDouble() - minimum) / slope).roundToInt().coerceIn(0, 65535)

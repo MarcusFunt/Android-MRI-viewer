@@ -15,7 +15,11 @@ data class DicomSeries(
 
 /** Group and sort one DICOM series; never combine studies or inconsistent acquisitions. */
 object DicomSeriesAssembler {
-    fun assemble(files: List<DicomSlice>): DicomSeries {
+    fun assemble(
+        files: List<DicomSlice>,
+        onProgress: (completedFiles: Int, totalFiles: Int) -> Unit = { _, _ -> },
+        cancellationCheck: () -> Unit = {},
+    ): DicomSeries {
         require(files.isNotEmpty() && files.size <= 1024) { "Select 1–1024 DICOM slices" }
         val first = files.first()
         val pixels = first.rows.toLong() * first.columns * files.size
@@ -25,7 +29,8 @@ object DicomSeriesAssembler {
         val jVector = a.copyOfRange(3, 6)
         val normal = cross(iVector, jVector)
         fun projected(position: DoubleArray) = position.indices.sumOf { position[it] * normal[it] }
-        for (slice in files) {
+        for ((index, slice) in files.withIndex()) {
+            cancellationCheck()
             require(slice.studyUid == first.studyUid && slice.seriesUid == first.seriesUid) {
                 "Selected DICOM files belong to different studies or series"
             }
@@ -38,7 +43,9 @@ object DicomSeriesAssembler {
             require((0..5).all {
                 abs(slice.orientationLps[it] - a[it]) <= 0.001
             }) { "Inconsistent DICOM image orientation" }
+            onProgress(index + 1, files.size)
         }
+        cancellationCheck()
         val sorted = files.sortedBy { projected(it.positionLps) }
         val start = sorted.first().positionLps
         val step = if (sorted.size == 1) normal.map {
@@ -50,6 +57,7 @@ object DicomSeriesAssembler {
         require(stepProjection > 1e-4) { "Duplicate or unordered DICOM slice positions" }
         val tolerance = maxOf(0.20, stepProjection * 0.05)
         sorted.forEachIndexed { index, slice ->
+            cancellationCheck()
             val expected = DoubleArray(3) { axis -> start[axis] + index * step[axis] }
             val deviation = sqrt((0..2).sumOf {
                 val delta = slice.positionLps[it] - expected[it]

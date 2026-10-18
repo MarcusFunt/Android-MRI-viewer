@@ -4,6 +4,8 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.provider.OpenableColumns
 import org.json.JSONObject
+import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
 import java.net.URL
@@ -57,7 +59,7 @@ class BrainSuiteClient(
 
     private fun parse(connection: HttpsURLConnection, expected: Int): Status {
         if (connection.responseCode != expected) {
-            throw IllegalStateException("BrainSuite service returned HTTP ${connection.responseCode}.")
+            throw BrainSuiteServiceException(connection.responseCode)
         }
         val json = connection.inputStream.bufferedReader().use { it.readText() }
         val item = JSONObject(json)
@@ -87,6 +89,8 @@ class BrainSuiteClient(
         document: Uri,
         originalName: String,
         stages: String,
+        onProgress: (completedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
+        cancellationCheck: () -> Unit = {},
     ): Status {
         require(stages == "CSE" || stages == "CSE+SVREG") { "Unknown BrainSuite stage" }
         val format = when {
@@ -107,18 +111,21 @@ class BrainSuiteClient(
             connection.setFixedLengthStreamingMode(length)
             resolver.openInputStream(document)?.use { input ->
                 connection.outputStream.use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    var transferred = 0L
-                    while (transferred < length) {
-                        val count = input.read(buffer, 0, minOf(buffer.size.toLong(), length - transferred).toInt())
-                        require(count > 0) { "Selected MRI ended before upload completed." }
-                        output.write(buffer, 0, count)
-                        transferred += count
-                    }
-                    require(input.read() == -1) { "MRI size changed during upload." }
+                    copyStreamWithProgress(
+                        input, output, length, cancellationCheck = cancellationCheck,
+                        onProgress = onProgress,
+                    )
                 }
             } ?: throw IllegalArgumentException("Selected MRI is no longer readable")
             return parse(connection, 202)
+        } catch (error: IOException) {
+            // HttpsURLConnection may surface an HTTP error from getOutputStream() itself,
+            // before parse() gets a chance to classify the response.
+            val responseCode = runCatching { connection.responseCode }.getOrNull()
+            if (responseCode != null && responseCode !in 200..299) {
+                throw BrainSuiteServiceException(responseCode)
+            }
+            throw error
         } finally {
             connection.disconnect()
         }
@@ -134,21 +141,81 @@ class BrainSuiteClient(
         }
     }
 
-    fun download(id: String, output: OutputStream) {
+    fun download(
+        id: String,
+        output: OutputStream,
+        onProgress: (completedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
+        cancellationCheck: () -> Unit = {},
+    ) {
         require(Regex("[0-9a-f-]{36}").matches(id)) { "Invalid BrainSuite job ID" }
         val connection = connect("/v1/jobs/$id/results", "GET")
         connection.readTimeout = 300_000
         try {
             if (connection.responseCode != 200) {
-                throw IllegalStateException("Results unavailable (HTTP ${connection.responseCode}).")
+                throw BrainSuiteServiceException(connection.responseCode)
             }
             require(connection.contentType?.startsWith("application/zip") == true) {
                 "Expected a ZIP of BrainSuite derivatives"
             }
-            connection.inputStream.use { it.copyTo(output, bufferSize = 64 * 1024) }
-            output.flush()
+            val contentLength = connection.getHeaderFieldLong("Content-Length", -1L)
+                .takeIf { it > 0L }
+            connection.inputStream.use { input ->
+                copyStreamWithProgress(
+                    input, output, contentLength, cancellationCheck = cancellationCheck,
+                    onProgress = onProgress,
+                )
+            }
         } finally {
             connection.disconnect()
         }
     }
+}
+
+class BrainSuiteServiceException(val responseCode: Int) : IOException(
+    "BrainSuite service returned HTTP $responseCode.",
+)
+
+internal fun brainSuiteFailureMessage(error: Throwable): String = when (error) {
+    is BrainSuiteServiceException -> when (error.responseCode) {
+        401, 403 -> "The access token was rejected. Check it and try again."
+        429, 503 -> "The BrainSuite server is busy. Check status again shortly."
+        in 500..599 -> "The BrainSuite server returned an error. Check status again later."
+        else -> "The BrainSuite server rejected this request. Check the scan and job details."
+    }
+    is IOException -> "Could not reach the BrainSuite server. Check the connection and try again."
+    else -> error.message ?: "BrainSuite operation failed."
+}
+
+internal fun copyStreamWithProgress(
+    input: InputStream,
+    output: OutputStream,
+    expectedBytes: Long?,
+    cancellationCheck: () -> Unit = {},
+    onProgress: (completedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
+): Long {
+    require(expectedBytes == null || expectedBytes >= 0L) { "Transfer size cannot be negative" }
+    val buffer = ByteArray(64 * 1024)
+    var transferred = 0L
+    while (expectedBytes == null || transferred < expectedBytes) {
+        cancellationCheck()
+        val limit = expectedBytes?.let { minOf(buffer.size.toLong(), it - transferred).toInt() }
+            ?: buffer.size
+        val count = input.read(buffer, 0, limit)
+        if (count < 0) {
+            if (expectedBytes != null && transferred != expectedBytes) {
+                throw IOException("Selected MRI ended before upload completed.")
+            }
+            break
+        }
+        if (count == 0) continue
+        output.write(buffer, 0, count)
+        transferred += count
+        onProgress(transferred, expectedBytes)
+    }
+    if (expectedBytes != null) {
+        cancellationCheck()
+        if (input.read() != -1) throw IOException("MRI size changed during upload.")
+    }
+    output.flush()
+    return transferred
 }
