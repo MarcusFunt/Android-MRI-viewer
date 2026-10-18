@@ -191,6 +191,7 @@ fun NeuroViewApp() {
                         onResumeScan = {
                             snapshot.scans.firstOrNull { it.id == lastOpenedScanId }?.let(openScan)
                         },
+                        onClearCache = { catalog.clearThumbnailCache() },
                     )
                 }
                 entry<Destination.Series> {
