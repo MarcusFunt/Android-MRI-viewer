@@ -58,6 +58,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -295,11 +296,6 @@ fun ViewerScreen(
                                 Icon(Icons.Default.Menu, contentDescription = "Open navigation menu")
                             }
                         },
-                        actions = {
-                            TextButton(onClick = { focusMode = !focusMode }) {
-                                Text(if (focusMode) "Controls" else "Focus", color = NeuroChrome.accent)
-                            }
-                        },
                         colors = TopAppBarDefaults.topAppBarColors(
                             containerColor = Color.Transparent,
                         ),
@@ -322,6 +318,7 @@ fun ViewerScreen(
                         is VolumeLoadState.Ready -> MriContent(
                             modifier = Modifier.fillMaxSize(),
                             focusMode = focusMode,
+                            onFocusToggle = { focusMode = !focusMode },
                             showOrientationMarkers = showOrientationMarkers,
                             volume = volumeState.volume,
                             plane = plane,
@@ -342,12 +339,6 @@ fun ViewerScreen(
                         )
                     }
 
-                    if (focusMode) {
-                        TextButton(
-                            onClick = { focusMode = false },
-                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-                        ) { Text("Exit focus", color = NeuroChrome.accent) }
-                    }
                 }
             }
         }
@@ -468,6 +459,7 @@ private fun ViewerMessage(title: String, detail: String, onImport: () -> Unit) {
 private fun MriContent(
     modifier: Modifier,
     focusMode: Boolean,
+    onFocusToggle: () -> Unit,
     showOrientationMarkers: Boolean,
     volume: NiftiVolume,
     plane: MriPlane,
@@ -495,7 +487,7 @@ private fun MriContent(
     var bridgeToken by remember { mutableStateOf("") }
     var zoomMode by remember(volume) { mutableStateOf(false) }
     var probeMode by remember(volume) { mutableStateOf(false) }
-    var probeReading by remember(volume, plane) { mutableStateOf<String?>(null) }
+    var probeReading by remember(volume) { mutableStateOf<String?>(null) }
     var scale by remember(volume, plane) { mutableFloatStateOf(DEFAULT_MRI_IMAGE_SCALE) }
     var panOffset by remember(volume, plane) { mutableStateOf(Offset.Zero) }
     var imageViewport by remember { mutableStateOf(IntSize.Zero) }
@@ -570,8 +562,16 @@ private fun MriContent(
                                 )
                                 val imageWidth = image.width * fit
                                 val imageHeight = image.height * fit
-                                val fractionX = (tap.x - (imageViewport.width - imageWidth) / 2f) / imageWidth
-                                val fractionY = (tap.y - (imageViewport.height - imageHeight) / 2f) / imageHeight
+                                val centerX = imageViewport.width / 2f
+                                val centerY = imageViewport.height / 2f
+                                val imageX =
+                                    (tap.x - centerX - panOffset.x) / scale + centerX
+                                val imageY =
+                                    (tap.y - centerY - panOffset.y) / scale + centerY
+                                val fractionX = (imageX - (imageViewport.width - imageWidth) / 2f) /
+                                    imageWidth
+                                val fractionY = (imageY - (imageViewport.height - imageHeight) / 2f) /
+                                    imageHeight
                                 val sampled = MprProbe.sample(
                                     volume, plane, currentSlice,
                                     fractionX.toDouble(), fractionY.toDouble(),
@@ -582,6 +582,7 @@ private fun MriContent(
                                         it.roundToInt().toString()
                                     }} · intensity ${String.format(java.util.Locale.US, "%.2f", sampled.intensity)}"
                                 } else {
+                                    onReferenceWorldChange(null)
                                     probeReading = "No measured voxel at that position."
                                 }
                             }
@@ -754,28 +755,38 @@ private fun MriContent(
                     }
                 }
             }
-            if (!focusMode) {
+            if (focusMode) {
                 TextButton(
-                    onClick = {
-                        probeMode = !probeMode
-                        if (!probeMode) onReferenceWorldChange(null)
-                        zoomMode = false
-                        scale = DEFAULT_MRI_IMAGE_SCALE
-                        panOffset = Offset.Zero
-                    },
-                    modifier = Modifier.align(Alignment.TopEnd),
-                ) { Text(if (probeMode) "End probe" else "Probe",
-                    color = NeuroChrome.accent) }
+                    onClick = onFocusToggle,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
+                ) { Text("Exit focus", color = NeuroChrome.accent) }
             }
             if (probeMode) {
-                Text(
-                    probeReading ?: "Tap a voxel to inspect intensity and set a cross-plane reference.",
+                Surface(
                     modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)
-                        .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
-                        .padding(8.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = NeuroChrome.ink,
-                )
+                        .fillMaxWidth(0.68f),
+                    color = NeuroChrome.topBar.copy(alpha = 0.94f),
+                    contentColor = NeuroChrome.ink,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, NeuroChrome.accent.copy(alpha = 0.4f)),
+                    shadowElevation = 8.dp,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Text(
+                            "Probe Crosshair",
+                            color = NeuroChrome.accent,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            probeReading ?: "Tap a point on the image to inspect it.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
             }
         }
 
@@ -894,31 +905,41 @@ private fun MriContent(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
                 .offset(y = (-4).dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
         ) {
-            TextButton(onClick = {
-                zoomMode = !zoomMode
-                probeMode = false
-                onReferenceWorldChange(null)
-                scale = DEFAULT_MRI_IMAGE_SCALE
-                panOffset = Offset.Zero
-            }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.heightIn(min = 48.dp)) {
-                Text(
-                    if (zoomMode) "Scroll" else "Zoom",
-                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp),
-                )
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = {
+                    zoomMode = !zoomMode
+                    probeMode = false
+                    onReferenceWorldChange(null)
+                    scale = DEFAULT_MRI_IMAGE_SCALE
+                    panOffset = Offset.Zero
+                }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(
+                        if (zoomMode) "Scroll" else "Zoom",
+                        style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp),
+                    )
+                }
+                TextButton(onClick = { showAdjustments = true },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Adjust", style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp))
+                }
+                TextButton(onClick = { showProcessing = true },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Process", style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp))
+                }
             }
-            TextButton(onClick = { showAdjustments = true },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Adjust", style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp))
-            }
-            TextButton(onClick = { showProcessing = true },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Process", style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp))
-            }
+            TextButton(
+                onClick = onFocusToggle,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) { Text("Focus", color = NeuroChrome.accent) }
         }
         if (orientationUnknown) {
             Text(
@@ -970,6 +991,44 @@ private fun MriContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                HorizontalDivider(color = NeuroChrome.stroke.copy(alpha = 0.65f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("Probe Crosshair", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Tap a slice to show voxel coordinates, intensity, and a crosshair reference.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        modifier = Modifier.semantics {
+                            contentDescription = "Probe Crosshair"
+                        },
+                        checked = probeMode,
+                        onCheckedChange = { enabled ->
+                            probeMode = enabled
+                            if (enabled) {
+                                zoomMode = false
+                                scale = DEFAULT_MRI_IMAGE_SCALE
+                                panOffset = Offset.Zero
+                                probeReading = null
+                            } else {
+                                onReferenceWorldChange(null)
+                                probeReading = null
+                            }
+                            showAdjustments = false
+                        },
+                    )
+                }
+                HorizontalDivider(color = NeuroChrome.stroke.copy(alpha = 0.65f))
                 Text("Display presets", style = MaterialTheme.typography.titleSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(

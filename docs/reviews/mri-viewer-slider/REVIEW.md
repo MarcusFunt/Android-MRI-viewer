@@ -10,11 +10,21 @@ The viewer uses one unframed deep-navy canvas. A faint cyan/blue perimeter glow 
 
 Plane and slice controls remain easy to reach. Plane labels are slightly larger and sit a little higher; lower actions are slightly higher and spaced apart, while the slice slider stays in place. Slice buttons keep 48 dp touch targets. The initial image scale is now 135% of fit. Orientation markers start hidden; the Home Settings sheet has a saved “Orientation markers” switch for R/L and A/P labels.
 
-![Updated MRI viewer with a continuous deep-blue canvas, subtle perimeter glow, larger brain, grouped readable controls, and markers hidden](04-compact-viewer.png)
+![Updated MRI viewer with a continuous deep-blue canvas, subtle perimeter glow, larger brain, grouped controls, and Focus at the lower right](04-compact-viewer.png)
 
 The loading state now carries NeuroView branding, with the app logo, an accent progress ring, and a short status message over the same blue glow treatment.
 
 ![Branded MRI loading screen](07-branded-loading.png)
+
+## Focus and probe controls
+
+Focus now sits at the lower-right end of the normal control row. In Focus mode, an “Exit focus” control stays at the lower-right of the image area. Probe Crosshair lives in Display adjustments; enabling it closes the sheet and arms point picking. The image first shows a short prompt, then a tap places the crosshair and opens a reading card with voxel indices and intensity. The cross-plane reference follows the selected point across intersecting views. Switching the setting off clears the reading and crosshair.
+
+![Probe Crosshair switch in Display adjustments](08-probe-crosshair-setting.png)
+
+![Probe Crosshair armed with the tap instruction](09-probe-crosshair-armed.png)
+
+![Probe Crosshair reading card with voxel coordinates and intensity](10-probe-crosshair-reading.png)
 
 ![Home Settings with Orientation markers off by default](05-orientation-markers-setting-off.png)
 
