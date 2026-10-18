@@ -272,6 +272,7 @@ fun NeuroViewApp() {
                 entry<Destination.Viewer> { destination ->
                     ViewerScreen(
                         volumeState = volumeState,
+                        selectedDocumentUri = selectedUri,
                         displayNameOverride = snapshot.scans.firstOrNull {
                             it.id == destination.seriesId
                         }?.label,
