@@ -1,7 +1,9 @@
 package com.marcusfunt.neuroview
 
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Rule
@@ -18,6 +20,15 @@ class NeuroViewNavigationSmokeTest {
         compose.onNodeWithText("Browse scans").assertExists()
         compose.onNodeWithText("Import MRI").assertExists()
         compose.onNodeWithContentDescription("Settings").assertExists()
+    }
+
+    @Test
+    fun brainPreviewSignalsItsFirstDrawWithoutAnArbitraryDelay() {
+        val marker = "brain-preview-first-frame-drawn"
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithTag(marker).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag(marker).assertExists()
     }
 
     @Test

@@ -10,7 +10,10 @@ import android.view.MotionEvent
  * Touch drag rotates the model; automatic rotation is controlled by the Compose host.
  */
 internal class BrainGlSurfaceView(context: Context) : GLSurfaceView(context) {
-    private val brainRenderer = BrainRenderer(context.applicationContext)
+    @Volatile var onFirstFrameDrawn: () -> Unit = {}
+    private val brainRenderer = BrainRenderer(context.applicationContext) {
+        post { onFirstFrameDrawn() }
+    }
     private var previousX = 0f
     private var previousY = 0f
     var onTouchDragChanged: (Boolean) -> Unit = {}

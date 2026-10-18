@@ -17,16 +17,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.marcusfunt.neuroview.brain.BrainGlSurfaceView
+
+private const val FIRST_FRAME_TEST_TAG = "brain-preview-first-frame-drawn"
 
 /**
  * Pure 3D preview without chrome or descriptive text. Home owns the settings.
@@ -53,7 +57,18 @@ internal fun BrainPreview(
         }
         return
     }
-    InteractiveBrain(modifier, autoRotation, resetRequest)
+    var firstFrameDrawn by remember { mutableStateOf(false) }
+    val readinessModifier = if (firstFrameDrawn) {
+        modifier.testTag(FIRST_FRAME_TEST_TAG)
+    } else {
+        modifier
+    }
+    InteractiveBrain(
+        readinessModifier,
+        autoRotation,
+        resetRequest,
+        onFirstFrameDrawn = { firstFrameDrawn = true },
+    )
 }
 
 @Composable
@@ -61,10 +76,12 @@ private fun InteractiveBrain(
     modifier: Modifier,
     autoRotation: Boolean,
     resetRequest: Int,
+    onFirstFrameDrawn: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val view = remember(context) { BrainGlSurfaceView(context) }
+    val currentOnFirstFrameDrawn by rememberUpdatedState(onFirstFrameDrawn)
     var userDragging by remember { mutableStateOf(false) }
     var resumed by remember { mutableStateOf(false) }
 
@@ -91,6 +108,7 @@ private fun InteractiveBrain(
 
     DisposableEffect(view, lifecycleOwner) {
         view.onTouchDragChanged = { userDragging = it }
+        view.onFirstFrameDrawn = { currentOnFirstFrameDrawn() }
         val lifecycle = lifecycleOwner.lifecycle
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -116,6 +134,7 @@ private fun InteractiveBrain(
             resumed = false
             view.onPause()
             view.onTouchDragChanged = {}
+            view.onFirstFrameDrawn = {}
             lifecycle.removeObserver(observer)
         }
     }

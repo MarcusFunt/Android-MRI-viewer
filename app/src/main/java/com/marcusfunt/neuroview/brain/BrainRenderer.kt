@@ -18,7 +18,10 @@ import javax.microedition.khronos.opengles.GL10
  * the NVB1 vertex and index buffers natively (under GLES2's 65k vertex cap).
  * Rendering is driven by GLSurfaceView.RENDERMODE_WHEN_DIRTY.
  */
-internal class BrainRenderer(private val context: Context) : GLSurfaceView.Renderer {
+internal class BrainRenderer(
+    private val context: Context,
+    private val onFirstFrameDrawn: () -> Unit = {},
+) : GLSurfaceView.Renderer {
     @Volatile var yawDegrees = -85f
     @Volatile var pitchDegrees = -12f
 
@@ -42,6 +45,7 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
     private val modelView = FloatArray(16)
     private val mvp = FloatArray(16)
     private var frames = 0
+    private var firstFrameSignaled = false
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         Log.i("NeuroViewBrain", "GLES2 surface created")
@@ -125,7 +129,14 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
         }
         GLES20.glDisableVertexAttribArray(positionHandle)
         GLES20.glDisableVertexAttribArray(normalHandle)
-        if (frames == 1) Log.i("NeuroViewBrain", "GL frame status ${GLES20.glGetError()}")
+        if (!firstFrameSignaled) {
+            val glError = GLES20.glGetError()
+            Log.i("NeuroViewBrain", "First GL frame status $glError")
+            if (glError == GLES20.GL_NO_ERROR) {
+                firstFrameSignaled = true
+                onFirstFrameDrawn()
+            }
+        }
     }
 
     private fun createProgram(vertex: String, fragment: String): Int {
