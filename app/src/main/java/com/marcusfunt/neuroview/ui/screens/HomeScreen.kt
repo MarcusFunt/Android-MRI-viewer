@@ -62,7 +62,7 @@ import androidx.compose.ui.unit.sp
 import com.marcusfunt.neuroview.ui.BrainPreview
 
 private val Navy = Color(0xFF060F1A)
-private val Cyan = Color(0xFF54D9EE)
+private val Cyan = Color(0xFF79D6E6)
 private val Foreground = Color(0xFFF0F5FA)
 private val Secondary = Color(0xFF9EADC2)
 private val Edge = Color(0xFF385069)
@@ -232,7 +232,7 @@ fun HomeScreen(
                         .clip(primaryShape)
                         .background(
                             Brush.horizontalGradient(
-                                listOf(Color(0xFF0BBCE2), Color(0xFF1870E8)),
+                                listOf(Color(0xFF12547C), Color(0xFF1B5F9B)),
                             ),
                         )
                         .clickable(role = Role.Button, onClick = onBrowse)
