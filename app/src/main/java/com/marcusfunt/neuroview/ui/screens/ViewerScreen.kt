@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
@@ -126,8 +127,6 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-internal const val VIEWER_DISPLAY_PREFERENCES = "neuroview_display_v1"
-internal const val SHOW_ORIENTATION_MARKERS_KEY = "show_orientation_markers"
 private const val DEFAULT_MRI_IMAGE_SCALE = 1.35f
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -138,6 +137,7 @@ fun ViewerScreen(
     selectedDocumentUri: String? = null,
     onImport: () -> Unit,
     onNavigate: (Destination) -> Unit,
+    onClearCache: suspend () -> Int = { 0 },
 ) {
     var plane by rememberSaveable { mutableStateOf(MriPlane.AXIAL) }
     var focusMode by rememberSaveable { mutableStateOf(false) }
@@ -151,10 +151,32 @@ fun ViewerScreen(
     var showOrientationMarkers by remember(displayPrefs) {
         mutableStateOf(displayPrefs.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false))
     }
+    var probeCrosshairEnabled by remember(displayPrefs) {
+        mutableStateOf(displayPrefs.getBoolean(PROBE_CROSSHAIR_ENABLED_KEY, false))
+    }
+    var crosshairThicknessDp by remember(displayPrefs) {
+        mutableFloatStateOf(
+            displayPrefs.getFloat(
+                CROSSHAIR_THICKNESS_DP_KEY,
+                DEFAULT_CROSSHAIR_THICKNESS_DP,
+            ).coerceIn(MIN_CROSSHAIR_THICKNESS_DP, MAX_CROSSHAIR_THICKNESS_DP),
+        )
+    }
     DisposableEffect(displayPrefs) {
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == SHOW_ORIENTATION_MARKERS_KEY) {
-                showOrientationMarkers = displayPrefs.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false)
+            when (key) {
+                SHOW_ORIENTATION_MARKERS_KEY -> {
+                    showOrientationMarkers = displayPrefs.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false)
+                }
+                PROBE_CROSSHAIR_ENABLED_KEY -> {
+                    probeCrosshairEnabled = displayPrefs.getBoolean(PROBE_CROSSHAIR_ENABLED_KEY, false)
+                }
+                CROSSHAIR_THICKNESS_DP_KEY -> {
+                    crosshairThicknessDp = displayPrefs.getFloat(
+                        CROSSHAIR_THICKNESS_DP_KEY,
+                        DEFAULT_CROSSHAIR_THICKNESS_DP,
+                    ).coerceIn(MIN_CROSSHAIR_THICKNESS_DP, MAX_CROSSHAIR_THICKNESS_DP)
+                }
             }
         }
         displayPrefs.registerOnSharedPreferenceChangeListener(listener)
@@ -187,6 +209,26 @@ fun ViewerScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var isScrubbing by remember { mutableStateOf(false) }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    val homeAppearancePrefs = remember(context.applicationContext) {
+        context.getSharedPreferences("neuroview_home_appearance_v1", Context.MODE_PRIVATE)
+    }
+    var autoRotate by remember(homeAppearancePrefs) {
+        mutableStateOf(homeAppearancePrefs.getBoolean("rotate", true))
+    }
+    var glowEnabled by remember(homeAppearancePrefs) {
+        mutableStateOf(homeAppearancePrefs.getBoolean("glow", true))
+    }
+    DisposableEffect(homeAppearancePrefs) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { preferences, key ->
+            when (key) {
+                "rotate" -> autoRotate = preferences.getBoolean("rotate", true)
+                "glow" -> glowEnabled = preferences.getBoolean("glow", true)
+            }
+        }
+        homeAppearancePrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { homeAppearancePrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
 
     val ready = volumeState as? VolumeLoadState.Ready
     val volume = ready?.volume
@@ -296,6 +338,11 @@ fun ViewerScreen(
                                 Icon(Icons.Default.Menu, contentDescription = "Open navigation menu")
                             }
                         },
+                        actions = {
+                            IconButton(onClick = { settingsOpen = true }) {
+                                Icon(Icons.Default.Settings, contentDescription = "Viewer settings")
+                            }
+                        },
                         colors = TopAppBarDefaults.topAppBarColors(
                             containerColor = Color.Transparent,
                         ),
@@ -320,6 +367,12 @@ fun ViewerScreen(
                             focusMode = focusMode,
                             onFocusToggle = { focusMode = !focusMode },
                             showOrientationMarkers = showOrientationMarkers,
+                            probeCrosshairEnabled = probeCrosshairEnabled,
+                            onProbeCrosshairChange = { enabled ->
+                                probeCrosshairEnabled = enabled
+                                displayPrefs.edit().putBoolean(PROBE_CROSSHAIR_ENABLED_KEY, enabled).apply()
+                            },
+                            crosshairThicknessDp = crosshairThicknessDp,
                             volume = volumeState.volume,
                             plane = plane,
                             bitmap = bitmap,
@@ -342,6 +395,25 @@ fun ViewerScreen(
                 }
             }
         }
+    }
+
+    if (settingsOpen) {
+        NeuroViewSettingsSheet(
+            autoRotate = autoRotate,
+            onAutoRotateChange = { enabled ->
+                autoRotate = enabled
+                homeAppearancePrefs.edit().putBoolean("rotate", enabled).apply()
+            },
+            glowEnabled = glowEnabled,
+            onGlowEnabledChange = { enabled ->
+                glowEnabled = enabled
+                homeAppearancePrefs.edit().putBoolean("glow", enabled).apply()
+            },
+            onResetBrainOrientation = null,
+            onClearCache = onClearCache,
+            scrollToViewerSettings = true,
+            onDismiss = { settingsOpen = false },
+        )
     }
 }
 
@@ -461,6 +533,9 @@ private fun MriContent(
     focusMode: Boolean,
     onFocusToggle: () -> Unit,
     showOrientationMarkers: Boolean,
+    probeCrosshairEnabled: Boolean,
+    onProbeCrosshairChange: (Boolean) -> Unit,
+    crosshairThicknessDp: Float,
     volume: NiftiVolume,
     plane: MriPlane,
     bitmap: Bitmap?,
@@ -486,11 +561,19 @@ private fun MriContent(
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
     var zoomMode by remember(volume) { mutableStateOf(false) }
-    var probeMode by remember(volume) { mutableStateOf(false) }
     var probeReading by remember(volume) { mutableStateOf<String?>(null) }
     var scale by remember(volume, plane) { mutableFloatStateOf(DEFAULT_MRI_IMAGE_SCALE) }
     var panOffset by remember(volume, plane) { mutableStateOf(Offset.Zero) }
     var imageViewport by remember { mutableStateOf(IntSize.Zero) }
+    LaunchedEffect(probeCrosshairEnabled, volume) {
+        probeReading = null
+        onReferenceWorldChange(null)
+        if (probeCrosshairEnabled) {
+            zoomMode = false
+            scale = DEFAULT_MRI_IMAGE_SCALE
+            panOffset = Offset.Zero
+        }
+    }
     val orientationUnknown = volume.transformSource.startsWith("NO ORIENTATION")
     val sliceSliderInteractionSource = remember { MutableInteractionSource() }
     val sliceSliderColors = SliderDefaults.colors(
@@ -551,8 +634,8 @@ private fun MriContent(
                         panOffset = Offset.Zero
                     })
                 }
-                .pointerInput(volume, plane, totalSlices, zoomMode, probeMode, bitmap) {
-                    if (probeMode) {
+                .pointerInput(volume, plane, totalSlices, zoomMode, probeCrosshairEnabled, bitmap) {
+                    if (probeCrosshairEnabled) {
                         detectTapGestures(onTap = { tap ->
                             val image = bitmap
                             if (image != null && imageViewport.width > 0 && imageViewport.height > 0) {
@@ -727,7 +810,7 @@ private fun MriContent(
                 )
             }
             val reference = referenceWorld
-            if (probeMode && reference != null && bitmap != null && imageViewport.width > 0) {
+            if (probeCrosshairEnabled && reference != null && bitmap != null && imageViewport.width > 0) {
                 val position = MprRenderer.slicePosition(volume, plane, currentSlice)
                 val count = MprRenderer.sliceCount(volume, plane)
                 val bounds = volume.affine.bounds(volume.nx, volume.ny, volume.nz)
@@ -749,8 +832,18 @@ private fun MriContent(
                         y in 0f..imageViewport.height.toFloat()) {
                         Canvas(Modifier.fillMaxSize()) {
                             val lineColor = NeuroChrome.accent.copy(alpha = 0.65f)
-                            drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), 1.dp.toPx())
-                            drawLine(lineColor, Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
+                            drawLine(
+                                lineColor,
+                                Offset(x, 0f),
+                                Offset(x, size.height),
+                                crosshairThicknessDp.dp.toPx(),
+                            )
+                            drawLine(
+                                lineColor,
+                                Offset(0f, y),
+                                Offset(size.width, y),
+                                crosshairThicknessDp.dp.toPx(),
+                            )
                         }
                     }
                 }
@@ -761,7 +854,7 @@ private fun MriContent(
                     modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
                 ) { Text("Exit focus", color = NeuroChrome.accent) }
             }
-            if (probeMode) {
+            if (probeCrosshairEnabled) {
                 Surface(
                     modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)
                         .fillMaxWidth(0.68f),
@@ -913,7 +1006,7 @@ private fun MriContent(
             ) {
                 TextButton(onClick = {
                     zoomMode = !zoomMode
-                    probeMode = false
+                    if (probeCrosshairEnabled) onProbeCrosshairChange(false)
                     onReferenceWorldChange(null)
                     scale = DEFAULT_MRI_IMAGE_SCALE
                     panOffset = Offset.Zero
@@ -991,43 +1084,6 @@ private fun MriContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                HorizontalDivider(color = NeuroChrome.stroke.copy(alpha = 0.65f))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text("Probe Crosshair", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "Tap a slice to show voxel coordinates, intensity, and a crosshair reference.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        modifier = Modifier.semantics {
-                            contentDescription = "Probe Crosshair"
-                        },
-                        checked = probeMode,
-                        onCheckedChange = { enabled ->
-                            probeMode = enabled
-                            if (enabled) {
-                                zoomMode = false
-                                scale = DEFAULT_MRI_IMAGE_SCALE
-                                panOffset = Offset.Zero
-                                probeReading = null
-                            } else {
-                                onReferenceWorldChange(null)
-                                probeReading = null
-                            }
-                            showAdjustments = false
-                        },
-                    )
-                }
                 HorizontalDivider(color = NeuroChrome.stroke.copy(alpha = 0.65f))
                 Text("Display presets", style = MaterialTheme.typography.titleSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

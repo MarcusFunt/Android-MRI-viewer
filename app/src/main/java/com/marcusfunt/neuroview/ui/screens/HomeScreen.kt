@@ -39,7 +39,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -59,7 +58,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import android.content.Context
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import com.marcusfunt.neuroview.ui.BrainPreview
 
 private val Navy = Color(0xFF060F1A)
@@ -85,11 +83,6 @@ fun HomeScreen(
     val preferences = remember(context.applicationContext) {
         context.getSharedPreferences("neuroview_home_appearance_v1", Context.MODE_PRIVATE)
     }
-    val viewerDisplayPreferences = remember(context.applicationContext) {
-        context.getSharedPreferences(VIEWER_DISPLAY_PREFERENCES, Context.MODE_PRIVATE)
-    }
-    val scope = rememberCoroutineScope()
-    var cacheStatus by remember { mutableStateOf<String?>(null) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var autoRotate by rememberSaveable {
         mutableStateOf(preferences.getBoolean("rotate", true))
@@ -97,8 +90,15 @@ fun HomeScreen(
     var glowEnabled by rememberSaveable {
         mutableStateOf(preferences.getBoolean("glow", true))
     }
-    var showOrientationMarkers by rememberSaveable {
-        mutableStateOf(viewerDisplayPreferences.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false))
+    androidx.compose.runtime.DisposableEffect(preferences) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
+            when (key) {
+                "rotate" -> autoRotate = prefs.getBoolean("rotate", true)
+                "glow" -> glowEnabled = prefs.getBoolean("glow", true)
+            }
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     var resetRequest by rememberSaveable { mutableIntStateOf(0) }
 
@@ -312,97 +312,22 @@ fun HomeScreen(
     }
 
     if (settingsOpen) {
-        ModalBottomSheet(
-            onDismissRequest = { settingsOpen = false },
-            containerColor = Color(0xFF101F30),
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(13.dp),
-            ) {
-                Text(
-                    "Settings",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = Foreground,
-                )
-                Text(
-                    "Appearance, privacy and local storage. These settings do not modify your MRI files.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Secondary,
-                )
-                Text("Home appearance", style = MaterialTheme.typography.titleMedium, color = Foreground)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Automatically rotate brain", modifier = Modifier.weight(1f), color = Foreground)
-                    Switch(checked = autoRotate, onCheckedChange = { autoRotate = it; preferences.edit().putBoolean("rotate", it).apply() })
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Ambient background glow", modifier = Modifier.weight(1f), color = Foreground)
-                    Switch(checked = glowEnabled, onCheckedChange = { glowEnabled = it; preferences.edit().putBoolean("glow", it).apply() })
-                }
-                TextButton(onClick = { resetRequest++ }) {
-                    Text("Reset brain orientation", color = Cyan)
-                }
-                Text("MRI viewer", style = MaterialTheme.typography.titleMedium, color = Foreground)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text("Orientation markers", color = Foreground)
-                        Text(
-                            "Show R/L and A/P labels around MRI slices.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Secondary,
-                        )
-                    }
-                    Switch(
-                        checked = showOrientationMarkers,
-                        onCheckedChange = { enabled ->
-                            showOrientationMarkers = enabled
-                            viewerDisplayPreferences.edit()
-                                .putBoolean(SHOW_ORIENTATION_MARKERS_KEY, enabled)
-                                .apply()
-                        },
-                    )
-                }
-                Text("Privacy & storage", style = MaterialTheme.typography.titleMedium, color = Foreground)
-                Text(
-                    "Scanning, viewing and format conversion run locally. " +
-                        "Optional BrainSuite processing only uploads after your explicit consent.",
-                    style = MaterialTheme.typography.bodySmall, color = Secondary,
-                )
-                TextButton(onClick = {
-                    scope.launch {
-                        cacheStatus = try {
-                            "Cleared ${onClearCache()} generated MRI previews. Original files unchanged."
-                        } catch (error: Exception) {
-                            "Could not clear previews: ${error.message ?: "Unknown error"}"
-                        }
-                    }
-                }) {
-                    Text("Clear cached MRI previews", color = Cyan)
-                }
-                cacheStatus?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = Secondary)
-                }
-                Text(
-                    "NeuroView is for exploration and research, not medical diagnosis.",
-                    style = MaterialTheme.typography.bodySmall, color = Secondary,
-                )
-                Button(
-                    onClick = { settingsOpen = false },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                ) { Text("Done") }
-                Spacer(Modifier.height(10.dp))
-            }
-        }
+        NeuroViewSettingsSheet(
+            autoRotate = autoRotate,
+            onAutoRotateChange = { enabled ->
+                autoRotate = enabled
+                preferences.edit().putBoolean("rotate", enabled).apply()
+            },
+            glowEnabled = glowEnabled,
+            onGlowEnabledChange = { enabled ->
+                glowEnabled = enabled
+                preferences.edit().putBoolean("glow", enabled).apply()
+            },
+            onResetBrainOrientation = { resetRequest++ },
+            onClearCache = onClearCache,
+            scrollToViewerSettings = false,
+            onDismiss = { settingsOpen = false },
+        )
     }
 }
 

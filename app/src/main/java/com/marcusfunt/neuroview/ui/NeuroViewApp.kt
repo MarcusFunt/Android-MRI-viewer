@@ -290,6 +290,7 @@ fun NeuroViewApp() {
                         }?.label,
                         onImport = chooseDocuments,
                         onNavigate = navigate,
+                        onClearCache = { catalog.clearThumbnailCache() },
                     )
                 }
             },
