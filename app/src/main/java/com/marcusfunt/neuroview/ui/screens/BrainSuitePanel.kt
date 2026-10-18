@@ -43,12 +43,16 @@ import kotlinx.coroutines.withContext
  * BrainSuite's Linux/Docker code is not bundled into the Android APK.
  */
 @Composable
-fun BrainSuitePanel(documentUri: String?, documentName: String?) {
+fun BrainSuitePanel(
+    documentUri: String?,
+    documentName: String?,
+    accessToken: String,
+    onAccessTokenChange: (String) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var address by rememberSaveable { mutableStateOf("") }
     // Don't retain the access secret through Android saved-instance-state.
-    var token by remember { mutableStateOf("") }
     var stage by rememberSaveable { mutableStateOf("CSE") }
     var consent by rememberSaveable { mutableStateOf(false) }
     var jobId by rememberSaveable { mutableStateOf("") }
@@ -56,7 +60,7 @@ fun BrainSuitePanel(documentUri: String?, documentName: String?) {
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
 
-    fun client() = BrainSuiteClient(address, token)
+    fun client() = BrainSuiteClient(address, accessToken)
 
     fun perform(operation: suspend () -> Unit) {
         if (busy) return
@@ -141,8 +145,8 @@ fun BrainSuitePanel(documentUri: String?, documentName: String?) {
             enabled = !busy,
         )
         OutlinedTextField(
-            value = token,
-            onValueChange = { token = it; jobStatus = null },
+            value = accessToken,
+            onValueChange = { onAccessTokenChange(it); jobStatus = null },
             label = { Text("Access token (not saved)") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
