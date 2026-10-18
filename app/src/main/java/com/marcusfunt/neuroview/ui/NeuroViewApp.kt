@@ -28,6 +28,7 @@ import androidx.navigation3.ui.NavDisplay
 import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
+import com.marcusfunt.neuroview.catalog.ImportBatchProgress
 import com.marcusfunt.neuroview.mri.MriMemoryBudget
 import com.marcusfunt.neuroview.mri.NiftiReadOptions
 import com.marcusfunt.neuroview.mri.NiftiReadProgress
@@ -204,6 +205,10 @@ fun NeuroViewApp() {
     }
     var snapshot by remember { mutableStateOf(catalog.load()) }
     var importBusy by remember { mutableStateOf(false) }
+    var importProgress by remember { mutableStateOf<ImportBatchProgress?>(null) }
+    var importOperation by remember { mutableStateOf<OperationSnapshot?>(null) }
+    var importCancellationSignal by remember { mutableStateOf<CancellationSignal?>(null) }
+    var importCancelRequestedAt by remember { mutableStateOf<Long?>(null) }
     var editBusy by remember { mutableStateOf(false) }
     var libraryMessage by remember { mutableStateOf<String?>(null) }
     var importMessage by remember { mutableStateOf<String?>(null) }
@@ -245,6 +250,27 @@ fun NeuroViewApp() {
     var loadAttempt by remember { mutableIntStateOf(0) }
     var activeLoadSession by remember { mutableStateOf<ViewerLoadSession?>(null) }
     val viewerVisible = backStack.lastOrNull() is Destination.Viewer
+
+    DisposableEffect(catalog, viewerVisible) {
+        catalog.setViewerPriority(viewerVisible)
+        onDispose {
+            if (viewerVisible) catalog.setViewerPriority(false)
+        }
+    }
+
+    LaunchedEffect(importBusy, importOperation?.id) {
+        val operationId = importOperation?.id ?: return@LaunchedEffect
+        while (isActive) {
+            delay(250L)
+            val current = operationCoordinator.state(operationId) ?: break
+            if (current.status.isTerminal) break
+            operationCoordinator.classifyStall(
+                operationId,
+                waitingForProvider = current.status == OperationStatus.WAITING_FOR_PROVIDER,
+            )
+            importOperation = operationCoordinator.state(operationId)
+        }
+    }
 
     LaunchedEffect(selectedUri, viewerVisible, loadAttempt) {
         val source = selectedUri
@@ -540,32 +566,143 @@ fun NeuroViewApp() {
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { documents ->
-        if (documents.isNotEmpty()) {
+        if (documents.isNotEmpty() && !importBusy) {
             importBusy = true
             importMessage = null
+            val operationId = operationCoordinator.begin(
+                OperationKind.IMPORT_BATCH,
+                OperationStage.IMPORTING_FILE,
+            )
+            val totalFiles = documents.distinctBy { it.toString() }.take(64).size
+            val signal = CancellationSignal()
+            val initialProgress = ImportBatchProgress(
+                filesProcessed = 0,
+                totalFiles = totalFiles,
+                currentFileName = null,
+                added = 0,
+                skipped = 0,
+                failed = 0,
+            )
+            if (totalFiles > 0) {
+                operationCoordinator.reportProgress(
+                    operationId,
+                    OperationStage.IMPORTING_FILE,
+                    OperationProgress(0, totalFiles.toLong(), OperationUnit.FILES),
+                )
+            }
+            importProgress = initialProgress
+            importOperation = requireNotNull(operationCoordinator.state(operationId))
+            importCancellationSignal = signal
+            importCancelRequestedAt = null
+            if (backStack.lastOrNull() !is Destination.Library) navigate(Destination.Library)
             scope.launch {
-                try {
-                    val result = catalog.importDocuments(documents)
-                    snapshot = catalog.load()
-                    val summary = "Added ${result.added} NIfTI series; " +
-                        "skipped ${result.skipped} duplicate or unsupported files."
-                    importMessage = if (result.errors.isEmpty()) {
-                        summary
-                    } else {
-                        summary + "\n" + result.errors.joinToString("\n")
+                val cancellationBridge = launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        signal.cancel()
                     }
-                    navigate(Destination.Series)
+                }
+                try {
+                    val result = catalog.importDocuments(
+                        documents = documents,
+                        cancellationSignal = signal,
+                        onProgress = { progress ->
+                            withContext(Dispatchers.Main) {
+                                importProgress = progress
+                                if (progress.waitingForProvider) {
+                                    val state = operationCoordinator.state(operationId)
+                                    if (state != null && !state.status.isTerminal &&
+                                        state.status != OperationStatus.WAITING_FOR_PROVIDER
+                                    ) {
+                                        operationCoordinator.transition(
+                                            operationId,
+                                            OperationStatus.WAITING_FOR_PROVIDER,
+                                        )
+                                    }
+                                } else if (progress.totalFiles > 0) {
+                                    operationCoordinator.reportProgress(
+                                        operationId,
+                                        OperationStage.IMPORTING_FILE,
+                                        OperationProgress(
+                                            progress.filesProcessed.toLong(),
+                                            progress.totalFiles.toLong(),
+                                            OperationUnit.FILES,
+                                        ),
+                                    )
+                                }
+                                importOperation = operationCoordinator.state(operationId)
+                            }
+                        },
+                        onCatalogChanged = { updated ->
+                            withContext(Dispatchers.Main) { snapshot = updated }
+                        },
+                    )
+                    snapshot = catalog.load()
+                    if (result.canceled || signal.isCanceled) {
+                        val state = operationCoordinator.state(operationId)
+                        if (state?.status != OperationStatus.CANCELING) {
+                            operationCoordinator.requestCancel(operationId)
+                        }
+                        operationCoordinator.confirmCanceled(operationId)
+                        importMessage = "Import canceled after ${importProgress?.filesProcessed ?: 0} " +
+                            "of $totalFiles files. ${result.added} accepted MRI entries were kept."
+                    } else {
+                        operationCoordinator.succeed(operationId)
+                        val summary = "Added ${result.added} MRI entries; " +
+                            "skipped ${result.skipped}; ${result.failed} failed."
+                        importMessage = if (result.errors.isEmpty()) summary else {
+                            summary + "\n" + result.errors.joinToString("\n")
+                        }
+                    }
+                } catch (canceled: CancellationException) {
+                    if (operationCoordinator.isCurrent(operationId)) {
+                        val state = operationCoordinator.state(operationId)
+                        if (state != null && !state.status.isTerminal) {
+                            if (state.status != OperationStatus.CANCELING) {
+                                operationCoordinator.requestCancel(operationId)
+                            }
+                            operationCoordinator.confirmCanceled(operationId)
+                        }
+                    }
+                    throw canceled
                 } catch (exception: Exception) {
-                    importMessage = exception.message ?: "Import failed"
-                    navigate(Destination.Series)
+                    if (operationCoordinator.isCurrent(operationId)) {
+                        val failure = OperationFailure(
+                            kind = OperationFailureKind.PROVIDER_ERROR,
+                            safeMessage = "NeuroView could not finish checking the selected files. Check access and try again.",
+                            retryable = true,
+                            actions = setOf(RecoveryAction.RETRY, RecoveryAction.RECONNECT_SOURCE),
+                        )
+                        operationCoordinator.fail(operationId, failure)
+                    }
+                    importMessage = "Import failed. Check access to the selected files and try again."
                 } finally {
+                    cancellationBridge.cancel()
                     importBusy = false
+                    importProgress = null
+                    importOperation = null
+                    importCancellationSignal = null
+                    importCancelRequestedAt = null
                 }
             }
         }
     }
     val chooseDocuments: () -> Unit = {
-        if (!importBusy && !conversions.busy) picker.launch(arrayOf("*/*"))
+        if (!importBusy && !editBusy && !conversions.busy) picker.launch(arrayOf("*/*"))
+    }
+
+    fun cancelImport() {
+        val operation = importOperation ?: return
+        val progress = importProgress ?: return
+        if (progress.currentFileName == null && progress.filesProcessed >= progress.totalFiles) return
+        if (operation.status != OperationStatus.CANCELING &&
+            operationCoordinator.requestCancel(operation.id)
+        ) {
+            importCancelRequestedAt = SystemMonotonicClock.nowMs()
+            importOperation = operationCoordinator.state(operation.id)
+            importCancellationSignal?.cancel()
+        }
     }
 
     val openScan: (ScanRecord) -> Unit = { scan ->
@@ -607,9 +744,13 @@ fun NeuroViewApp() {
                     LibraryScreen(
                         snapshot = snapshot,
                         catalog = catalog,
-                        isBusy = importBusy || editBusy || conversions.busy,
+                        isBusy = editBusy || conversions.busy,
+                        isImporting = importBusy,
+                        importProgress = importProgress,
+                        importOperation = importOperation,
+                        importCancelRequestedAtElapsedMs = importCancelRequestedAt,
+                        onCancelImport = ::cancelImport,
                         activityLabel = when {
-                            importBusy -> "Importing MRI files…"
                             conversions.busy -> conversions.message ?: "Converting MRI data…"
                             editBusy -> "Updating library…"
                             else -> null

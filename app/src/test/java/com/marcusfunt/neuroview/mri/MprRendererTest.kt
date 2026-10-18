@@ -2,8 +2,10 @@ package com.marcusfunt.neuroview.mri
 
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CancellationException
 
 class MprRendererTest {
     private fun sampleVolume(affine: SpatialAffine = SpatialAffine.axisAligned(1.0, 1.0, 1.0)): NiftiVolume {
@@ -67,5 +69,19 @@ class MprRendererTest {
         assertEquals(expected, v.sample(0.5, 0.0, 0.0))
         assertEquals(0f, v.sample(-2.0, 0.0, 0.0))
         assertEquals(0f, v.sample(8.0, 0.0, 0.0))
+    }
+
+    @Test fun previewRenderChecksCancellationAtRowBoundaries() {
+        var checks = 0
+        assertThrows(CancellationException::class.java) {
+            MprRenderer.render(
+                sampleVolume(), MriPlane.AXIAL, 2, maxSide = 32,
+                cancellationCheck = {
+                    checks++
+                    if (checks == 3) throw CancellationException("Cancel thumbnail rendering")
+                },
+            )
+        }
+        assertEquals(3, checks)
     }
 }

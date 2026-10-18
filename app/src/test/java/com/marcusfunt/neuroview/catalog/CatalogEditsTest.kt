@@ -91,4 +91,40 @@ class CatalogEditsTest {
         assertEquals(0, after.inCollection("a").size)
         assertTrue(after.collections.any { it.id == "a" })
     }
+
+    @Test fun eachImportedFileCanBeCommittedBeforeTheBatchFinishes() {
+        val original = ScanCatalogSnapshot()
+        val proposed = ImportCollection("batch", "Import", 10L)
+        val first = commitImportedRecord(
+            snapshot = original,
+            batchCollection = null,
+            proposedCollection = proposed,
+            record = ScanRecord("one", "", "content://nifti/one", "one.nii", metadata),
+        )
+
+        // If cancellation happens now, the already committed record remains available.
+        assertEquals(listOf("one"), first.snapshot.scans.map { it.id })
+        assertEquals("batch", first.snapshot.scans.single().collectionId)
+        assertEquals(0, original.scans.size)
+
+        val second = commitImportedRecord(
+            snapshot = first.snapshot,
+            batchCollection = first.collection,
+            proposedCollection = ImportCollection("unused", "unused", 11L),
+            record = ScanRecord("two", "", "content://nifti/two", "two.nii", metadata),
+        )
+
+        assertEquals(listOf("two", "one"), second.snapshot.scans.map { it.id })
+        assertEquals(1, second.snapshot.collections.size)
+        assertTrue(second.snapshot.scans.all { it.collectionId == "batch" })
+    }
+
+    @Test fun importProgressRejectsImpossibleFileCounts() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ImportBatchProgress(-1, 2, null, 0, 0, 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ImportBatchProgress(3, 2, null, 0, 0, 0)
+        }
+    }
 }

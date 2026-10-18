@@ -64,6 +64,7 @@ import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
 import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
 
@@ -353,10 +354,14 @@ private fun ScanSeriesCard(scan: ScanRecord, catalog: ScanCatalog, onClick: () -
 
 @Composable
 internal fun ScanThumbnail(scan: ScanRecord, catalog: ScanCatalog) {
-    data class Preview(val bitmap: android.graphics.Bitmap?, val loaded: Boolean)
-    val preview by produceState(Preview(null, false), scan.id) {
-        val result = runCatching { catalog.loadThumbnail(scan) }.getOrNull()
-        value = Preview(result, true)
+    val preview by produceState<android.graphics.Bitmap?>(null, scan.id) {
+        try {
+            value = catalog.loadThumbnail(scan)
+        } catch (canceled: CancellationException) {
+            throw canceled
+        } catch (_: Exception) {
+            value = null
+        }
     }
     Box(
         modifier = Modifier.size(90.dp)
@@ -364,14 +369,12 @@ internal fun ScanThumbnail(scan: ScanRecord, catalog: ScanCatalog) {
             .background(Color(0xFF03080D)),
         contentAlignment = Alignment.Center,
     ) {
-        if (!preview.loaded) {
-            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-        } else if (preview.bitmap == null) {
-            Text("No preview", color = NeuroChrome.muted,
+        if (preview == null) {
+            Text("MRI", color = NeuroChrome.muted,
                 style = MaterialTheme.typography.labelSmall)
         } else {
             Image(
-                bitmap = preview.bitmap!!.asImageBitmap(),
+                bitmap = preview!!.asImageBitmap(),
                 contentDescription = "MRI preview of ${scan.label}",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,

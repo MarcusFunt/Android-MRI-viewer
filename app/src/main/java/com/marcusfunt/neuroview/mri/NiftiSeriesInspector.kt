@@ -33,7 +33,7 @@ object NiftiSeriesInspector {
         1024 to ("int64" to 64),
     )
 
-    fun inspect(input: InputStream): NiftiSeriesMetadata {
+    fun inspect(input: InputStream, cancellationCheck: () -> Unit = {}): NiftiSeriesMetadata {
         val source = BufferedInputStream(input, 8192)
         source.mark(2)
         val gzip = source.read() == 0x1f && source.read() == 0x8b
@@ -41,8 +41,16 @@ object NiftiSeriesInspector {
         val raw = if (gzip) GZIPInputStream(source, 8192) else source
 
         DataInputStream(raw).use { stream ->
+            cancellationCheck()
             val bytes = ByteArray(348)
-            stream.readFully(bytes)
+            var offset = 0
+            while (offset < bytes.size) {
+                cancellationCheck()
+                val count = stream.read(bytes, offset, bytes.size - offset)
+                if (count < 0) throw java.io.EOFException()
+                if (count == 0) continue
+                offset += count
+            }
             val little = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
             val order = when {
                 little.getInt(0) == 348 -> ByteOrder.LITTLE_ENDIAN

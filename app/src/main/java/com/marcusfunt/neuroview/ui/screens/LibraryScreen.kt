@@ -34,6 +34,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -64,9 +66,14 @@ import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
 import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
 import com.marcusfunt.neuroview.catalog.ImportCollection
+import com.marcusfunt.neuroview.catalog.ImportBatchProgress
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanRecord
+import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
+import com.marcusfunt.neuroview.ui.operations.OperationStatus
+import com.marcusfunt.neuroview.ui.operations.SystemMonotonicClock
+import kotlinx.coroutines.delay
 
 private sealed interface LibraryDialog {
     data object CreateCollection : LibraryDialog
@@ -84,6 +91,11 @@ fun LibraryScreen(
     snapshot: ScanCatalogSnapshot,
     catalog: ScanCatalog,
     isBusy: Boolean,
+    isImporting: Boolean,
+    importProgress: ImportBatchProgress?,
+    importOperation: OperationSnapshot?,
+    importCancelRequestedAtElapsedMs: Long?,
+    onCancelImport: () -> Unit,
     activityLabel: String? = null,
     feedback: String?,
     onImport: () -> Unit,
@@ -152,10 +164,12 @@ fun LibraryScreen(
             )
         },
     ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).neuroWorkspaceBackground(),
+            modifier = Modifier.fillMaxSize().neuroWorkspaceBackground(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                start = 16.dp, end = 16.dp, top = 12.dp, bottom = 28.dp,
+                start = 16.dp, end = 16.dp, top = 12.dp,
+                bottom = if (importProgress != null && importOperation != null) 150.dp else 28.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -177,7 +191,7 @@ fun LibraryScreen(
                     }
                     Button(
                         onClick = onImport,
-                        enabled = !isBusy,
+                        enabled = !isBusy && !isImporting,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                     ) { Text("Import MRI volumes") }
                     if (conversionOpen) {
@@ -196,10 +210,10 @@ fun LibraryScreen(
                                     style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted,
                                 )
                                 OutlinedButton(
-                                    onClick = onConvertDicom, enabled = !isBusy,
+                                    onClick = onConvertDicom, enabled = !isBusy && !isImporting,
                                     modifier = Modifier.fillMaxWidth(),
                                 ) { Text("Select DICOM folder") }
-                                TextButton(onClick = onConvertDicomFiles, enabled = !isBusy) {
+                                TextButton(onClick = onConvertDicomFiles, enabled = !isBusy && !isImporting) {
                                     Text("Select DICOM files instead")
                                 }
                             }
@@ -264,7 +278,10 @@ fun LibraryScreen(
                         }
                     }
                     if (mode == "Collections") {
-                        TextButton(onClick = { dialog = LibraryDialog.CreateCollection }, enabled = !isBusy) {
+                        TextButton(
+                            onClick = { dialog = LibraryDialog.CreateCollection },
+                            enabled = !isBusy && !isImporting,
+                        ) {
                             Text("+ New collection")
                         }
                     }
@@ -299,7 +316,7 @@ fun LibraryScreen(
             } else if (mode == "All") {
                 items(ordered, key = { "all-${it.id}" }) { scan ->
                     LibraryScanRow(
-                        scan = scan, catalog = catalog, busy = isBusy,
+                    scan = scan, catalog = catalog, busy = isBusy || isImporting,
                         onOpen = { onOpenScan(scan) },
                         onRename = { dialog = LibraryDialog.RenameScan(scan) },
                         onMove = { dialog = LibraryDialog.MoveScan(scan) },
@@ -341,12 +358,12 @@ fun LibraryScreen(
                                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                             DropdownMenuItem(
                                                 text = { Text("Rename collection") },
-                                                enabled = !isBusy,
+                                                enabled = !isBusy && !isImporting,
                                                 onClick = { menu = false; dialog = LibraryDialog.RenameCollection(collection) },
                                             )
                                             DropdownMenuItem(
                                                 text = { Text("Remove collection") },
-                                                enabled = !isBusy,
+                                                enabled = !isBusy && !isImporting,
                                                 onClick = { menu = false; dialog = LibraryDialog.RemoveCollection(collection, snapshot.inCollection(collection.id).size) },
                                             )
                                         }
@@ -357,7 +374,7 @@ fun LibraryScreen(
                         if (expanded[collection.id] != false) {
                             items(records, key = { "collection-scan-${it.id}" }) { scan ->
                                 LibraryScanRow(
-                                    scan = scan, catalog = catalog, busy = isBusy,
+                                    scan = scan, catalog = catalog, busy = isBusy || isImporting,
                                     onOpen = { onOpenScan(scan) },
                                     onRename = { dialog = LibraryDialog.RenameScan(scan) },
                                     onMove = { dialog = LibraryDialog.MoveScan(scan) },
@@ -372,7 +389,7 @@ fun LibraryScreen(
             if (snapshot.scans.isNotEmpty()) {
                 item(key = "library-footer") {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TextButton(onClick = onClearThumbnails, enabled = !isBusy) {
+                        TextButton(onClick = onClearThumbnails, enabled = !isBusy && !isImporting) {
                             Text("Clear preview cache")
                         }
                         Text(
@@ -383,6 +400,16 @@ fun LibraryScreen(
                     }
                 }
             }
+        }
+        if (importProgress != null && importOperation != null) {
+            ImportProgressStrip(
+                progress = importProgress,
+                operation = importOperation,
+                cancelRequestedAtElapsedMs = importCancelRequestedAtElapsedMs,
+                onCancel = onCancelImport,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+            )
+        }
         }
     }
 
@@ -439,7 +466,7 @@ fun LibraryScreen(
                                     onMoveScan(current.scan.id, group.id)
                                     dialog = null
                                 },
-                                enabled = !isBusy,
+                                enabled = !isBusy && !isImporting,
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text(group.label) }
                         }
@@ -467,7 +494,7 @@ fun LibraryScreen(
                         onRemoveScan(current.scan.id)
                         dialog = null
                     },
-                    enabled = !isBusy,
+                    enabled = !isBusy && !isImporting,
                 ) { Text("Remove reference") }
             },
             dismissButton = { TextButton(onClick = { dialog = null }) { Text("Cancel") } },
@@ -488,7 +515,7 @@ fun LibraryScreen(
                         onRemoveCollection(current.collection.id)
                         dialog = null
                     },
-                    enabled = !isBusy,
+                    enabled = !isBusy && !isImporting,
                 ) { Text("Remove collection & entries") }
             },
             dismissButton = { TextButton(onClick = { dialog = null }) { Text("Cancel") } },
@@ -535,4 +562,99 @@ private fun NameEditDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+@Composable
+internal fun ImportProgressStrip(
+    progress: ImportBatchProgress,
+    operation: OperationSnapshot,
+    cancelRequestedAtElapsedMs: Long?,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var elapsedNow by remember(operation.id) {
+        mutableLongStateOf(SystemMonotonicClock.nowMs())
+    }
+    LaunchedEffect(operation.id) {
+        while (true) {
+            elapsedNow = SystemMonotonicClock.nowMs()
+            delay(1_000L)
+        }
+    }
+    val fraction = if (progress.totalFiles == 0) 0f else {
+        progress.filesProcessed.toFloat() / progress.totalFiles.toFloat()
+    }.coerceIn(0f, 1f)
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = NeuroChrome.raised,
+        border = BorderStroke(1.dp, NeuroChrome.stroke),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Importing MRI files",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                if (operation.status == OperationStatus.CANCELING) {
+                    Text("Stopping…", color = NeuroChrome.muted, style = MaterialTheme.typography.labelLarge)
+                } else {
+                    TextButton(onClick = onCancel) { Text("CANCEL") }
+                }
+            }
+            Text(
+                progress.currentFileName?.let {
+                    "Checking $it · file ${progress.filesProcessed + 1} of ${progress.totalFiles}"
+                } ?: "Checked ${progress.filesProcessed} of ${progress.totalFiles} files",
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                color = NeuroChrome.ink,
+            )
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.fillMaxWidth(),
+                color = NeuroChrome.accent,
+                trackColor = NeuroChrome.stroke.copy(alpha = 0.55f),
+            )
+            Text(
+                "${progress.added} added · ${progress.skipped} skipped · ${progress.failed} failed",
+                style = MaterialTheme.typography.labelSmall,
+                color = NeuroChrome.muted,
+            )
+            val statusMessage = when (operation.status) {
+                OperationStatus.WAITING_FOR_PROVIDER -> "Waiting for the selected file provider…"
+                OperationStatus.SLOW -> "Taking longer than usual"
+                OperationStatus.SUSPECTED_STALL -> "This file check may be stuck"
+                else -> null
+            }
+            statusMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted)
+            }
+            if (operation.status == OperationStatus.CANCELING &&
+                cancelRequestedAtElapsedMs != null &&
+                elapsedNow - cancelRequestedAtElapsedMs >= 8_000L
+            ) {
+                Text(
+                    "The file provider has not confirmed cancellation. The Library remains available.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NeuroChrome.muted,
+                )
+            }
+            val elapsedSeconds = ((elapsedNow - operation.startedAtElapsedMs).coerceAtLeast(0L) / 1_000L)
+            Text(
+                "Elapsed ${String.format(java.util.Locale.ROOT, "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = NeuroChrome.muted,
+            )
+        }
+    }
 }

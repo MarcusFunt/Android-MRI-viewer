@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.CancellationException
 import java.util.zip.GZIPOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -122,5 +123,34 @@ class NiftiSeriesInspectorTest {
         header.put(346, '1'.code.toByte())
         val result = NiftiSeriesInspector.inspect(ByteArrayInputStream(header.array()))
         assertEquals(listOf(1024, 1024, 130), result.dimensions)
+    }
+
+    @Test fun headerInspectionCanCancelAfterProviderProgressAndClosesInput() {
+        var closed = false
+        var bytesReturned = 0
+        var cancellationRequested = false
+        val input = object : ByteArrayInputStream(niftiHeader()) {
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                val count = super.read(buffer, offset, minOf(1, length))
+                if (count > 0) {
+                    bytesReturned += count
+                    if (bytesReturned >= 1) cancellationRequested = true
+                }
+                return count
+            }
+
+            override fun close() {
+                closed = true
+                super.close()
+            }
+        }
+        assertThrows(CancellationException::class.java) {
+            NiftiSeriesInspector.inspect(input) {
+                if (cancellationRequested) throw CancellationException("Stop import header inspection")
+            }
+        }
+
+        assertTrue(bytesReturned >= 1)
+        assertTrue(closed)
     }
 }

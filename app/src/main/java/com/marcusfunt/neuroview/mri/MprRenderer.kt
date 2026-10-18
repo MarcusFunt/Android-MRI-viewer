@@ -44,6 +44,7 @@ object MprRenderer {
         windowCenter: Float = 0.5f,
         windowWidth: Float = 1f,
         maxSide: Int = MAX_IMAGE_SIDE,
+        cancellationCheck: () -> Unit = {},
     ): MprImage {
         require(maxSide in 8..1024)
         val bounds = volume.affine.bounds(volume.nx, volume.ny, volume.nz)
@@ -66,6 +67,7 @@ object MprRenderer {
         world[plane.firstAxis] = slicePosition
 
         for (row in 0 until height) {
+            cancellationCheck()
             // Image-top means +anterior for axial, +superior for coronal/sagittal.
             val verticalFraction = row.toDouble() / max(1, height - 1)
             world[plane.verticalAxis] = bounds[1][plane.verticalAxis] -
