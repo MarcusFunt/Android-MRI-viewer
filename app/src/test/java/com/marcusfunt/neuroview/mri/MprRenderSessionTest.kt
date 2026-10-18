@@ -1,10 +1,12 @@
 package com.marcusfunt.neuroview.mri
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import java.util.concurrent.CancellationException
 
 class MprRenderSessionTest {
     private fun volume(): NiftiVolume {
@@ -84,5 +86,21 @@ class MprRenderSessionTest {
         }
         // Cancelled or half-written frames never enter the cache.
         assertEquals(render.width * render.height, render.sample(3).values.size)
+    }
+
+    @Test fun sessionGridConstructionCanBeCanceledBetweenRows() {
+        var checkedRows = 0
+
+        assertThrows(CancellationException::class.java) {
+            MprRenderSession(
+                volume(), MriPlane.AXIAL, 128,
+                cancellationCheck = {
+                    checkedRows++
+                    if (checkedRows == 3) throw CancellationException("Cancel stale grid construction")
+                },
+            )
+        }
+
+        assertEquals(3, checkedRows)
     }
 }

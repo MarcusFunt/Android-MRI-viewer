@@ -2,6 +2,13 @@ package com.marcusfunt.neuroview.ui.screens
 
 import android.graphics.Bitmap
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
+import android.os.PowerManager
+import android.os.SystemClock
+import android.os.Trace
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.foundation.Image
@@ -101,6 +108,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -112,6 +121,14 @@ import com.marcusfunt.neuroview.mri.MprProbe
 import com.marcusfunt.neuroview.mri.MprImage
 import com.marcusfunt.neuroview.mri.MriPlane
 import com.marcusfunt.neuroview.mri.NiftiVolume
+import com.marcusfunt.neuroview.mri.AdaptiveQualityLevel
+import com.marcusfunt.neuroview.mri.AdaptiveRenderQualityController
+import com.marcusfunt.neuroview.mri.RenderEnvironment
+import com.marcusfunt.neuroview.mri.RenderPerformanceMonitor
+import com.marcusfunt.neuroview.mri.RenderPerformanceSnapshot
+import com.marcusfunt.neuroview.mri.RenderQualityPolicy
+import com.marcusfunt.neuroview.mri.RenderRequestGate
+import com.marcusfunt.neuroview.mri.ThermalStatus
 import com.marcusfunt.neuroview.navigation.Destination
 import com.marcusfunt.neuroview.ui.VolumeLoadState
 import com.marcusfunt.neuroview.ui.components.OperationProgressIndicator
@@ -125,8 +142,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -176,6 +192,9 @@ fun ViewerScreen(
             ).coerceIn(MIN_CROSSHAIR_THICKNESS_DP, MAX_CROSSHAIR_THICKNESS_DP),
         )
     }
+    var renderQualitySettings by remember(displayPrefs) {
+        mutableStateOf(displayPrefs.readRenderQualitySettings())
+    }
     DisposableEffect(displayPrefs) {
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
@@ -190,6 +209,13 @@ fun ViewerScreen(
                         CROSSHAIR_THICKNESS_DP_KEY,
                         DEFAULT_CROSSHAIR_THICKNESS_DP,
                     ).coerceIn(MIN_CROSSHAIR_THICKNESS_DP, MAX_CROSSHAIR_THICKNESS_DP)
+                }
+                RENDER_QUALITY_MODE_KEY,
+                ADAPTIVE_RENDERING_KEY,
+                PREVIEW_MAX_SIDE_KEY,
+                STILL_MAX_SIDE_KEY,
+                RENDER_REFINE_DELAY_KEY -> {
+                    renderQualitySettings = displayPrefs.readRenderQualitySettings()
                 }
             }
         }
@@ -223,6 +249,9 @@ fun ViewerScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var isScrubbing by remember { mutableStateOf(false) }
+    var lastViewerInputAtNs by remember {
+        mutableLongStateOf(SystemClock.elapsedRealtimeNanos())
+    }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val homeAppearancePrefs = remember(context.applicationContext) {
         context.getSharedPreferences("neuroview_home_appearance_v1", Context.MODE_PRIVATE)
@@ -249,9 +278,94 @@ fun ViewerScreen(
     val loading = volumeState as? VolumeLoadState.Loading
     val volume = ready?.volume ?: firstSlice?.volume ?: loading?.decodedVolume
     val contentDisplayName = ready?.displayName ?: firstSlice?.displayName
+    val powerManager = remember(context.applicationContext) {
+        context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    }
+    var environmentRevision by remember { mutableIntStateOf(0) }
+    DisposableEffect(context.applicationContext, powerManager) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                environmentRevision++
+            }
+        }
+        val filter = IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+        if (Build.VERSION.SDK_INT >= 33) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(receiver, filter)
+        }
+        val thermalListener = if (Build.VERSION.SDK_INT >= 29 && powerManager != null) {
+            PowerManager.OnThermalStatusChangedListener { environmentRevision++ }
+                .also { powerManager.addThermalStatusListener(context.mainExecutor, it) }
+        } else null
+        onDispose {
+            context.unregisterReceiver(receiver)
+            if (Build.VERSION.SDK_INT >= 29 && thermalListener != null) {
+                powerManager?.removeThermalStatusListener(thermalListener)
+            }
+        }
+    }
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val deviceViewportMaxSidePx = with(density) {
+        maxOf(
+            configuration.screenWidthDp.dp.toPx(),
+            configuration.screenHeightDp.dp.toPx(),
+        ).roundToInt()
+    }
+    var imageViewportSize by remember(volume) { mutableStateOf(IntSize.Zero) }
+    val viewportMaxSidePx = if (imageViewportSize == IntSize.Zero) {
+        deviceViewportMaxSidePx
+    } else {
+        maxOf(imageViewportSize.width, imageViewportSize.height)
+    }
+    val runtimeMaxHeap = Runtime.getRuntime().maxMemory()
+    val runtime = Runtime.getRuntime()
+    val runtimeUsedHeap = (runtime.totalMemory() - runtime.freeMemory()).coerceAtLeast(0L)
+    val runtimeAvailableHeap = (runtimeMaxHeap - runtimeUsedHeap).coerceAtLeast(0L)
+    val powerSave = powerManager?.isPowerSaveMode == true
+    val thermalStatus = if (Build.VERSION.SDK_INT >= 29) {
+        when (powerManager?.currentThermalStatus) {
+            PowerManager.THERMAL_STATUS_MODERATE,
+            PowerManager.THERMAL_STATUS_SEVERE,
+            PowerManager.THERMAL_STATUS_CRITICAL,
+            PowerManager.THERMAL_STATUS_EMERGENCY,
+            PowerManager.THERMAL_STATUS_SHUTDOWN -> ThermalStatus.MODERATE
+            else -> ThermalStatus.NOMINAL
+        }
+    } else ThermalStatus.NOMINAL
+    val renderEnvironment = remember(
+        runtimeMaxHeap, volume, viewportMaxSidePx, powerSave, thermalStatus, environmentRevision,
+        renderQualitySettings,
+    ) {
+        RenderEnvironment(
+            maxHeapBytes = runtimeMaxHeap,
+            availableHeapBytes = runtimeAvailableHeap,
+            viewportMaxSidePx = viewportMaxSidePx,
+            powerSave = powerSave,
+            thermalStatus = thermalStatus,
+        )
+    }
+    var adaptiveQualityLevel by remember(volume) {
+        mutableStateOf(AdaptiveQualityLevel.STANDARD)
+    }
+    val adaptiveQualityController = remember(volume) { AdaptiveRenderQualityController() }
+    val renderQualityProfile = remember(renderQualitySettings, renderEnvironment, adaptiveQualityLevel) {
+        RenderQualityPolicy.resolve(renderQualitySettings, renderEnvironment, adaptiveQualityLevel)
+    }
+    val renderPerformanceMonitor = remember(volume) { RenderPerformanceMonitor() }
+    var renderPerformance by remember(volume) { mutableStateOf(RenderPerformanceSnapshot()) }
+    fun noteViewerInput() {
+        lastViewerInputAtNs = SystemClock.elapsedRealtimeNanos()
+    }
     var referenceWorld by remember(volume) { mutableStateOf<DoubleArray?>(null) }
     val sliceCount = if (volume != null) MprRenderer.sliceCount(volume, plane) else 1
     val selectedSlice = sliceIndex.coerceIn(0, sliceCount - 1)
+
+    LaunchedEffect(volume) {
+        // A newly loaded scan starts a fresh latency sample window.
+        noteViewerInput()
+    }
 
     LaunchedEffect(volume, plane) {
         sliceIndex = when {
@@ -261,13 +375,28 @@ fun ViewerScreen(
         }
     }
 
+    fun latestSliceInput() = SliceRenderInput(
+        sliceIndex.coerceIn(0, sliceCount - 1), windowCenter, windowWidth, isScrubbing,
+    )
     // Preserve the previous frame until its replacement is ready. Heavy resampling
-    // runs off the UI thread; a conflated queue skips intermediate requests while
-    // ensuring continuous gestures can still finish and display preview frames.
+    // runs off the UI thread; collectLatest cancels stale requests so continuous
+    // gestures can finish and display preview frames without an obsolete queue.
     // During interaction render a smaller preview, then refine at full resolution
     // once the gesture/slider settles. Cached scalar slices avoid costly rereads
     // when changing window levels or moving backwards through the stack.
     var bitmap by remember(volume, plane) { mutableStateOf<Bitmap?>(null) }
+    var committedRenderGeneration by remember(volume, plane) { mutableLongStateOf(0L) }
+    var committedInputStartedAtNs by remember(volume, plane) { mutableLongStateOf(0L) }
+    var lastMeasuredDisplayGeneration by remember(volume, plane) { mutableLongStateOf(0L) }
+    var renderStatusVisible by remember(volume, plane) { mutableStateOf(false) }
+    LaunchedEffect(bitmap, volume, plane) {
+        if (bitmap == null) {
+            delay(160L)
+            renderStatusVisible = true
+        } else {
+            renderStatusVisible = false
+        }
+    }
     var firstSliceReported by remember(loading?.operation?.id) { mutableStateOf(false) }
     LaunchedEffect(bitmap, loading?.operation?.id) {
         val operationId = loading?.operation?.id ?: return@LaunchedEffect
@@ -278,13 +407,22 @@ fun ViewerScreen(
     }
     var firstSliceDisplayedReported by remember(firstSlice?.operation?.id) { mutableStateOf(false) }
     SideEffect {
+        if (committedRenderGeneration > lastMeasuredDisplayGeneration) {
+            lastMeasuredDisplayGeneration = committedRenderGeneration
+            renderPerformance = renderPerformanceMonitor.recordComposeCommit(
+                generation = committedRenderGeneration,
+                latencyMs = (SystemClock.elapsedRealtimeNanos() - committedInputStartedAtNs)
+                    .coerceAtLeast(0L) / 1_000_000L,
+            )
+        }
         val operationId = firstSlice?.operation?.id
         if (operationId != null && !firstSliceDisplayedReported) {
             firstSliceDisplayedReported = true
             onFirstSliceDisplayed(operationId)
         }
     }
-    LaunchedEffect(volume, plane) {
+    val renderRequestGate = remember(volume, plane) { RenderRequestGate() }
+    LaunchedEffect(volume, plane, renderQualityProfile) {
         if (volume == null) return@LaunchedEffect
         val operationId = loading?.operation?.id
         val renderJob = currentCoroutineContext()[Job]
@@ -292,38 +430,105 @@ fun ViewerScreen(
             onFirstSliceRenderStarted(operationId, volume, renderJob)
         }
         try {
-            val preview = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 160) }
-            val full = withContext(Dispatchers.Default) { MprRenderSession(volume, plane, 384) }
+            val preview = withContext(Dispatchers.Default) {
+                val context = currentCoroutineContext()
+                MprRenderSession(
+                    volume, plane, renderQualityProfile.previewMaxSide,
+                    cancellationCheck = { context.ensureActive() },
+                )
+            }
+            val full = if (renderQualityProfile.stillMaxSide == renderQualityProfile.previewMaxSide) {
+                preview
+            } else {
+                withContext(Dispatchers.Default) {
+                    val context = currentCoroutineContext()
+                    MprRenderSession(
+                        volume, plane, renderQualityProfile.stillMaxSide,
+                        cancellationCheck = { context.ensureActive() },
+                    )
+                }
+            }
             // Observe the mutable sliceIndex directly. The composable's selectedSlice
             // is a recomposition-local value and would be captured at initial launch,
             // leaving the image frozen even when the slice counter changes.
             snapshotFlow {
-                SliceRenderRequest(sliceIndex.coerceIn(0, sliceCount - 1), windowCenter, windowWidth, isScrubbing)
-            }.distinctUntilChanged().conflate().collect { request ->
-                val quick = withContext(Dispatchers.Default) {
-                    val context = currentCoroutineContext()
-                    val image = preview.render(
-                        request.slice, request.center, request.width,
-                    ) { context.ensureActive() }
-                    createViewerBitmap(image)
-                }
-                // Present completed previews during continuous drag. For still frames,
-                // do not display a request superseded by another slider/plane setting.
-                fun latest() = SliceRenderRequest(
+                SliceRenderInput(
                     sliceIndex.coerceIn(0, sliceCount - 1), windowCenter, windowWidth, isScrubbing,
                 )
-                if (request.scrubbing || latest() == request) bitmap = quick
-                if (!request.scrubbing && latest() == request) {
-                    delay(72)
-                    if (latest() != request) return@collect
-                    val refined = withContext(Dispatchers.Default) {
-                        val context = currentCoroutineContext()
-                        val image = full.render(
-                            request.slice, request.center, request.width,
-                        ) { context.ensureActive() }
-                        createViewerBitmap(image)
+            }.distinctUntilChanged().collectLatest { input ->
+                val generation = renderRequestGate.begin()
+                val request = SliceRenderRequest(generation, input, lastViewerInputAtNs)
+                var committed = false
+                var workerRenderDurationMs = 0L
+                var settledRenderDurationMs: Long? = null
+                var settledFrameCommitted = false
+                try {
+                    val previewStartedAt = SystemClock.elapsedRealtimeNanos()
+                    val quick = try {
+                        withContext(Dispatchers.Default) {
+                            val context = currentCoroutineContext()
+                            traceViewerRender("NeuroView.slice.preview") {
+                                createViewerBitmap(
+                                    preview.render(input.slice, input.center, input.width) {
+                                        context.ensureActive()
+                                    },
+                                )
+                            }
+                        }
+                    } finally {
+                        workerRenderDurationMs += (SystemClock.elapsedRealtimeNanos() - previewStartedAt)
+                            .coerceAtLeast(0L) / 1_000_000L
                     }
-                    if (latest() == request) bitmap = refined
+                    if (renderRequestGate.isCurrent(request.generation) && latestSliceInput() == input) {
+                        bitmap = quick
+                        committedRenderGeneration = request.generation
+                        committedInputStartedAtNs = request.inputStartedAtNs
+                        committed = true
+                    }
+                    if (!input.scrubbing && renderRequestGate.isCurrent(request.generation) &&
+                        latestSliceInput() == input
+                    ) {
+                        delay(renderQualityProfile.refineDelayMs)
+                        if (!renderRequestGate.isCurrent(request.generation) || latestSliceInput() != input) {
+                            return@collectLatest
+                        }
+                        val stillStartedAt = SystemClock.elapsedRealtimeNanos()
+                        val refined = try {
+                            withContext(Dispatchers.Default) {
+                                val context = currentCoroutineContext()
+                                traceViewerRender("NeuroView.slice.still") {
+                                    createViewerBitmap(
+                                        full.render(input.slice, input.center, input.width) {
+                                            context.ensureActive()
+                                        },
+                                    )
+                                }
+                            }
+                        } finally {
+                            settledRenderDurationMs = (SystemClock.elapsedRealtimeNanos() - stillStartedAt)
+                                .coerceAtLeast(0L) / 1_000_000L
+                            workerRenderDurationMs += requireNotNull(settledRenderDurationMs)
+                        }
+                        if (renderRequestGate.isCurrent(request.generation) && latestSliceInput() == input) {
+                            bitmap = refined
+                            committedRenderGeneration = request.generation
+                            committedInputStartedAtNs = request.inputStartedAtNs
+                            committed = true
+                            settledFrameCommitted = true
+                        }
+                    }
+                } finally {
+                    val runtime = Runtime.getRuntime()
+                    renderPerformance = renderPerformanceMonitor.recordRender(
+                        durationMs = workerRenderDurationMs,
+                        committed = committed,
+                        heapUsedBytes = (runtime.totalMemory() - runtime.freeMemory()).coerceAtLeast(0L),
+                    )
+                    if (settledFrameCommitted) {
+                        adaptiveQualityLevel = adaptiveQualityController.recordRenderDuration(
+                            settledRenderDurationMs ?: workerRenderDurationMs,
+                        )
+                    }
                 }
             }
         } finally {
@@ -436,19 +641,44 @@ fun ViewerScreen(
                             volume = requireNotNull(volume),
                             plane = plane,
                             bitmap = bitmap,
+                            renderStatusVisible = renderStatusVisible,
+                            onImageViewportSizeChanged = { imageViewportSize = it },
                             selectedSlice = selectedSlice,
                             totalSlices = sliceCount,
-                            onSliceChange = { sliceIndex = it.coerceIn(0, sliceCount - 1) },
-                            onScrubbingChanged = { isScrubbing = it },
-                            onPlaneSelect = { plane = it },
+                            onSliceChange = {
+                                noteViewerInput()
+                                sliceIndex = it.coerceIn(0, sliceCount - 1)
+                            },
+                            onScrubbingChanged = {
+                                noteViewerInput()
+                                isScrubbing = it
+                            },
+                            onPlaneSelect = { selectedPlane ->
+                                noteViewerInput()
+                                sliceIndex = when {
+                                    referenceWorld != null -> MprProbe.sliceForWorld(
+                                        requireNotNull(volume),
+                                        selectedPlane,
+                                        requireNotNull(referenceWorld),
+                                    )
+                                    else -> MprRenderer.sliceCount(requireNotNull(volume), selectedPlane) / 2
+                                }
+                                plane = selectedPlane
+                            },
                             selectedDocumentUri = selectedDocumentUri,
                             originalDocumentName = contentDisplayName,
                             referenceWorld = referenceWorld,
                             onReferenceWorldChange = { referenceWorld = it },
                             windowCenter = windowCenter,
-                            onWindowCenter = ::setWindowCenter,
+                            onWindowCenter = {
+                                noteViewerInput()
+                                setWindowCenter(it)
+                            },
                             windowWidth = windowWidth,
-                            onWindowWidth = ::setWindowWidth,
+                            onWindowWidth = {
+                                noteViewerInput()
+                                setWindowWidth(it)
+                            },
                         )
                     }
 
@@ -472,6 +702,11 @@ fun ViewerScreen(
             onResetBrainOrientation = null,
             onClearCache = onClearCache,
             scrollToViewerSettings = true,
+            renderPerformance = renderPerformance,
+            memorySafeMaximumSidePx = RenderQualityPolicy.memorySafeMaximumSide(
+                renderEnvironment.maxHeapBytes,
+                renderEnvironment.availableHeapBytes,
+            ),
             onDismiss = { settingsOpen = false },
         )
     }
@@ -599,11 +834,27 @@ private fun ViewerLoadingScreen(
     }
 }
 
-private data class SliceRenderRequest(
+private inline fun <T> traceViewerRender(section: String, block: () -> T): T {
+    val traceEnabled = Build.VERSION.SDK_INT >= 29 && Trace.isEnabled()
+    if (traceEnabled) Trace.beginSection(section)
+    return try {
+        block()
+    } finally {
+        if (traceEnabled) Trace.endSection()
+    }
+}
+
+private data class SliceRenderInput(
     val slice: Int,
     val center: Float,
     val width: Float,
     val scrubbing: Boolean,
+)
+
+private data class SliceRenderRequest(
+    val generation: Long,
+    val input: SliceRenderInput,
+    val inputStartedAtNs: Long,
 )
 
 @Composable
@@ -647,6 +898,8 @@ private fun MriContent(
     volume: NiftiVolume,
     plane: MriPlane,
     bitmap: Bitmap?,
+    renderStatusVisible: Boolean,
+    onImageViewportSizeChanged: (IntSize) -> Unit,
     selectedSlice: Int,
     totalSlices: Int,
     onSliceChange: (Int) -> Unit,
@@ -735,7 +988,10 @@ private fun MriContent(
         val currentScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
         Box(
             modifier = Modifier.fillMaxWidth().weight(1f)
-                .onSizeChanged { imageViewport = it }
+                .onSizeChanged {
+                    imageViewport = it
+                    onImageViewportSizeChanged(it)
+                }
                 .pointerInput(zoomMode) {
                     if (zoomMode) detectTapGestures(onDoubleTap = {
                         scale = DEFAULT_MRI_IMAGE_SCALE
@@ -871,7 +1127,7 @@ private fun MriContent(
                     },
                     contentScale = ContentScale.Fit,
                 )
-            } else {
+            } else if (renderStatusVisible) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -883,7 +1139,7 @@ private fun MriContent(
                         strokeWidth = 2.dp,
                     )
                     Text(
-                        "Rendering slice",
+                        "Rendering ${plane.label.lowercase(java.util.Locale.ROOT)} view",
                         color = NeuroChrome.muted,
                         style = MaterialTheme.typography.labelSmall,
                     )

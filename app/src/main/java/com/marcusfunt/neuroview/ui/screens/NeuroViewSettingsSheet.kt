@@ -2,7 +2,9 @@ package com.marcusfunt.neuroview.ui.screens
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +17,8 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +46,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.marcusfunt.neuroview.mri.RenderQualityMode
+import com.marcusfunt.neuroview.mri.RenderQualityPolicy
+import com.marcusfunt.neuroview.mri.RenderQualitySettings
+import com.marcusfunt.neuroview.mri.RenderPerformanceSnapshot
+import kotlin.math.roundToInt
 
 internal const val VIEWER_DISPLAY_PREFERENCES = "neuroview_display_v1"
 internal const val SHOW_ORIENTATION_MARKERS_KEY = "show_orientation_markers"
@@ -50,6 +59,35 @@ internal const val CROSSHAIR_THICKNESS_DP_KEY = "crosshair_thickness_dp"
 internal const val DEFAULT_CROSSHAIR_THICKNESS_DP = 3f
 internal const val MIN_CROSSHAIR_THICKNESS_DP = 1f
 internal const val MAX_CROSSHAIR_THICKNESS_DP = 4f
+internal const val RENDER_QUALITY_MODE_KEY = "render_quality_mode"
+internal const val ADAPTIVE_RENDERING_KEY = "adaptive_rendering"
+internal const val PREVIEW_MAX_SIDE_KEY = "render_preview_max_side"
+internal const val STILL_MAX_SIDE_KEY = "render_still_max_side"
+internal const val RENDER_REFINE_DELAY_KEY = "render_refine_delay_ms"
+
+internal fun SharedPreferences.readRenderQualitySettings(): RenderQualitySettings {
+    val mode = runCatching {
+        RenderQualityMode.valueOf(getString(RENDER_QUALITY_MODE_KEY, null) ?: "AUTO")
+    }.getOrDefault(RenderQualityMode.AUTO)
+    return RenderQualitySettings(
+        mode = mode,
+        adaptive = getBoolean(ADAPTIVE_RENDERING_KEY, true),
+        previewMaxSide = getInt(PREVIEW_MAX_SIDE_KEY, 160),
+        stillMaxSide = getInt(STILL_MAX_SIDE_KEY, 384),
+        refineDelayMs = getInt(RENDER_REFINE_DELAY_KEY, 72).toLong(),
+    ).validated()
+}
+
+internal fun SharedPreferences.writeRenderQualitySettings(settings: RenderQualitySettings) {
+    val validated = settings.validated()
+    edit()
+        .putString(RENDER_QUALITY_MODE_KEY, validated.mode.name)
+        .putBoolean(ADAPTIVE_RENDERING_KEY, validated.adaptive)
+        .putInt(PREVIEW_MAX_SIDE_KEY, validated.previewMaxSide)
+        .putInt(STILL_MAX_SIDE_KEY, validated.stillMaxSide)
+        .putInt(RENDER_REFINE_DELAY_KEY, validated.refineDelayMs.toInt())
+        .apply()
+}
 
 private val SettingsForeground = androidx.compose.ui.graphics.Color(0xFFF0F5FA)
 private val SettingsSecondary = androidx.compose.ui.graphics.Color(0xFF9EADC2)
@@ -66,8 +104,11 @@ internal fun NeuroViewSettingsSheet(
     onClearCache: suspend () -> Int,
     scrollToViewerSettings: Boolean,
     onDismiss: () -> Unit,
+    renderPerformance: RenderPerformanceSnapshot? = null,
+    memorySafeMaximumSidePx: Int = RenderQualityPolicy.memorySafeMaximumSide(Runtime.getRuntime().maxMemory()),
 ) {
     val context = LocalContext.current
+    val showRenderDiagnostics = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
     val viewerPreferences = remember(context.applicationContext) {
         context.getSharedPreferences(VIEWER_DISPLAY_PREFERENCES, Context.MODE_PRIVATE)
     }
@@ -84,6 +125,9 @@ internal fun NeuroViewSettingsSheet(
                 DEFAULT_CROSSHAIR_THICKNESS_DP,
             ).coerceIn(MIN_CROSSHAIR_THICKNESS_DP, MAX_CROSSHAIR_THICKNESS_DP),
         )
+    }
+    var renderQualitySettings by remember(viewerPreferences) {
+        mutableStateOf(viewerPreferences.readRenderQualitySettings())
     }
     var cacheStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -105,6 +149,13 @@ internal fun NeuroViewSettingsSheet(
                         CROSSHAIR_THICKNESS_DP_KEY,
                         DEFAULT_CROSSHAIR_THICKNESS_DP,
                     ).coerceIn(MIN_CROSSHAIR_THICKNESS_DP, MAX_CROSSHAIR_THICKNESS_DP)
+                }
+                RENDER_QUALITY_MODE_KEY,
+                ADAPTIVE_RENDERING_KEY,
+                PREVIEW_MAX_SIDE_KEY,
+                STILL_MAX_SIDE_KEY,
+                RENDER_REFINE_DELAY_KEY -> {
+                    renderQualitySettings = preferences.readRenderQualitySettings()
                 }
             }
         }
@@ -210,6 +261,63 @@ internal fun NeuroViewSettingsSheet(
             }
 
             HorizontalDivider(color = SettingsSecondary.copy(alpha = 0.28f))
+            Text("Rendering quality", style = MaterialTheme.typography.titleSmall, color = SettingsForeground)
+            SettingsChoiceRow(
+                title = "Rendering priority",
+                selected = renderQualitySettings.mode.label,
+                options = RenderQualityMode.entries.map { it.label to it },
+                onSelected = { mode ->
+                    viewerPreferences.writeRenderQualitySettings(renderQualitySettings.copy(mode = mode))
+                },
+            )
+            SettingsSwitchRow(
+                title = "Adaptive rendering",
+                detail = "Adjust quality using render timing, memory, battery saver and thermal state.",
+                checked = renderQualitySettings.adaptive,
+                onCheckedChange = { adaptive ->
+                    viewerPreferences.writeRenderQualitySettings(
+                        renderQualitySettings.copy(adaptive = adaptive),
+                    )
+                },
+            )
+            if (!renderQualitySettings.adaptive) {
+                Text(
+                    "With adaptive rendering off, large scans may stutter on slower phones.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SettingsSecondary,
+                )
+            }
+            if (renderQualitySettings.mode == RenderQualityMode.MANUAL) {
+                ManualRenderSettings(
+                    settings = renderQualitySettings,
+                    onSettingsPreview = { renderQualitySettings = it },
+                    onSettingsCommitted = viewerPreferences::writeRenderQualitySettings,
+                )
+            }
+            Text(
+                "Selected sizes are maximum image sides. The current memory guard allows still frames up to $memorySafeMaximumSidePx px.",
+                style = MaterialTheme.typography.bodySmall,
+                color = SettingsSecondary,
+            )
+            if (showRenderDiagnostics && renderPerformance != null && renderPerformance.sampleCount > 0) {
+                Text(
+                    "Local render diagnostics · ${renderPerformance.displayedFrameCount} displayed frames · " +
+                        "gesture→Compose p50/p95/p99 " +
+                        "${renderPerformance.gestureToCommitP50Ms ?: 0}/" +
+                        "${renderPerformance.gestureToCommitP95Ms ?: 0}/" +
+                        "${renderPerformance.gestureToCommitP99Ms ?: 0} ms · " +
+                        "worker p50/p95/p99 ${renderPerformance.p50Ms ?: 0}/" +
+                        "${renderPerformance.p95Ms ?: 0}/${renderPerformance.p99Ms ?: 0} ms · " +
+                        "${renderPerformance.supersededPercent}% superseded · " +
+                        "peak heap ${renderPerformance.peakHeapUsedBytes / (1024L * 1024L)} MiB · " +
+                        "max observed heap increase " +
+                        "${renderPerformance.maxObservedHeapIncreaseBytes / (1024L * 1024L)} MiB",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SettingsSecondary,
+                )
+            }
+
+            HorizontalDivider(color = SettingsSecondary.copy(alpha = 0.28f))
             Text("Privacy & storage", style = MaterialTheme.typography.titleMedium, color = SettingsForeground)
             Text(
                 "Scanning, viewing and format conversion run locally. Optional BrainSuite processing only uploads after your explicit consent.",
@@ -236,6 +344,97 @@ internal fun NeuroViewSettingsSheet(
             }
             Spacer(Modifier.height(10.dp))
         }
+    }
+}
+
+@Composable
+private fun SettingsChoiceRow(
+    title: String,
+    selected: String,
+    options: List<Pair<String, RenderQualityMode>>,
+    onSelected: (RenderQualityMode) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(title, color = SettingsForeground)
+        Box {
+            TextButton(onClick = { expanded = true }) { Text(selected, color = SettingsCyan) }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { (label, value) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = {
+                            expanded = false
+                            onSelected(value)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManualRenderSettings(
+    settings: RenderQualitySettings,
+    onSettingsPreview: (RenderQualitySettings) -> Unit,
+    onSettingsCommitted: (RenderQualitySettings) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Scrolling preview · ${settings.previewMaxSide} px", color = SettingsForeground)
+        Slider(
+            value = settings.previewMaxSide.toFloat(),
+            onValueChange = { value ->
+                onSettingsPreview(settings.copy(previewMaxSide = value.roundToInt()).validated())
+            },
+            onValueChangeFinished = { onSettingsCommitted(settings) },
+            valueRange = RenderQualitySettings.MIN_PREVIEW_SIDE.toFloat()..
+                RenderQualitySettings.MAX_PREVIEW_SIDE.toFloat(),
+            steps = 6,
+            modifier = Modifier.fillMaxWidth().semantics {
+                contentDescription = "Scrolling preview maximum side"
+                stateDescription = "${settings.previewMaxSide} pixels"
+            },
+        )
+        Text("Still image · ${settings.stillMaxSide} px", color = SettingsForeground)
+        Slider(
+            value = settings.stillMaxSide.toFloat(),
+            onValueChange = { value ->
+                onSettingsPreview(settings.copy(stillMaxSide = value.roundToInt()).validated())
+            },
+            onValueChangeFinished = { onSettingsCommitted(settings) },
+            valueRange = RenderQualitySettings.MIN_STILL_SIDE.toFloat()..
+                RenderQualitySettings.MAX_STILL_SIDE.toFloat(),
+            steps = 11,
+            modifier = Modifier.fillMaxWidth().semantics {
+                contentDescription = "Still image maximum side"
+                stateDescription = "${settings.stillMaxSide} pixels"
+            },
+        )
+        Text("Refine after scrolling · ${settings.refineDelayMs} ms", color = SettingsForeground)
+        Slider(
+            value = settings.refineDelayMs.toFloat(),
+            onValueChange = { value ->
+                onSettingsPreview(settings.copy(refineDelayMs = value.roundToInt().toLong()).validated())
+            },
+            onValueChangeFinished = { onSettingsCommitted(settings) },
+            valueRange = RenderQualitySettings.MIN_REFINE_DELAY_MS.toFloat()..
+                RenderQualitySettings.MAX_REFINE_DELAY_MS.toFloat(),
+            steps = 7,
+            modifier = Modifier.fillMaxWidth().semantics {
+                contentDescription = "Still image refine delay"
+                stateDescription = "${settings.refineDelayMs} milliseconds"
+            },
+        )
+        Text(
+            "Manual values save when you finish adjusting. Adaptive rendering may still lower resolution when required to keep memory use safe.",
+            style = MaterialTheme.typography.bodySmall,
+            color = SettingsSecondary,
+        )
     }
 }
 

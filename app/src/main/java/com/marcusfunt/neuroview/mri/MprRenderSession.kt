@@ -22,6 +22,7 @@ class MprRenderSession(
     private val plane: MriPlane,
     maxSide: Int,
     private val cacheEntries: Int = 8,
+    private val cancellationCheck: () -> Unit = {},
 ) {
     init {
         require(maxSide in 8..1024)
@@ -65,6 +66,7 @@ class MprRenderSession(
         at[plane.firstAxis] = bounds[0][plane.firstAxis]
         val voxel = DoubleArray(3)
         for (row in 0 until height) {
+            cancellationCheck()
             at[plane.verticalAxis] = bounds[1][plane.verticalAxis] -
                 row.toDouble() / max(1, height - 1) * verticalSpan
             for (col in 0 until width) {
