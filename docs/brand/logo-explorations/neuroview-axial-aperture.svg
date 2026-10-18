@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" role="img" aria-labelledby="title desc">
+  <title id="title">NeuroView axial aperture brain mark</title>
+  <desc id="desc">A monochrome top-down brain with smooth cortical folds and one thin circular outline. The background is transparent.</desc>
+  <circle cx="500" cy="500" r="455" fill="none" stroke="#f5f5f3" stroke-width="12"/>
+  <g fill="none" stroke="#f5f5f3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M485 176 C451 151 417 154 392 175 C359 162 328 180 316 211 C284 206 254 229 251 264 C218 278 205 313 216 346 C185 369 181 407 198 439 C172 468 178 505 198 531 C179 562 187 596 215 616 C204 650 220 681 252 696 C252 734 280 757 317 754 C332 787 368 801 404 783 C431 806 465 801 487 779 C497 757 495 722 492 685 C490 642 498 601 493 557 C489 514 499 474 493 430 C489 385 498 343 492 300 C489 256 496 215 485 176 Z" stroke-width="20"/>
+    <path d="M485 176 C451 151 417 154 392 175 C359 162 328 180 316 211 C284 206 254 229 251 264 C218 278 205 313 216 346 C185 369 181 407 198 439 C172 468 178 505 198 531 C179 562 187 596 215 616 C204 650 220 681 252 696 C252 734 280 757 317 754 C332 787 368 801 404 783 C431 806 465 801 487 779 C497 757 495 722 492 685 C490 642 498 601 493 557 C489 514 499 474 493 430 C489 385 498 343 492 300 C489 256 496 215 485 176 Z" transform="translate(1000 0) scale(-1 1)" stroke-width="20"/>
+    <path d="M468 213 C438 194 404 201 387 223 C366 251 383 281 414 296 C442 309 456 337 450 363" stroke-width="19"/>
+    <path d="M468 213 C438 194 404 201 387 223 C366 251 383 281 414 296 C442 309 456 337 450 363" transform="translate(1000 0) scale(-1 1)" stroke-width="19"/>
+    <path d="M470 389 C438 368 402 369 378 388 C347 412 357 442 389 457 C419 471 432 494 425 520" stroke-width="19"/>
+    <path d="M470 389 C438 368 402 369 378 388 C347 412 357 442 389 457 C419 471 432 494 425 520" transform="translate(1000 0) scale(-1 1)" stroke-width="19"/>
+    <path d="M459 547 C425 527 390 534 369 551 C339 574 351 606 382 621 C410 635 429 654 425 680" stroke-width="19"/>
+    <path d="M459 547 C425 527 390 534 369 551 C339 574 351 606 382 621 C410 635 429 654 425 680" transform="translate(1000 0) scale(-1 1)" stroke-width="19"/>
+    <path d="M446 706 C418 689 390 693 373 711 C355 730 368 754 395 762" stroke-width="19"/>
+    <path d="M446 706 C418 689 390 693 373 711 C355 730 368 754 395 762" transform="translate(1000 0) scale(-1 1)" stroke-width="19"/>
+    <path d="M500 176 C496 270 503 347 499 430 C496 513 504 594 500 680 C498 730 501 775 500 806" stroke-width="13"/>
+  </g>
+</svg>

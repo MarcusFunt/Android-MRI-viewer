@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import uuid
@@ -27,6 +28,12 @@ MAX_JOBS = 24
 DOCKER_IMAGE = "bids/brainsuite:v23a"
 RUN_TIMEOUT = 12 * 60 * 60
 JOB_RE = re.compile(r"^/v1/jobs/([0-9a-f-]{36})(?:/(results))?$")
+
+
+def default_data_dir() -> Path:
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "NeuroView" / "BrainSuiteJobs"
+    return Path.home() / ".local" / "share" / "neuroview" / "brainsuite-jobs"
 
 
 @dataclass
@@ -52,6 +59,18 @@ class Bridge:
 
     def authenticated(self, value: str | None) -> bool:
         return bool(value) and hmac.compare_digest(value, "Bearer " + self.token)
+
+    def ready(self) -> bool:
+        """Report whether Docker can find the configured BrainSuite image."""
+        try:
+            subprocess.run(
+                ["docker", "image", "inspect", self.docker_image],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+            return True
+        except (OSError, subprocess.SubprocessError):
+            return False
 
     def create(self, source, length: int, extension: str, stages: str) -> Job:
         if extension not in {"nii", "nii.gz"} or stages not in {"CSE", "CSE+SVREG"}:
@@ -95,24 +114,25 @@ class Bridge:
         except Exception:
             with self.lock:
                 self.jobs.pop(identifier, None)
-            source_path.unlink(missing_ok=True)
+            # A rejected or interrupted upload may already contain MRI bytes.
+            shutil.rmtree(root, ignore_errors=True)
             raise
 
     def _run(self, job: Job):
         job.status = "running"
-        input_dir = job.root / "bids"
-        output_dir = job.root / "output"
-        output_dir.mkdir()
-        flags = ["CSE"] if job.stages == "CSE" else ["CSE", "SVREG"]
-        command = [
-            "docker", "run", "--rm", "--network=none", "--pids-limit=4096",
-            "--security-opt=no-new-privileges",
-            "--mount", f"type=bind,src={input_dir},dst=/data,readonly",
-            "--mount", f"type=bind,src={output_dir},dst=/output",
-            self.docker_image, "/data", "/output", "participant",
-            "--participant_label", "01", "--stages", *flags,
-        ]
         try:
+            input_dir = job.root / "bids"
+            output_dir = job.root / "output"
+            output_dir.mkdir()
+            flags = ["CSE"] if job.stages == "CSE" else ["CSE", "SVREG"]
+            command = [
+                "docker", "run", "--rm", "--network=none", "--pids-limit=4096",
+                "--security-opt=no-new-privileges",
+                "--mount", f"type=bind,src={input_dir},dst=/data,readonly",
+                "--mount", f"type=bind,src={output_dir},dst=/output",
+                self.docker_image, "/data", "/output", "participant",
+                "--participant_label", "01", "--stages", *flags,
+            ]
             with (job.root / "processing.log").open("wb") as log:
                 result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
                                         timeout=RUN_TIMEOUT, check=False)
@@ -129,7 +149,10 @@ class Bridge:
             job.status = "succeeded"
         except Exception:
             # Never send filenames, NIfTI metadata or processing logs to the phone.
-            job.error = "Processing failed or timed out. Review processing.log on the host."
+            job.error = (
+                "Processing failed or timed out. Review processing.log on the host "
+                "if available."
+            )
             job.status = "failed"
 
     def status(self, identifier: str) -> dict:
@@ -191,7 +214,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlsplit(self.path).path
         if path == "/health":
-            self._send_json(200, {"service": "NeuroView BrainSuite bridge", "ready": True})
+            self._send_json(200, {
+                "service": "NeuroView BrainSuite bridge",
+                "running": True,
+                "ready": self.server.bridge.ready(),
+            })
             return
         if not self._auth():
             return
@@ -234,7 +261,7 @@ class BridgeHTTPServer(ThreadingHTTPServer):
 
 def main():
     token = os.environ.get("NEUROVIEW_BRAINSUITE_TOKEN", "")
-    root = Path(os.environ.get("NEUROVIEW_BRAINSUITE_DATA", "./brainsuite-jobs"))
+    root = Path(os.environ.get("NEUROVIEW_BRAINSUITE_DATA", str(default_data_dir())))
     port = int(os.environ.get("NEUROVIEW_BRAINSUITE_PORT", "8765"))
     bridge = Bridge(root, token)
     print(f"BrainSuite bridge listening on 127.0.0.1:{port} (HTTPS proxy required)")

@@ -82,7 +82,7 @@ private fun InteractiveBrain(
                 if (lastMillis == 0L) lastMillis = now
                 val elapsed = now - lastMillis
                 if (elapsed >= 33L) {
-                    view.rotateBy(elapsed.coerceAtMost(66L) * (360f / 50000f), 0f)
+                    view.rotateBy(elapsed.coerceAtMost(66L) * (360f / 44000f), 0f)
                     lastMillis = now
                 }
             }

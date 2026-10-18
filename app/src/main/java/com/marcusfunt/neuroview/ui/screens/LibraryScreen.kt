@@ -48,6 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -110,6 +111,14 @@ fun LibraryScreen(
     var frameFilter by rememberSaveable { mutableStateOf("All") }
     var conversionOpen by rememberSaveable { mutableStateOf(false) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    LaunchedEffect(snapshot.scans.isEmpty()) {
+        if (snapshot.scans.isEmpty()) {
+            search = ""
+            mode = "All"
+            sort = "Recent"
+            frameFilter = "All"
+        }
+    }
     val query = search.trim()
     val matching = snapshot.scans.filter { scan ->
         val textMatches = query.isBlank() || scan.label.contains(query, true) ||
@@ -196,40 +205,42 @@ fun LibraryScreen(
                             }
                         }
                     }
-                    OutlinedTextField(
-                        value = search,
-                        onValueChange = { search = it },
-                        label = { Text("Search scans and collections") },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        trailingIcon = if (search.isNotEmpty()) {
-                            { IconButton(onClick = { search = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear search")
-                            } }
-                        } else null,
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = mode == "All", onClick = { mode = "All" },
-                            label = { Text("All scans") })
-                        FilterChip(selected = mode == "Collections", onClick = { mode = "Collections" },
-                            label = { Text("Collections") })
-                        FilterChip(selected = sort == "Name", onClick = {
-                            sort = if (sort == "Name") "Recent" else "Name"
-                        }, label = { Text(if (sort == "Name") "A–Z" else "Newest imports") })
-                    }
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("Frames", color = NeuroChrome.muted,
-                            style = MaterialTheme.typography.labelSmall)
-                        listOf("All", "3D", "4D").forEach { selection ->
-                            FilterChip(selected = frameFilter == selection,
-                                onClick = { frameFilter = selection },
-                                label = { Text(selection) })
+                    if (snapshot.scans.isNotEmpty()) {
+                        OutlinedTextField(
+                            value = search,
+                            onValueChange = { search = it },
+                            label = { Text("Search scans and collections") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = if (search.isNotEmpty()) {
+                                { IconButton(onClick = { search = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear search")
+                                } }
+                            } else null,
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = mode == "All", onClick = { mode = "All" },
+                                label = { Text("All scans") })
+                            FilterChip(selected = mode == "Collections", onClick = { mode = "Collections" },
+                                label = { Text("Collections") })
+                            FilterChip(selected = sort == "Name", onClick = {
+                                sort = if (sort == "Name") "Recent" else "Name"
+                            }, label = { Text(if (sort == "Name") "A–Z" else "Newest imports") })
+                        }
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Frames", color = NeuroChrome.muted,
+                                style = MaterialTheme.typography.labelSmall)
+                            listOf("All", "3D", "4D").forEach { selection ->
+                                FilterChip(selected = frameFilter == selection,
+                                    onClick = { frameFilter = selection },
+                                    label = { Text(selection) })
+                            }
                         }
                     }
                     if (isBusy) {
@@ -354,16 +365,18 @@ fun LibraryScreen(
                     }
                 }
             }
-            item(key = "library-footer") {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TextButton(onClick = onClearThumbnails, enabled = !isBusy) {
-                        Text("Clear preview cache")
+            if (snapshot.scans.isNotEmpty()) {
+                item(key = "library-footer") {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(onClick = onClearThumbnails, enabled = !isBusy) {
+                            Text("Clear preview cache")
+                        }
+                        Text(
+                            "Collections are personal labels, not verified clinical studies. " +
+                                "Removing an entry never deletes its original MRI document.",
+                            style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted,
+                        )
                     }
-                    Text(
-                        "Collections are personal labels, not verified clinical studies. " +
-                            "Removing an entry never deletes its original MRI document.",
-                        style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted,
-                    )
                 }
             }
         }

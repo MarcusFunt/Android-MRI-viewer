@@ -306,6 +306,7 @@ class ScanCatalog(private val context: Context) {
                     .put("collectionId", scan.collectionId)
                     .put("uri", scan.documentUri)
                     .put("name", scan.displayName)
+                    .put("customName", scan.customName)
                     .put("metadata", metadata),
             )
         }

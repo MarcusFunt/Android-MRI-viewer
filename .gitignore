@@ -13,11 +13,14 @@ captures/
 *.jks
 *.keystore
 # Personal health data must never be committed
+.codex-remote-attachments/
 data/
 scans/
 datasets/
 imports/
 exports/
+# The bridge work directory contains uploaded MRI files, outputs, and logs.
+brainsuite-jobs/
 *.dcm
 *.dicom
 *.ima

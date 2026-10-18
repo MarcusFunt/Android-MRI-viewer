@@ -76,9 +76,9 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
                     put(cpu.indices)
                     position(0)
                 }
-            GpuMesh(vertexData, indexData, cpu.indices.size, cpu.color)
+            GpuMesh(vertexData, indexData, cpu.indices.size, BRAIN_TINT.copyOf())
         }
-        Matrix.setLookAtM(view, 0, 0f, 0f, 4.85f, 0f, 0f, 0f, 0f, 1f, 0f)
+        Matrix.setLookAtM(view, 0, 0f, 0f, 5.25f, 0f, 0f, 0f, 0f, 1f, 0f)
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -154,6 +154,8 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
     }
 
     private companion object {
+        private val BRAIN_TINT = floatArrayOf(0.79f, 0.49f, 0.45f)
+
         const val VERTEX_SHADER = """
             uniform mat4 uMvp;
             uniform mat4 uModelView;
@@ -177,18 +179,45 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
                 vec3 normal = normalize(vNormal);
                 vec3 towardEye = normalize(-vEyePosition);
                 if (dot(normal, towardEye) < 0.0) normal = -normal;
-                // Broad, neutral overhead key + controlled cool fill.
-                // Keep the brain matte and anatomical, not glassy or neon.
-                vec3 keyLight = normalize(vec3(-0.44, 0.77, 0.47));
-                vec3 fillLight = normalize(vec3(0.77, 0.18, 0.53));
-                float key = max(dot(normal, keyLight), 0.0);
-                float fill = max(dot(normal, fillLight), 0.0);
-                float rim = pow(1.0 - max(dot(normal, towardEye), 0.0), 3.1);
-                vec3 reflected = reflect(-keyLight, normal);
-                float specular = pow(max(dot(reflected, towardEye), 0.0), 40.0);
-                vec3 color = uTint * (0.34 + 0.67 * key + 0.15 * fill);
-                color += vec3(0.16, 0.42, 0.62) * (0.18 * fill + 0.09 * rim);
-                color += vec3(0.92, 0.97, 1.00) * (specular * 0.10);
+                // Warm tissue base with two soft studio spotlights.
+                vec3 keyPosition = vec3(-2.6, 3.2, -1.1);
+                vec3 keyDelta = keyPosition - vEyePosition;
+                float keyDistance = length(keyDelta);
+                vec3 keyDirection = keyDelta / max(keyDistance, 0.001);
+                float keyCone = smoothstep(
+                    0.62, 0.84,
+                    dot(-keyDirection, normalize(vec3(0.43, -0.54, -0.72)))
+                );
+                float keyAttenuation = 1.0 / (1.0 + 0.035 * keyDistance * keyDistance);
+                float keyWrap = max((dot(normal, keyDirection) + 0.24) / 1.24, 0.0);
+                float keySpecular = pow(
+                    max(dot(normal, normalize(keyDirection + towardEye)), 0.0), 34.0
+                );
+
+                vec3 fillPosition = vec3(2.8, 2.2, -0.7);
+                vec3 fillDelta = fillPosition - vEyePosition;
+                float fillDistance = length(fillDelta);
+                vec3 fillDirection = fillDelta / max(fillDistance, 0.001);
+                float fillCone = smoothstep(
+                    0.62, 0.84,
+                    dot(-fillDirection, normalize(vec3(-0.52, -0.41, -0.75)))
+                );
+                float fillAttenuation = 1.0 / (1.0 + 0.035 * fillDistance * fillDistance);
+                float fillWrap = max((dot(normal, fillDirection) + 0.30) / 1.30, 0.0);
+                float fillSpecular = pow(
+                    max(dot(normal, normalize(fillDirection + towardEye)), 0.0), 28.0
+                );
+
+                float hemisphere = 0.5 + 0.5 * normal.y;
+                float rim = pow(1.0 - max(dot(normal, towardEye), 0.0), 2.5);
+                vec3 color = uTint * (0.28 + 0.10 * hemisphere);
+                color += uTint * (0.78 * keyWrap * keyCone * keyAttenuation);
+                color += uTint * (0.34 * fillWrap * fillCone * fillAttenuation);
+                color += vec3(1.00, 0.73, 0.59) *
+                    (0.20 * keySpecular * keyCone * keyAttenuation);
+                color += vec3(0.55, 0.82, 1.00) *
+                    (0.13 * fillSpecular * fillCone * fillAttenuation);
+                color += vec3(0.20, 0.48, 0.62) * (0.11 * rim);
                 gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
             }
         """

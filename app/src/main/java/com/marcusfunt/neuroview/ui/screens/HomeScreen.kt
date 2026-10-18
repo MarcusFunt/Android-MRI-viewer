@@ -1,5 +1,6 @@
 package com.marcusfunt.neuroview.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,21 +47,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import android.content.Context
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -171,20 +167,17 @@ fun HomeScreen(
                         NeuroMark(Modifier.size(45.dp))
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                buildAnnotatedString {
-                                    append("Neuro")
-                                    withStyle(SpanStyle(color = Cyan)) { append("View") }
-                                },
+                                "NeuroView",
                                 fontSize = 29.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Foreground,
+                                color = Color(0xFFF1F1F1),
                                 letterSpacing = (-0.5).sp,
                             )
                             Text(
                                 "MRI exploration workspace",
                                 fontSize = 12.sp,
                                 letterSpacing = 0.1.sp,
-                                color = Secondary,
+                                color = Color(0xFF9E9E9E),
                                 maxLines = 1,
                             )
                         }
@@ -401,40 +394,13 @@ private fun DetailPill(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** Small vector-style mark, drawn at device resolution. No external image asset. */
+/** Reuses the app's recognizable brain mark in the home-screen wordmark. */
 @Composable
 private fun NeuroMark(modifier: Modifier) {
-    Canvas(modifier) {
-        val w = size.width
-        val h = size.height
-        val left = Path().apply {
-            moveTo(w * .50f, h * .17f)
-            cubicTo(w * .29f, h * .03f, w * .20f, h * .21f, w * .23f, h * .31f)
-            cubicTo(w * .06f, h * .31f, w * .05f, h * .53f, w * .19f, h * .60f)
-            cubicTo(w * .07f, h * .78f, w * .28f, h * .93f, w * .43f, h * .83f)
-            cubicTo(w * .49f, h * .90f, w * .53f, h * .82f, w * .50f, h * .70f)
-        }
-        val right = Path().apply {
-            moveTo(w * .50f, h * .17f)
-            cubicTo(w * .72f, h * .05f, w * .81f, h * .23f, w * .77f, h * .33f)
-            cubicTo(w * .95f, h * .36f, w * .95f, h * .57f, w * .81f, h * .63f)
-            cubicTo(w * .93f, h * .80f, w * .70f, h * .94f, w * .56f, h * .83f)
-            cubicTo(w * .51f, h * .91f, w * .48f, h * .79f, w * .50f, h * .70f)
-        }
-        val sw = 2.2.dp.toPx()
-        drawPath(left, Cyan, style = Stroke(sw, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawPath(right, Cyan, style = Stroke(sw, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawLine(Cyan, Offset(w * .50f, h * .19f), Offset(w * .50f, h * .72f), sw)
-        val fold = Path().apply {
-            moveTo(w * .31f, h * .28f)
-            cubicTo(w * .17f, h * .42f, w * .48f, h * .36f, w * .35f, h * .53f)
-            moveTo(w * .69f, h * .27f)
-            cubicTo(w * .85f, h * .44f, w * .54f, h * .40f, w * .67f, h * .55f)
-            moveTo(w * .25f, h * .67f)
-            cubicTo(w * .38f, h * .59f, w * .43f, h * .67f, w * .44f, h * .76f)
-            moveTo(w * .75f, h * .67f)
-            cubicTo(w * .63f, h * .58f, w * .56f, h * .67f, w * .56f, h * .77f)
-        }
-        drawPath(fold, Cyan, style = Stroke(sw * .82f, cap = StrokeCap.Round))
-    }
+    Image(
+        painter = painterResource(com.marcusfunt.neuroview.R.drawable.neuroview_logo),
+        contentDescription = "NeuroView brain logo",
+        modifier = modifier,
+        contentScale = ContentScale.Fit,
+    )
 }

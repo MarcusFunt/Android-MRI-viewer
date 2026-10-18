@@ -56,6 +56,14 @@ NeuroView processing panel (not the local HTTP URL). Do not use Tailscale Funnel
 Make sure the Android device is joined to the tailnet and your ACLs restrict
 access to trusted devices.
 
+On Windows, run `tools/brainsuite_bridge/start_windows.ps1` from PowerShell.
+It keeps job files under `%LOCALAPPDATA%\NeuroView\BrainSuiteJobs` by default;
+pass `-DataRoot 'D:\NeuroView\BrainSuiteJobs'` to use another local drive.
+The bridge token is encrypted with Windows DPAPI for the current user, and the
+loopback service starts in a hidden process. The first run prints the token;
+later runs can show it with `-ShowToken`. `/health` reports `ready: false`
+until Docker Engine is running and the configured BrainSuite image is present.
+
 ## Run a job
 
 1. Import and open a valid **T1-weighted** NIfTI in NeuroView.
