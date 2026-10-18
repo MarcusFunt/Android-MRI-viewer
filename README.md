@@ -7,7 +7,7 @@
 ## Project status and Android builds
 
 - **Current source version:** `1.4.0` (from `app/build.gradle.kts`). Active development includes the redesigned Library and Viewer, voxel probing, and optional BrainSuite processing.
-- **Latest published GitHub release:** [v0.7.0 debug prerelease](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v0.7.0). **This APK is older than the current source and does not include all 1.4 features.** [Download the older v0.7.0 APK](https://github.com/MarcusFunt/Android-MRI-viewer/releases/download/v0.7.0/NeuroView-v0.7.0-debug.apk).
+- **Latest GitHub release:** [v1.4.0 research preview](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.4.0), built from the source version documented here. It is a debug-signed research build, not a clinical product. The older [v0.7.0 debug prerelease](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v0.7.0) remains available for historical use and does not include all 1.4 features.
 - **Build the current source**, or open the [Android CI workflow](https://github.com/MarcusFunt/Android-MRI-viewer/actions/workflows/android.yml) and download the `neuroview-debug` artifact from a successful run for the desired commit. GitHub Actions artifacts are ZIP archives containing `app-debug.apk`; a successful build is not a clinical validation.
 - These are **debug-signed development builds**, not production releases. Only install APKs from sources you trust. A CI artifact and the older tagged APK may not have matching signing keys; do not uninstall an existing installation without considering the loss of its app-private library catalog.
 
