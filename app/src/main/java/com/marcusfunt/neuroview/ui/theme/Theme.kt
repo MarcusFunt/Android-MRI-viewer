@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.sp
 
 // Calm, high-contrast dark surfaces keep grayscale medical images visually neutral.
 private val DarkPalette = darkColorScheme(
-    primary = Color(0xFF83DBDB),
+    primary = Color(0xFF79D6E6),
     onPrimary = Color(0xFF003638),
     primaryContainer = Color(0xFF19464D),
     onPrimaryContainer = Color(0xFFB4FAF5),
