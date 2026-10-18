@@ -84,7 +84,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
@@ -123,6 +122,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 internal const val VIEWER_DISPLAY_PREFERENCES = "neuroview_display_v1"
 internal const val SHOW_ORIENTATION_MARKERS_KEY = "show_orientation_markers"
@@ -354,23 +354,16 @@ fun ViewerScreen(
 }
 
 private fun createViewerBitmap(image: MprImage): Bitmap {
-    // Lift only the darkest display values into the deep-navy canvas shade. This
-    // blends the scan's black exterior into the viewport without a hard outline;
-    // source voxel values remain untouched.
+    // Let only the darkest display values blend with the canvas. This removes
+    // the opaque rectangular slice background while leaving source voxels alone.
     val pixels = image.pixels.copyOf()
-    val canvasColor = NeuroChrome.background.toArgb()
-    val backgroundRed = (canvasColor ushr 16) and 0xff
-    val backgroundGreen = (canvasColor ushr 8) and 0xff
-    val backgroundBlue = canvasColor and 0xff
     val lowEndRange = 24
     for (index in pixels.indices) {
         val intensity = pixels[index] and 0xff
         if (intensity < lowEndRange) {
-            val blend = intensity / lowEndRange.toFloat()
-            val red = (backgroundRed * (1f - blend) + intensity * blend).roundToInt()
-            val green = (backgroundGreen * (1f - blend) + intensity * blend).roundToInt()
-            val blue = (backgroundBlue * (1f - blend) + intensity * blend).roundToInt()
-            pixels[index] = android.graphics.Color.rgb(red, green, blue)
+            val alpha = (intensity * 255f / lowEndRange).roundToInt().coerceIn(0, 255)
+            pixels[index] = (alpha shl 24) or (intensity shl 16) or
+                (intensity shl 8) or intensity
         }
     }
     return Bitmap.createBitmap(pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
@@ -380,23 +373,16 @@ private fun createViewerBitmap(image: MprImage): Bitmap {
 private fun ViewerBackdrop(modifier: Modifier = Modifier) {
     Box(modifier.background(NeuroChrome.background)) {
         Canvas(Modifier.fillMaxSize()) {
-            val glowColors = listOf(
-                NeuroChrome.accent.copy(alpha = 0.12f),
-                Color(0xFF2B5E83).copy(alpha = 0.07f),
-                Color.Transparent,
-            )
-            val radius = size.width * 0.62f
+            val radius = sqrt(size.width * size.width + size.height * size.height) / 2f
             drawRect(
                 brush = Brush.radialGradient(
-                    colors = glowColors,
-                    center = Offset(size.width * 0.04f, size.height * 0.17f),
-                    radius = radius,
-                ),
-            )
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = glowColors,
-                    center = Offset(size.width * 0.96f, size.height * 0.91f),
+                    colorStops = arrayOf(
+                        0f to Color.Transparent,
+                        0.48f to Color.Transparent,
+                        0.82f to Color(0xFF115177).copy(alpha = 0.045f),
+                        1f to NeuroChrome.accent.copy(alpha = 0.075f),
+                    ),
+                    center = Offset(size.width / 2f, size.height / 2f),
                     radius = radius,
                 ),
             )
@@ -542,7 +528,8 @@ private fun MriContent(
                     ) {
                         Text(
                             option.label,
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                             color = if (selected) NeuroChrome.accent else NeuroChrome.muted,
                         )
                         if (selected) {
@@ -563,7 +550,6 @@ private fun MriContent(
         val currentScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
         Box(
             modifier = Modifier.fillMaxWidth().weight(1f)
-                .background(NeuroChrome.background)
                 .onSizeChanged { imageViewport = it }
                 .pointerInput(zoomMode) {
                     if (zoomMode) detectTapGestures(onDoubleTap = {
@@ -846,7 +832,7 @@ private fun MriContent(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null,
                             modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(3.dp))
-                        Text("Prev", style = MaterialTheme.typography.labelSmall)
+                        Text("Prev", style = MaterialTheme.typography.labelMedium)
                     }
                     Slider(
                         value = selectedSlice.toFloat(),
@@ -894,7 +880,7 @@ private fun MriContent(
                             contentDescription = "Next slice"
                         },
                     ) {
-                        Text("Next", style = MaterialTheme.typography.labelSmall)
+                        Text("Next", style = MaterialTheme.typography.labelMedium)
                         Spacer(Modifier.width(3.dp))
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
                             modifier = Modifier.size(16.dp))
@@ -905,28 +891,28 @@ private fun MriContent(
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         ) {
-            if (orientationUnknown || showOrientationMarkers) {
-                Text(
-                    if (orientationUnknown)
-                        "Orientation unverified" else MprRenderer.displayOrientation(plane),
-                    color = if (orientationUnknown)
-                        MaterialTheme.colorScheme.error else NeuroChrome.muted,
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
             TextButton(onClick = {
                 zoomMode = !zoomMode
                 probeMode = false
                 onReferenceWorldChange(null)
                 scale = DEFAULT_MRI_IMAGE_SCALE
                 panOffset = Offset.Zero
-            }) {
-                Text(if (zoomMode) "Scroll" else "Zoom")
+            }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(if (zoomMode) "Scroll" else "Zoom", style = MaterialTheme.typography.labelLarge)
             }
-            TextButton(onClick = { showAdjustments = true }) { Text("Adjust") }
-            TextButton(onClick = { showProcessing = true }) { Text("Process") }
+            TextButton(onClick = { showAdjustments = true },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text("Adjust", style = MaterialTheme.typography.labelLarge)
+            }
+            TextButton(onClick = { showProcessing = true },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text("Process", style = MaterialTheme.typography.labelLarge)
+            }
         }
         if (orientationUnknown) {
             Text(

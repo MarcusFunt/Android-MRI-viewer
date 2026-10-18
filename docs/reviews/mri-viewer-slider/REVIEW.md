@@ -6,9 +6,11 @@ Reviewed in the Android emulator using the local **BrainChop demo sample, not a 
 
 The viewer keeps axial, coronal, and sagittal choices in one compact, one-tap tab row. The duplicate plane button and slide-out plane panel are removed. The slice control no longer sits in a large outlined card: the slice count and coordinate share a slim header, the track and handle are compact, and small previous/next buttons flank the slider. Those buttons retain 48 dp touch targets, and the slider announces its slice and coordinate to accessibility services.
 
-The viewer uses the app's deep-navy canvas with restrained cyan/blue edge glows behind the HUD, so the image no longer appears inside a separate rounded box. Dark scan edges blend into the canvas while preserving the grayscale anatomy. The initial image scale is 130% of fit to give the brain more of the available display. Orientation markers start hidden; the Home Settings sheet has a saved “Orientation markers” switch for R/L and A/P labels.
+The viewer uses one unframed deep-navy canvas. A faint cyan/blue perimeter glow fades inward across the screen instead of forming separate top and bottom bands. The MRI viewport is transparent, and near-black rendered pixels blend with the canvas so the slice image does not leave a rectangular edge; source voxel data is unchanged. The initial image scale is 130% of fit to give the brain more of the available display.
 
-![Updated MRI viewer with a deep-blue canvas and edge glow, larger brain, compact plane tabs and slice control, and markers hidden](04-compact-viewer.png)
+Plane and slice controls remain easy to reach. Their labels are more readable, the lower actions sit together rather than spreading across the width, and the slice buttons keep 48 dp touch targets. Orientation markers start hidden; the Home Settings sheet has a saved “Orientation markers” switch for R/L and A/P labels.
+
+![Updated MRI viewer with a continuous deep-blue canvas, subtle perimeter glow, larger brain, grouped readable controls, and markers hidden](04-compact-viewer.png)
 
 The loading state now carries NeuroView branding, with the app logo, an accent progress ring, and a short status message over the same blue glow treatment.
 
