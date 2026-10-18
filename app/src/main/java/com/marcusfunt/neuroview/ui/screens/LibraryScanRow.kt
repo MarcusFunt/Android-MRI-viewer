@@ -69,7 +69,7 @@ internal fun LibraryScanRow(
                 )
                 Text(
                     scan.metadata.spacingMm.joinToString(" × ") {
-                        java.math.BigDecimal.valueOf(it).stripTrailingZeros().toPlainString()
+                        String.format(java.util.Locale.US, "%.2f", it).trimEnd('0').trimEnd('.')
                     } + " mm",
                     style = MaterialTheme.typography.labelSmall, color = NeuroChrome.muted,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
