@@ -140,7 +140,7 @@ The Python QA outputs contain only synthetic scans, never patient data. JVM timi
 
 Sensitive images, generated datasets, and patient exports are excluded by `.gitignore`. Use only public or synthetic test data in the source tree.
 
-See [architecture notes](docs/ARCHITECTURE.md).
+See [architecture notes](ARCHITECTURE.md).
 
 ## Subsequent source-version notes (v0.9 through v1.4)
 
