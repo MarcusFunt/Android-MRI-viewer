@@ -82,6 +82,7 @@ fun LibraryScreen(
     snapshot: ScanCatalogSnapshot,
     catalog: ScanCatalog,
     isBusy: Boolean,
+    activityLabel: String? = null,
     feedback: String?,
     onImport: () -> Unit,
     onConvertDicom: () -> Unit,
@@ -214,7 +215,7 @@ fun LibraryScreen(
                             CircularProgressIndicator(
                                 modifier = Modifier.padding(4.dp), strokeWidth = 2.dp,
                             )
-                            Text("Working on selected MRI operation…", color = NeuroChrome.muted)
+                            Text(activityLabel ?: "Working on MRI operation…", color = NeuroChrome.muted)
                         }
                     }
                     if (!feedback.isNullOrBlank()) {
