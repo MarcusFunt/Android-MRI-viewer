@@ -41,8 +41,10 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
     private val model = FloatArray(16)
     private val modelView = FloatArray(16)
     private val mvp = FloatArray(16)
+    private var frames = 0
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        Log.i("NeuroViewBrain", "GLES2 surface created")
         GLES20.glClearColor(0f, 0f, 0f, 0f)
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
         GLES20.glDepthFunc(GLES20.GL_LEQUAL)
@@ -60,6 +62,7 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
             Log.e("NeuroViewBrain", "Bundled model unavailable; using offline fallback", failure)
             BrainGeometry.build()
         }
+        Log.i("NeuroViewBrain", "CPU meshes: ${cpuMeshes.size}")
         meshes = cpuMeshes.map { cpu ->
             val vertexData = ByteBuffer.allocateDirect(cpu.vertices.size * 4)
                 .order(ByteOrder.nativeOrder())
@@ -79,12 +82,14 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+        Log.i("NeuroViewBrain", "GL viewport ${width} x ${height}")
         GLES20.glViewport(0, 0, width, height)
         val safeAspect = width.toFloat() / height.coerceAtLeast(1)
         Matrix.perspectiveM(projection, 0, 36f, safeAspect, 0.1f, 20f)
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        if (frames++ == 0) Log.i("NeuroViewBrain", "First GL draw, program=$program, meshes=${meshes.size}")
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         if (program == 0) return
 
@@ -120,6 +125,7 @@ internal class BrainRenderer(private val context: Context) : GLSurfaceView.Rende
         }
         GLES20.glDisableVertexAttribArray(positionHandle)
         GLES20.glDisableVertexAttribArray(normalHandle)
+        if (frames == 1) Log.i("NeuroViewBrain", "GL frame status ${GLES20.glGetError()}")
     }
 
     private fun createProgram(vertex: String, fragment: String): Int {
