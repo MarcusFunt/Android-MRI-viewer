@@ -30,7 +30,7 @@ object NeuroChrome {
     val muted = Color(0xFFA5B9CC)
     val blue = Color(0xFF1882DF)
     val primaryGradient = Brush.horizontalGradient(
-        listOf(Color(0xFF0EABC9), Color(0xFF1B76DA)),
+        listOf(Color(0xFF12547C), Color(0xFF1B5F9B)),
     )
     val backgroundGradient = Brush.verticalGradient(
         listOf(Color(0xFF081725), Color(0xFF0A1D2E), Color(0xFF07121F)),
