@@ -314,7 +314,8 @@ fun HomeScreen(
             containerColor = Color(0xFF101F30),
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(13.dp),
             ) {
                 Text(
