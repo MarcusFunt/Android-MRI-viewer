@@ -76,6 +76,8 @@ fun BrainSuitePanel(
         runCatching { BrainSuiteClient(address, accessToken) }.isSuccess
     }
 
+    fun client() = BrainSuiteClient(address, accessToken)
+
     LaunchedEffect(documentUri, address, stage) {
         consent = false
     }
@@ -92,7 +94,6 @@ fun BrainSuitePanel(
         }
     }
 
-    fun client() = BrainSuiteClient(address, accessToken)
 
     fun perform(operation: suspend () -> Unit) {
         if (busy) return
