@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
@@ -17,6 +18,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -99,6 +101,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.mri.MprRenderSession
 import com.marcusfunt.neuroview.mri.MprRenderer
+import com.marcusfunt.neuroview.mri.MprProbe
 import com.marcusfunt.neuroview.mri.MriPlane
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.navigation.Destination
@@ -166,11 +169,16 @@ fun ViewerScreen(
 
     val ready = volumeState as? VolumeLoadState.Ready
     val volume = ready?.volume
+    var referenceWorld by remember(volume) { mutableStateOf<DoubleArray?>(null) }
     val sliceCount = if (volume != null) MprRenderer.sliceCount(volume, plane) else 1
     val selectedSlice = sliceIndex.coerceIn(0, sliceCount - 1)
 
     LaunchedEffect(volume, plane) {
-        sliceIndex = if (volume != null) MprRenderer.sliceCount(volume, plane) / 2 else 0
+        sliceIndex = when {
+            volume == null -> 0
+            referenceWorld != null -> MprProbe.sliceForWorld(volume, plane, requireNotNull(referenceWorld))
+            else -> MprRenderer.sliceCount(volume, plane) / 2
+        }
     }
 
     // Preserve the previous frame until its replacement is ready. Heavy resampling
@@ -312,6 +320,8 @@ fun ViewerScreen(
                         onPlaneSelect = { plane = it },
                         selectedDocumentUri = selectedDocumentUri,
                         originalDocumentName = volumeState.displayName,
+                        referenceWorld = referenceWorld,
+                        onReferenceWorldChange = { referenceWorld = it },
                         windowCenter = windowCenter,
                         onWindowCenter = ::setWindowCenter,
                         windowWidth = windowWidth,
@@ -419,6 +429,8 @@ private fun MriContent(
     onPlaneSelect: (MriPlane) -> Unit,
     selectedDocumentUri: String?,
     originalDocumentName: String?,
+    referenceWorld: DoubleArray?,
+    onReferenceWorldChange: (DoubleArray) -> Unit,
     windowCenter: Float,
     onWindowCenter: (Float) -> Unit,
     windowWidth: Float,
@@ -432,6 +444,8 @@ private fun MriContent(
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
     var zoomMode by rememberSaveable { mutableStateOf(false) }
+    var probeMode by rememberSaveable { mutableStateOf(false) }
+    var probeReading by remember(volume, plane) { mutableStateOf<String?>(null) }
     var scale by remember(volume, plane) { mutableFloatStateOf(1f) }
     var panOffset by remember(volume, plane) { mutableStateOf(Offset.Zero) }
     var imageViewport by remember { mutableStateOf(IntSize.Zero) }
@@ -479,8 +493,34 @@ private fun MriContent(
                 .border(if (focusMode) 0.dp else 1.dp,
                     NeuroChrome.stroke.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
                 .onSizeChanged { imageViewport = it }
-                .pointerInput(volume, plane, totalSlices, zoomMode) {
-                    if (zoomMode) {
+                .pointerInput(volume, plane, totalSlices, zoomMode, probeMode, bitmap) {
+                    if (probeMode) {
+                        detectTapGestures(onTap = { tap ->
+                            val image = bitmap
+                            if (image != null && imageViewport.width > 0 && imageViewport.height > 0) {
+                                val fit = minOf(
+                                    imageViewport.width.toFloat() / image.width,
+                                    imageViewport.height.toFloat() / image.height,
+                                )
+                                val imageWidth = image.width * fit
+                                val imageHeight = image.height * fit
+                                val fractionX = (tap.x - (imageViewport.width - imageWidth) / 2f) / imageWidth
+                                val fractionY = (tap.y - (imageViewport.height - imageHeight) / 2f) / imageHeight
+                                val sampled = MprProbe.sample(
+                                    volume, plane, currentSlice,
+                                    fractionX.toDouble(), fractionY.toDouble(),
+                                )
+                                if (sampled != null) {
+                                    onReferenceWorldChange(sampled.worldRasMm)
+                                    probeReading = "Voxel ${sampled.voxelIJK.joinToString(", ") {
+                                        it.roundToInt().toString()
+                                    }} · intensity ${String.format(java.util.Locale.US, "%.2f", sampled.intensity)}"
+                                } else {
+                                    probeReading = "No measured voxel at that position."
+                                }
+                            }
+                        })
+                    } else if (zoomMode) {
                         detectTransformGestures { _, pan, zoom, _ ->
                             val newScale = (scale * zoom).coerceIn(1f, 6f)
                             scale = newScale
@@ -601,6 +641,54 @@ private fun MriContent(
                     color = NeuroChrome.muted,
                 )
             }
+            if (referenceWorld != null && bitmap != null && imageViewport.width > 0) {
+                val position = MprRenderer.slicePosition(volume, plane, currentSlice)
+                val count = MprRenderer.sliceCount(volume, plane)
+                val bounds = volume.affine.bounds(volume.nx, volume.ny, volume.nz)
+                val spacing = (bounds[1][plane.firstAxis] - bounds[0][plane.firstAxis]) /
+                    (count - 1).coerceAtLeast(1)
+                if (abs(referenceWorld[plane.firstAxis] - position) <= spacing * 0.55) {
+                    val (fx, fy) = MprProbe.fractionsForWorld(volume, plane, referenceWorld)
+                    val fit = minOf(imageViewport.width.toFloat() / bitmap.width,
+                        imageViewport.height.toFloat() / bitmap.height)
+                    val imageWidth = bitmap.width * fit
+                    val imageHeight = bitmap.height * fit
+                    val centerX = imageViewport.width / 2f
+                    val centerY = imageViewport.height / 2f
+                    val x = ((imageViewport.width - imageWidth) / 2f + fx.toFloat() * imageWidth -
+                        centerX) * scale + centerX + panOffset.x
+                    val y = ((imageViewport.height - imageHeight) / 2f + fy.toFloat() * imageHeight -
+                        centerY) * scale + centerY + panOffset.y
+                    if (x in 0f..imageViewport.width.toFloat() &&
+                        y in 0f..imageViewport.height.toFloat()) {
+                        Canvas(Modifier.fillMaxSize()) {
+                            val lineColor = NeuroChrome.accent.copy(alpha = 0.65f)
+                            drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), 1.dp.toPx())
+                            drawLine(lineColor, Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
+                        }
+                    }
+                }
+            }
+            if (!focusMode) {
+                TextButton(
+                    onClick = {
+                        probeMode = !probeMode
+                        zoomMode = false
+                        scale = 1f
+                        panOffset = Offset.Zero
+                    },
+                    modifier = Modifier.align(Alignment.TopEnd),
+                ) { Text(if (probeMode) "End probe" else "Probe",
+                    color = NeuroChrome.accent) }
+            }
+            if (probeMode) {
+                Text(
+                    probeReading ?: "Tap a voxel to inspect intensity and set a cross-plane reference.",
+                    modifier = Modifier.align(Alignment.BottomStart).padding(10.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NeuroChrome.ink,
+                )
+            }
         }
 
         if (!focusMode) {
@@ -700,6 +788,7 @@ private fun MriContent(
             )
             TextButton(onClick = {
                 zoomMode = !zoomMode
+                probeMode = false
                 scale = 1f
                 panOffset = Offset.Zero
             }) {
