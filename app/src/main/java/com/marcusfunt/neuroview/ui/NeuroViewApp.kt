@@ -207,6 +207,7 @@ fun NeuroViewApp() {
                 entry<Destination.Library> {
                     LibraryScreen(
                         snapshot = snapshot,
+                        catalog = catalog,
                         isBusy = importBusy || editBusy || conversions.busy,
                         feedback = conversions.message ?: libraryMessage ?: importMessage,
                         onConvertDicom = conversions.selectDicomFolder,
