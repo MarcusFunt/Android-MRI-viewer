@@ -203,12 +203,7 @@ fun ViewerScreen(
                     onClick = { fromDrawer(Destination.Home) },
                 )
                 NavigationDrawerItem(
-                    label = { Text("Series selector") },
-                    selected = false,
-                    onClick = { fromDrawer(Destination.Series) },
-                )
-                NavigationDrawerItem(
-                    label = { Text("Library") },
+                    label = { Text("Browse scans") },
                     selected = false,
                     onClick = { fromDrawer(Destination.Library) },
                 )
