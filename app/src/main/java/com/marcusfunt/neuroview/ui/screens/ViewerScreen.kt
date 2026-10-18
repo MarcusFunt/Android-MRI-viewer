@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -674,8 +673,6 @@ private fun MriContent(
                 scale = 1f
                 panOffset = Offset.Zero
             }) {
-                Icon(Icons.Default.ZoomIn, contentDescription = null, Modifier.size(16.dp))
-                Spacer(Modifier.width(3.dp))
                 Text(if (zoomMode) "Scroll" else "Zoom")
             }
             TextButton(onClick = { showAdjustments = true }) { Text("Adjust") }
