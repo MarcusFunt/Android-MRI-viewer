@@ -9,6 +9,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -112,6 +114,7 @@ import kotlin.math.roundToInt
 fun ViewerScreen(
     volumeState: VolumeLoadState,
     displayNameOverride: String? = null,
+    selectedDocumentUri: String? = null,
     onImport: () -> Unit,
     onNavigate: (Destination) -> Unit,
 ) {
@@ -276,6 +279,8 @@ fun ViewerScreen(
                         onScrubbingChanged = { isScrubbing = it },
                         onOpenPlanePanel = { panelOpen = true },
                         onPlaneSelect = { plane = it },
+                        selectedDocumentUri = selectedDocumentUri,
+                        originalDocumentName = volumeState.displayName,
                         windowCenter = windowCenter,
                         onWindowCenter = { windowCenter = it },
                         windowWidth = windowWidth,
@@ -375,6 +380,8 @@ private fun MriContent(
     onScrubbingChanged: (Boolean) -> Unit,
     onOpenPlanePanel: () -> Unit,
     onPlaneSelect: (MriPlane) -> Unit,
+    selectedDocumentUri: String?,
+    originalDocumentName: String?,
     windowCenter: Float,
     onWindowCenter: (Float) -> Unit,
     windowWidth: Float,
@@ -384,6 +391,7 @@ private fun MriContent(
     val currentSlice by rememberUpdatedState(selectedSlice)
     val currentOnSliceChange by rememberUpdatedState(onSliceChange)
     var showAdjustments by rememberSaveable { mutableStateOf(false) }
+    var editPage by rememberSaveable { mutableStateOf("display") }
     Column(
         modifier = modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp),
@@ -603,7 +611,7 @@ private fun MriContent(
             TextButton(onClick = { showAdjustments = !showAdjustments }) {
                 Icon(Icons.Default.Edit, contentDescription = null, Modifier.size(17.dp))
                 Spacer(Modifier.width(7.dp))
-                Text(if (showAdjustments) "Hide adjustments" else "Adjust image")
+                Text(if (showAdjustments) "Close editor" else "Edit")
             }
         }
         if (volume.transformSource.startsWith("NO ORIENTATION")) {
@@ -629,7 +637,8 @@ private fun MriContent(
             containerColor = NeuroChrome.topBar,
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Row(
@@ -637,7 +646,27 @@ private fun MriContent(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Image adjustments", style = MaterialTheme.typography.titleLarge)
+                    Text("Edit MRI", style = MaterialTheme.typography.titleLarge)
+                    TextButton(onClick = { showAdjustments = false }) { Text("Close") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    FilterChip(
+                        selected = editPage == "display",
+                        onClick = { editPage = "display" },
+                        label = { Text("Display") },
+                    )
+                    FilterChip(
+                        selected = editPage == "brainsuite",
+                        onClick = { editPage = "brainsuite" },
+                        label = { Text("BrainSuite") },
+                    )
+                }
+                if (editPage == "display") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Image adjustments", style = MaterialTheme.typography.titleMedium)
                     TextButton(onClick = {
                         onWindowCenter(0.5f)
                         onWindowWidth(1.0f)
@@ -715,6 +744,12 @@ private fun MriContent(
                     onClick = { showAdjustments = false },
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                 ) { Text("Done") }
+                } else {
+                    BrainSuitePanel(
+                        documentUri = selectedDocumentUri,
+                        documentName = originalDocumentName,
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
             }
         }
