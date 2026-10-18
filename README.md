@@ -255,8 +255,8 @@ The Series browser and MRI Library now use the same restrained navy surfaces, qu
 
 ## NeuroView 1.3.0 — optional BrainSuite editing
 
-The MRI viewer's **Edit** sheet now separates local display adjustments
-from **BrainSuite anatomical processing**. Select **Surface extraction** (CSE)
+The MRI viewer separates **Adjust** (local display controls) from
+**Process** (BrainSuite anatomical processing). Select **Surface extraction** (CSE)
 or **Extract + atlas** (CSE + SVReg) for a T1-weighted NIfTI file. The
 upstream BrainSuite 23a BIDS App runs on your own Docker workstation via a
 small companion service; it is not bundled into the APK. NeuroView only
