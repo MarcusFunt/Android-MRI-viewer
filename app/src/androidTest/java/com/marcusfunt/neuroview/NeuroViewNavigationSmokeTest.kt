@@ -17,7 +17,7 @@ class NeuroViewNavigationSmokeTest {
         compose.onNodeWithText("NeuroView").assertExists()
         compose.onNodeWithText("Browse scans").assertExists()
         compose.onNodeWithText("Import MRI").assertExists()
-        compose.onNodeWithContentDescription("Landing page settings").assertExists()
+        compose.onNodeWithContentDescription("Settings").assertExists()
     }
 
     @Test
@@ -30,7 +30,7 @@ class NeuroViewNavigationSmokeTest {
 
     @Test
     fun settingsControlRotationAndGlowWithoutLeavingHome() {
-        compose.onNodeWithContentDescription("Landing page settings").performClick()
+        compose.onNodeWithContentDescription("Settings").performClick()
         compose.onNodeWithText("Automatically rotate brain").assertExists()
         compose.onNodeWithText("Ambient background glow").assertExists()
         compose.onNodeWithText("Reset brain orientation").performClick()
