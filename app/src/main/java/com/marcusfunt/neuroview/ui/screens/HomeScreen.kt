@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,7 +60,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import android.content.Context
 import androidx.compose.ui.unit.sp
@@ -156,7 +156,6 @@ fun HomeScreen(
         ) { scaffoldPadding ->
             Column(
                 modifier = Modifier.fillMaxSize().padding(scaffoldPadding)
-                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(11.dp),
             ) {
@@ -210,9 +209,7 @@ fun HomeScreen(
                 // The translucent GLES viewport is intentionally unframed;
                 // no card, border, or explanatory labels sit around the brain.
                 Box(
-                    modifier = Modifier.fillMaxWidth().height(
-                        (LocalConfiguration.current.screenHeightDp.dp * 0.42f).coerceIn(220.dp, 390.dp),
-                    ),
+                    modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 180.dp),
                 ) {
                     BrainPreview(
                         modifier = Modifier.fillMaxSize(),
@@ -221,6 +218,12 @@ fun HomeScreen(
                     )
                 }
 
+                // Keep GLSurfaceView in the fixed, non-scrolling composition.
+                // Only action controls scroll on compact displays.
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(11.dp),
+                ) {
                 if (!lastScanName.isNullOrBlank()) {
                     Row(
                         modifier = Modifier.fillMaxWidth()
@@ -304,6 +307,7 @@ fun HomeScreen(
                     textAlign = TextAlign.Center,
                     color = Secondary.copy(alpha = 0.8f),
                 )
+                }
             }
         }
     }
