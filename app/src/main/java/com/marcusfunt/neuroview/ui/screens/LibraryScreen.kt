@@ -207,7 +207,7 @@ fun LibraryScreen(
                             label = { Text("Collections") })
                         FilterChip(selected = sort == "Name", onClick = {
                             sort = if (sort == "Name") "Recent" else "Name"
-                        }, label = { Text(if (sort == "Name") "A–Z" else "Recent first") })
+                        }, label = { Text(if (sort == "Name") "A–Z" else "Newest imports") })
                     }
                     if (isBusy) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
