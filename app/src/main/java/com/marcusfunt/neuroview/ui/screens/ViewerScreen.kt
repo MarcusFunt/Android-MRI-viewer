@@ -2,20 +2,14 @@ package com.marcusfunt.neuroview.ui.screens
 
 import android.graphics.Bitmap
 import android.content.Context
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.exponentialDecay
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -26,14 +20,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
@@ -49,7 +45,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -68,6 +63,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
@@ -82,26 +78,34 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.DpSize
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
-import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.marcusfunt.neuroview.mri.MprRenderSession
 import com.marcusfunt.neuroview.mri.MprRenderer
 import com.marcusfunt.neuroview.mri.MprProbe
+import com.marcusfunt.neuroview.mri.MprImage
 import com.marcusfunt.neuroview.mri.MriPlane
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.navigation.Destination
@@ -120,6 +124,10 @@ import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+internal const val VIEWER_DISPLAY_PREFERENCES = "neuroview_display_v1"
+internal const val SHOW_ORIENTATION_MARKERS_KEY = "show_orientation_markers"
+private const val DEFAULT_MRI_IMAGE_SCALE = 1.3f
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ViewerScreen(
@@ -130,14 +138,25 @@ fun ViewerScreen(
     onNavigate: (Destination) -> Unit,
 ) {
     var plane by rememberSaveable { mutableStateOf(MriPlane.AXIAL) }
-    var panelOpen by rememberSaveable { mutableStateOf(false) }
     var focusMode by rememberSaveable { mutableStateOf(false) }
     var sliceIndex by rememberSaveable { mutableIntStateOf(0) }
     var windowCenter by rememberSaveable { mutableFloatStateOf(0.5f) }
     var windowWidth by rememberSaveable { mutableFloatStateOf(1.0f) }
     val context = LocalContext.current
     val displayPrefs = remember(context.applicationContext) {
-        context.getSharedPreferences("neuroview_display_v1", Context.MODE_PRIVATE)
+        context.getSharedPreferences(VIEWER_DISPLAY_PREFERENCES, Context.MODE_PRIVATE)
+    }
+    var showOrientationMarkers by remember(displayPrefs) {
+        mutableStateOf(displayPrefs.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false))
+    }
+    DisposableEffect(displayPrefs) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == SHOW_ORIENTATION_MARKERS_KEY) {
+                showOrientationMarkers = displayPrefs.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false)
+            }
+        }
+        displayPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { displayPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     val scanKey = remember(selectedDocumentUri) {
         selectedDocumentUri?.let { uri ->
@@ -203,7 +222,7 @@ fun ViewerScreen(
                 val image = preview.render(
                     request.slice, request.center, request.width,
                 ) { context.ensureActive() }
-                Bitmap.createBitmap(image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
+                createViewerBitmap(image)
             }
             // Present completed previews during continuous drag. For still frames,
             // do not display a request superseded by another slider/plane setting.
@@ -217,7 +236,7 @@ fun ViewerScreen(
                     val image = full.render(
                         request.slice, request.center, request.width,
                     ) { context.ensureActive() }
-                    Bitmap.createBitmap(image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
+                    createViewerBitmap(image)
                 }
                 if (latest() == request) bitmap = refined
             }
@@ -232,9 +251,10 @@ fun ViewerScreen(
     }
 
     ModalNavigationDrawer(
+        modifier = Modifier.fillMaxSize().background(NeuroChrome.background),
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = NeuroChrome.topBar) {
+            ModalDrawerSheet(drawerContainerColor = NeuroChrome.background) {
                 Text(
                     "NEUROVIEW",
                     modifier = Modifier.padding(24.dp),
@@ -253,137 +273,180 @@ fun ViewerScreen(
             }
         },
     ) {
-        Scaffold(
-            containerColor = NeuroChrome.background,
-            contentWindowInsets = WindowInsets.safeDrawing,
-            topBar = {
-                if (!focusMode) TopAppBar(
-                    title = {
-                        Text(
-                            displayNameOverride ?: ready?.displayName ?: "MRI viewer",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Default.Menu, contentDescription = "Open navigation menu")
-                        }
-                    },
-                    actions = {
-                        TextButton(onClick = { focusMode = !focusMode }) {
-                            Text(if (focusMode) "Controls" else "Focus", color = NeuroChrome.accent)
-                        }
-                        TextButton(onClick = { panelOpen = true }) {
-                            Text(plane.label, color = NeuroChrome.ink)
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = NeuroChrome.topBar,
-                    ),
-                )
-            },
-        ) { padding ->
-            Box(modifier = Modifier.fillMaxSize().padding(padding).neuroWorkspaceBackground()) {
-                when (volumeState) {
-                    VolumeLoadState.Empty -> ViewerMessage(
-                        title = "No MRI opened",
-                        detail = "Select a .nii or .nii.gz NIfTI volume to begin.",
-                        onImport = onImport,
-                    )
-                    VolumeLoadState.Loading -> Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator()
-                            Text("Reading NIfTI…", modifier = Modifier.padding(20.dp))
-                        }
-                    }
-                    is VolumeLoadState.Failed -> ViewerMessage(
-                        title = "Could not open MRI",
-                        detail = volumeState.explanation,
-                        onImport = onImport,
-                    )
-                    is VolumeLoadState.Ready -> MriContent(
-                        modifier = Modifier.fillMaxSize(),
-                        focusMode = focusMode,
-                        volume = volumeState.volume,
-                        plane = plane,
-                        bitmap = bitmap,
-                        selectedSlice = selectedSlice,
-                        totalSlices = sliceCount,
-                        onSliceChange = { sliceIndex = it.coerceIn(0, sliceCount - 1) },
-                        onScrubbingChanged = { isScrubbing = it },
-                        onOpenPlanePanel = { panelOpen = true },
-                        onPlaneSelect = { plane = it },
-                        selectedDocumentUri = selectedDocumentUri,
-                        originalDocumentName = volumeState.displayName,
-                        referenceWorld = referenceWorld,
-                        onReferenceWorldChange = { referenceWorld = it },
-                        windowCenter = windowCenter,
-                        onWindowCenter = ::setWindowCenter,
-                        windowWidth = windowWidth,
-                        onWindowWidth = ::setWindowWidth,
-                    )
-                }
-
-                if (focusMode) {
-                    TextButton(
-                        onClick = { focusMode = false },
-                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-                    ) { Text("Exit focus", color = NeuroChrome.accent) }
-                }
-                if (panelOpen) {
-                    Box(
-                        modifier = Modifier.fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.55f))
-                            .clickable { panelOpen = false },
-                    )
-                }
-                AnimatedVisibility(
-                    visible = panelOpen,
-                    modifier = Modifier.align(Alignment.CenterEnd),
-                    enter = fadeIn() + slideInHorizontally(initialOffsetX = { it }),
-                    exit = fadeOut() + slideOutHorizontally(targetOffsetX = { it }),
-                ) {
-                    Surface(
-                        modifier = Modifier.align(Alignment.CenterEnd)
-                            .fillMaxHeight()
-                            .fillMaxWidth(0.75f),
-                        color = NeuroChrome.panel,
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "Viewing plane",
-                                    style = MaterialTheme.typography.titleLarge,
-                                )
-                                Spacer(Modifier.weight(1f))
-                                TextButton(onClick = { panelOpen = false }) { Text("Close") }
-                            }
+        Box(modifier = Modifier.fillMaxSize()) {
+            ViewerBackdrop(modifier = Modifier.matchParentSize())
+            Scaffold(
+                modifier = Modifier.fillMaxSize(),
+                containerColor = Color.Transparent,
+                contentWindowInsets = WindowInsets.safeDrawing,
+                topBar = {
+                    if (!focusMode) TopAppBar(
+                        title = {
                             Text(
-                                "MPR reconstructed from one NIfTI volume.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                displayNameOverride ?: ready?.displayName ?: "MRI viewer",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleMedium,
                             )
-                            MriPlane.entries.forEach { option ->
-                                NavigationDrawerItem(
-                                    label = { Text(option.label) },
-                                    selected = plane == option,
-                                    onClick = {
-                                        plane = option
-                                        panelOpen = false
-                                    },
-                                )
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(Icons.Default.Menu, contentDescription = "Open navigation menu")
                             }
-                        }
+                        },
+                        actions = {
+                            TextButton(onClick = { focusMode = !focusMode }) {
+                                Text(if (focusMode) "Controls" else "Focus", color = NeuroChrome.accent)
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = Color.Transparent,
+                        ),
+                    )
+                },
+            ) { padding ->
+                Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+                    when (volumeState) {
+                        VolumeLoadState.Empty -> ViewerMessage(
+                            title = "No MRI opened",
+                            detail = "Select a .nii or .nii.gz NIfTI volume to begin.",
+                            onImport = onImport,
+                        )
+                        VolumeLoadState.Loading -> ViewerLoadingScreen()
+                        is VolumeLoadState.Failed -> ViewerMessage(
+                            title = "Could not open MRI",
+                            detail = volumeState.explanation,
+                            onImport = onImport,
+                        )
+                        is VolumeLoadState.Ready -> MriContent(
+                            modifier = Modifier.fillMaxSize(),
+                            focusMode = focusMode,
+                            showOrientationMarkers = showOrientationMarkers,
+                            volume = volumeState.volume,
+                            plane = plane,
+                            bitmap = bitmap,
+                            selectedSlice = selectedSlice,
+                            totalSlices = sliceCount,
+                            onSliceChange = { sliceIndex = it.coerceIn(0, sliceCount - 1) },
+                            onScrubbingChanged = { isScrubbing = it },
+                            onPlaneSelect = { plane = it },
+                            selectedDocumentUri = selectedDocumentUri,
+                            originalDocumentName = volumeState.displayName,
+                            referenceWorld = referenceWorld,
+                            onReferenceWorldChange = { referenceWorld = it },
+                            windowCenter = windowCenter,
+                            onWindowCenter = ::setWindowCenter,
+                            windowWidth = windowWidth,
+                            onWindowWidth = ::setWindowWidth,
+                        )
+                    }
+
+                    if (focusMode) {
+                        TextButton(
+                            onClick = { focusMode = false },
+                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                        ) { Text("Exit focus", color = NeuroChrome.accent) }
                     }
                 }
             }
+        }
+    }
+}
+
+private fun createViewerBitmap(image: MprImage): Bitmap {
+    // Lift only the darkest display values into the deep-navy canvas shade. This
+    // blends the scan's black exterior into the viewport without a hard outline;
+    // source voxel values remain untouched.
+    val pixels = image.pixels.copyOf()
+    val canvasColor = NeuroChrome.background.toArgb()
+    val backgroundRed = (canvasColor ushr 16) and 0xff
+    val backgroundGreen = (canvasColor ushr 8) and 0xff
+    val backgroundBlue = canvasColor and 0xff
+    val lowEndRange = 24
+    for (index in pixels.indices) {
+        val intensity = pixels[index] and 0xff
+        if (intensity < lowEndRange) {
+            val blend = intensity / lowEndRange.toFloat()
+            val red = (backgroundRed * (1f - blend) + intensity * blend).roundToInt()
+            val green = (backgroundGreen * (1f - blend) + intensity * blend).roundToInt()
+            val blue = (backgroundBlue * (1f - blend) + intensity * blend).roundToInt()
+            pixels[index] = android.graphics.Color.rgb(red, green, blue)
+        }
+    }
+    return Bitmap.createBitmap(pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
+}
+
+@Composable
+private fun ViewerBackdrop(modifier: Modifier = Modifier) {
+    Box(modifier.background(NeuroChrome.background)) {
+        Canvas(Modifier.fillMaxSize()) {
+            val glowColors = listOf(
+                NeuroChrome.accent.copy(alpha = 0.12f),
+                Color(0xFF2B5E83).copy(alpha = 0.07f),
+                Color.Transparent,
+            )
+            val radius = size.width * 0.62f
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = glowColors,
+                    center = Offset(size.width * 0.04f, size.height * 0.17f),
+                    radius = radius,
+                ),
+            )
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = glowColors,
+                    center = Offset(size.width * 0.96f, size.height * 0.91f),
+                    radius = radius,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ViewerLoadingScreen() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(modifier = Modifier.size(84.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    modifier = Modifier.fillMaxSize(),
+                    color = NeuroChrome.accent,
+                    trackColor = NeuroChrome.stroke.copy(alpha = 0.45f),
+                    strokeWidth = 2.dp,
+                )
+                Image(
+                    painter = painterResource(com.marcusfunt.neuroview.R.drawable.neuroview_logo),
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                )
+            }
+            Spacer(Modifier.height(24.dp))
+            Text(
+                "NEUROVIEW",
+                color = NeuroChrome.accent,
+                style = MaterialTheme.typography.labelLarge,
+                letterSpacing = 1.8.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Preparing your MRI",
+                color = NeuroChrome.ink,
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Reading the volume and building the first slice…",
+                color = NeuroChrome.muted,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
@@ -418,6 +481,7 @@ private fun ViewerMessage(title: String, detail: String, onImport: () -> Unit) {
 private fun MriContent(
     modifier: Modifier,
     focusMode: Boolean,
+    showOrientationMarkers: Boolean,
     volume: NiftiVolume,
     plane: MriPlane,
     bitmap: Bitmap?,
@@ -425,7 +489,6 @@ private fun MriContent(
     totalSlices: Int,
     onSliceChange: (Int) -> Unit,
     onScrubbingChanged: (Boolean) -> Unit,
-    onOpenPlanePanel: () -> Unit,
     onPlaneSelect: (MriPlane) -> Unit,
     selectedDocumentUri: String?,
     originalDocumentName: String?,
@@ -446,38 +509,51 @@ private fun MriContent(
     var zoomMode by remember(volume) { mutableStateOf(false) }
     var probeMode by remember(volume) { mutableStateOf(false) }
     var probeReading by remember(volume, plane) { mutableStateOf<String?>(null) }
-    var scale by remember(volume, plane) { mutableFloatStateOf(1f) }
+    var scale by remember(volume, plane) { mutableFloatStateOf(DEFAULT_MRI_IMAGE_SCALE) }
     var panOffset by remember(volume, plane) { mutableStateOf(Offset.Zero) }
     var imageViewport by remember { mutableStateOf(IntSize.Zero) }
+    val orientationUnknown = volume.transformSource.startsWith("NO ORIENTATION")
+    val sliceSliderInteractionSource = remember { MutableInteractionSource() }
+    val sliceSliderColors = SliderDefaults.colors(
+        thumbColor = NeuroChrome.accent,
+        activeTrackColor = NeuroChrome.accent,
+        inactiveTrackColor = NeuroChrome.stroke,
+    )
     Column(
-        modifier = modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(9.dp),
+        modifier = modifier.padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        // Compact orientation tabs, with the medical image remaining grayscale.
+        // Plane choices stay one tap away without a second drawer or stacked cards.
         if (!focusMode) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).selectableGroup(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 MriPlane.entries.forEach { option ->
                     val selected = plane == option
-                    val shape = RoundedCornerShape(12.dp)
                     Box(
-                        modifier = Modifier.weight(1f).height(42.dp).clip(shape)
-                            .background(if (selected) NeuroChrome.raised else NeuroChrome.panel)
-                            .border(
-                                BorderStroke(1.dp, if (selected) NeuroChrome.accent else NeuroChrome.stroke),
-                                shape,
-                            )
-                            .clickable(onClick = { onPlaneSelect(option) }),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                            .selectable(
+                                selected = selected,
+                                role = Role.Tab,
+                                onClick = { onPlaneSelect(option) },
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             option.label,
-                            style = MaterialTheme.typography.labelLarge,
+                            style = MaterialTheme.typography.labelMedium,
                             color = if (selected) NeuroChrome.accent else NeuroChrome.muted,
                         )
+                        if (selected) {
+                            Box(
+                                modifier = Modifier.align(Alignment.BottomCenter)
+                                    .padding(horizontal = 28.dp)
+                                    .fillMaxWidth()
+                                    .height(2.dp)
+                                    .background(NeuroChrome.accent, RoundedCornerShape(1.dp)),
+                            )
+                        }
                     }
                 }
             }
@@ -485,17 +561,13 @@ private fun MriContent(
         val flingScope = rememberCoroutineScope()
         var flingJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
         val currentScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
-        val currentOpenPlanePanel by rememberUpdatedState(onOpenPlanePanel)
         Box(
             modifier = Modifier.fillMaxWidth().weight(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.Black)
-                .border(if (focusMode) 0.dp else 1.dp,
-                    NeuroChrome.stroke.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
+                .background(NeuroChrome.background)
                 .onSizeChanged { imageViewport = it }
                 .pointerInput(zoomMode) {
                     if (zoomMode) detectTapGestures(onDoubleTap = {
-                        scale = 1f
+                        scale = DEFAULT_MRI_IMAGE_SCALE
                         panOffset = Offset.Zero
                     })
                 }
@@ -577,9 +649,6 @@ private fun MriContent(
                             }
                         },
                         onDragEnd = {
-                            if (!scrollLocked && horizontalDrag < -90.dp.toPx()) {
-                                currentOpenPlanePanel()
-                            }
                             val pixelsPerSecond = tracker.calculateVelocity().y
                             if (scrollLocked && abs(pixelsPerSecond) > 380f) {
                                 val initialSlice = (anchorSlice - (verticalDrag / pixelsPerSlice).toInt())
@@ -623,9 +692,24 @@ private fun MriContent(
                     contentScale = ContentScale.Fit,
                 )
             } else {
-                CircularProgressIndicator()
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(38.dp),
+                        color = NeuroChrome.accent,
+                        trackColor = NeuroChrome.stroke.copy(alpha = 0.45f),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        "Rendering slice",
+                        color = NeuroChrome.muted,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
-            if (!volume.transformSource.startsWith("NO ORIENTATION")) {
+            if (showOrientationMarkers && !volume.transformSource.startsWith("NO ORIENTATION")) {
                 Text(
                     if (plane == MriPlane.SAGITTAL) "A" else "R",
                     color = NeuroChrome.muted,
@@ -688,7 +772,7 @@ private fun MriContent(
                         probeMode = !probeMode
                         if (!probeMode) onReferenceWorldChange(null)
                         zoomMode = false
-                        scale = 1f
+                        scale = DEFAULT_MRI_IMAGE_SCALE
                         panOffset = Offset.Zero
                     },
                     modifier = Modifier.align(Alignment.TopEnd),
@@ -708,105 +792,135 @@ private fun MriContent(
         }
 
         if (!focusMode) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            color = NeuroChrome.panel,
-            border = BorderStroke(1.dp, NeuroChrome.stroke),
-        ) {
+            val slicePosition = MprRenderer.slicePosition(volume, plane, selectedSlice)
+            val positionAxis = if (orientationUnknown) null else when (plane) {
+                MriPlane.AXIAL -> "S"
+                MriPlane.CORONAL -> "A"
+                MriPlane.SAGITTAL -> "R"
+            }
+            val formattedPosition = "%.1f mm".format(java.util.Locale.US, slicePosition)
+            val positionLabel = if (positionAxis == null) formattedPosition
+                else "$positionAxis  $formattedPosition"
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "SLICE POSITION",
-                        color = NeuroChrome.accent,
+                        "SLICE",
+                        color = NeuroChrome.muted,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
                         "${selectedSlice + 1} / $totalSlices",
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = NeuroChrome.ink,
                     )
-                }
-                Slider(
-                    value = selectedSlice.toFloat(),
-                    onValueChange = {
-                        flingJob?.cancel()
-                        onScrubbingChanged(true)
-                        onSliceChange(it.roundToInt())
-                    },
-                    onValueChangeFinished = { onScrubbingChanged(false) },
-                    valueRange = 0f..(totalSlices - 1).coerceAtLeast(1).toFloat(),
-                    enabled = totalSlices > 1,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = SliderDefaults.colors(
-                        thumbColor = NeuroChrome.accent,
-                        activeTrackColor = NeuroChrome.accent,
-                        inactiveTrackColor = NeuroChrome.stroke,
-                    ),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OutlinedButton(
-                        onClick = { onSliceChange(selectedSlice - 1) },
-                        enabled = selectedSlice > 0,
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        modifier = Modifier.height(48.dp),
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null,
-                            modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text("Previous")
-                    }
                     Text(
-                        "%.1f mm".format(
-                            java.util.Locale.US,
-                            MprRenderer.slicePosition(volume, plane, selectedSlice),
-                        ),
+                        positionLabel,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    OutlinedButton(
-                        onClick = { onSliceChange(selectedSlice + 1) },
-                        enabled = selectedSlice < totalSlices - 1,
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        modifier = Modifier.height(48.dp),
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = {
+                            flingJob?.cancel()
+                            onScrubbingChanged(false)
+                            onSliceChange((selectedSlice - 1).coerceAtLeast(0))
+                        },
+                        enabled = selectedSlice > 0,
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                        modifier = Modifier.heightIn(min = 48.dp).semantics {
+                            contentDescription = "Previous slice"
+                        },
                     ) {
-                        Text("Next")
-                        Spacer(Modifier.width(5.dp))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null,
+                            modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("Prev", style = MaterialTheme.typography.labelSmall)
+                    }
+                    Slider(
+                        value = selectedSlice.toFloat(),
+                        onValueChange = {
+                            flingJob?.cancel()
+                            onScrubbingChanged(true)
+                            onSliceChange(it.roundToInt())
+                        },
+                        onValueChangeFinished = { onScrubbingChanged(false) },
+                        valueRange = 0f..(totalSlices - 1).coerceAtLeast(1).toFloat(),
+                        enabled = totalSlices > 1,
+                        interactionSource = sliceSliderInteractionSource,
+                        modifier = Modifier.weight(1f).semantics {
+                            contentDescription = "Slice position"
+                            stateDescription = "Slice ${selectedSlice + 1} of $totalSlices, $positionLabel"
+                        },
+                        colors = sliceSliderColors,
+                        thumb = {
+                            SliderDefaults.Thumb(
+                                interactionSource = sliceSliderInteractionSource,
+                                colors = sliceSliderColors,
+                                enabled = totalSlices > 1,
+                                thumbSize = DpSize(18.dp, 18.dp),
+                            )
+                        },
+                        track = { sliderState ->
+                            SliderDefaults.Track(
+                                sliderState = sliderState,
+                                modifier = Modifier.height(4.dp),
+                                colors = sliceSliderColors,
+                                enabled = totalSlices > 1,
+                                thumbTrackGapSize = 0.dp,
+                            )
+                        },
+                    )
+                    TextButton(
+                        onClick = {
+                            flingJob?.cancel()
+                            onScrubbingChanged(false)
+                            onSliceChange((selectedSlice + 1).coerceAtMost(totalSlices - 1))
+                        },
+                        enabled = selectedSlice < totalSlices - 1,
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                        modifier = Modifier.heightIn(min = 48.dp).semantics {
+                            contentDescription = "Next slice"
+                        },
+                    ) {
+                        Text("Next", style = MaterialTheme.typography.labelSmall)
+                        Spacer(Modifier.width(3.dp))
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
                             modifier = Modifier.size(16.dp))
                     }
                 }
             }
-        }
 
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(
-                if (volume.transformSource.startsWith("NO ORIENTATION"))
-                    "Orientation unverified" else MprRenderer.displayOrientation(plane),
-                color = if (volume.transformSource.startsWith("NO ORIENTATION"))
-                    MaterialTheme.colorScheme.error else NeuroChrome.muted,
-                style = MaterialTheme.typography.labelSmall,
-            )
+            if (orientationUnknown || showOrientationMarkers) {
+                Text(
+                    if (orientationUnknown)
+                        "Orientation unverified" else MprRenderer.displayOrientation(plane),
+                    color = if (orientationUnknown)
+                        MaterialTheme.colorScheme.error else NeuroChrome.muted,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
             TextButton(onClick = {
                 zoomMode = !zoomMode
                 probeMode = false
                 onReferenceWorldChange(null)
-                scale = 1f
+                scale = DEFAULT_MRI_IMAGE_SCALE
                 panOffset = Offset.Zero
             }) {
                 Text(if (zoomMode) "Scroll" else "Zoom")
@@ -814,7 +928,7 @@ private fun MriContent(
             TextButton(onClick = { showAdjustments = true }) { Text("Adjust") }
             TextButton(onClick = { showProcessing = true }) { Text("Process") }
         }
-        if (volume.transformSource.startsWith("NO ORIENTATION")) {
+        if (orientationUnknown) {
             Text(
                 "Orientation unknown: anatomical labels may not match the image.",
                 color = MaterialTheme.colorScheme.error,

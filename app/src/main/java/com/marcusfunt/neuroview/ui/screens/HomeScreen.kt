@@ -85,6 +85,9 @@ fun HomeScreen(
     val preferences = remember(context.applicationContext) {
         context.getSharedPreferences("neuroview_home_appearance_v1", Context.MODE_PRIVATE)
     }
+    val viewerDisplayPreferences = remember(context.applicationContext) {
+        context.getSharedPreferences(VIEWER_DISPLAY_PREFERENCES, Context.MODE_PRIVATE)
+    }
     val scope = rememberCoroutineScope()
     var cacheStatus by remember { mutableStateOf<String?>(null) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
@@ -93,6 +96,9 @@ fun HomeScreen(
     }
     var glowEnabled by rememberSaveable {
         mutableStateOf(preferences.getBoolean("glow", true))
+    }
+    var showOrientationMarkers by rememberSaveable {
+        mutableStateOf(viewerDisplayPreferences.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false))
     }
     var resetRequest by rememberSaveable { mutableIntStateOf(0) }
 
@@ -342,6 +348,29 @@ fun HomeScreen(
                 }
                 TextButton(onClick = { resetRequest++ }) {
                     Text("Reset brain orientation", color = Cyan)
+                }
+                Text("MRI viewer", style = MaterialTheme.typography.titleMedium, color = Foreground)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Orientation markers", color = Foreground)
+                        Text(
+                            "Show R/L and A/P labels around MRI slices.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Secondary,
+                        )
+                    }
+                    Switch(
+                        checked = showOrientationMarkers,
+                        onCheckedChange = { enabled ->
+                            showOrientationMarkers = enabled
+                            viewerDisplayPreferences.edit()
+                                .putBoolean(SHOW_ORIENTATION_MARKERS_KEY, enabled)
+                                .apply()
+                        },
+                    )
                 }
                 Text("Privacy & storage", style = MaterialTheme.typography.titleMedium, color = Foreground)
                 Text(
