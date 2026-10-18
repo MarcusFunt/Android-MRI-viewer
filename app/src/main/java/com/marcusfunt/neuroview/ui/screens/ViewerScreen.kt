@@ -430,7 +430,7 @@ private fun MriContent(
     selectedDocumentUri: String?,
     originalDocumentName: String?,
     referenceWorld: DoubleArray?,
-    onReferenceWorldChange: (DoubleArray) -> Unit,
+    onReferenceWorldChange: (DoubleArray?) -> Unit,
     windowCenter: Float,
     onWindowCenter: (Float) -> Unit,
     windowWidth: Float,
@@ -443,8 +443,8 @@ private fun MriContent(
     var showProcessing by rememberSaveable { mutableStateOf(false) }
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
-    var zoomMode by rememberSaveable { mutableStateOf(false) }
-    var probeMode by rememberSaveable { mutableStateOf(false) }
+    var zoomMode by remember(volume) { mutableStateOf(false) }
+    var probeMode by remember(volume) { mutableStateOf(false) }
     var probeReading by remember(volume, plane) { mutableStateOf<String?>(null) }
     var scale by remember(volume, plane) { mutableFloatStateOf(1f) }
     var panOffset by remember(volume, plane) { mutableStateOf(Offset.Zero) }
@@ -642,7 +642,7 @@ private fun MriContent(
                 )
             }
             val reference = referenceWorld
-            if (reference != null && bitmap != null && imageViewport.width > 0) {
+            if (probeMode && reference != null && bitmap != null && imageViewport.width > 0) {
                 val position = MprRenderer.slicePosition(volume, plane, currentSlice)
                 val count = MprRenderer.sliceCount(volume, plane)
                 val bounds = volume.affine.bounds(volume.nx, volume.ny, volume.nz)
@@ -674,6 +674,7 @@ private fun MriContent(
                 TextButton(
                     onClick = {
                         probeMode = !probeMode
+                        if (!probeMode) onReferenceWorldChange(null)
                         zoomMode = false
                         scale = 1f
                         panOffset = Offset.Zero
@@ -685,7 +686,9 @@ private fun MriContent(
             if (probeMode) {
                 Text(
                     probeReading ?: "Tap a voxel to inspect intensity and set a cross-plane reference.",
-                    modifier = Modifier.align(Alignment.BottomStart).padding(10.dp),
+                    modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)
+                        .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
+                        .padding(8.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = NeuroChrome.ink,
                 )
@@ -790,6 +793,7 @@ private fun MriContent(
             TextButton(onClick = {
                 zoomMode = !zoomMode
                 probeMode = false
+                onReferenceWorldChange(null)
                 scale = 1f
                 panOffset = Offset.Zero
             }) {
