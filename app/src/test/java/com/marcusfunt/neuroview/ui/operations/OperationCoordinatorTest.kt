@@ -8,6 +8,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OperationCoordinatorTest {
+    @Test fun sourceWorkClearsStallWithoutInventingDecodedVoxels() {
+        val clock = FakeClock()
+        val coordinator = OperationCoordinator(clock)
+        val id = coordinator.begin(OperationKind.VIEWER_LOAD, OperationStage.DECODING_VOLUME)
+        coordinator.reportProgress(id, OperationStage.DECODING_VOLUME, progress(0, 100))
+        clock.now = 61_000
+        assertEquals(OperationStatus.SUSPECTED_STALL, coordinator.classifyStall(id))
+        assertTrue(coordinator.observeWork(id))
+        assertEquals(OperationStatus.RUNNING, coordinator.state(id)?.status)
+        assertEquals(0L, coordinator.state(id)?.progress?.completedUnits)
+        assertEquals(61_000L, coordinator.state(id)?.lastWorkAdvanceElapsedMs)
+        coordinator.requestCancel(id)
+        assertFalse(coordinator.observeWork(id))
+        coordinator.confirmCanceled(id)
+        assertFalse(coordinator.observeWork(id))
+        coordinator.begin(OperationKind.VIEWER_LOAD, OperationStage.OPENING_SOURCE)
+        assertFalse(coordinator.observeWork(id))
+    }
+
     private class FakeClock(var now: Long = 0L) : MonotonicClock {
         override fun nowMs(): Long = now
     }

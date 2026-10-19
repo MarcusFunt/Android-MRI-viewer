@@ -1,6 +1,5 @@
 package com.marcusfunt.neuroview.ui
 
-import android.content.Context
 import android.net.Uri
 import android.os.CancellationSignal
 import android.provider.DocumentsContract
@@ -27,8 +26,6 @@ import com.marcusfunt.neuroview.mri.NiftiReadStage
 import com.marcusfunt.neuroview.mri.NiftiReadUnit
 import com.marcusfunt.neuroview.mri.NiftiReader
 import com.marcusfunt.neuroview.ui.operations.OperationCoordinator
-import com.marcusfunt.neuroview.ui.operations.OperationFailure
-import com.marcusfunt.neuroview.ui.operations.OperationFailureKind
 import com.marcusfunt.neuroview.ui.operations.OperationId
 import com.marcusfunt.neuroview.ui.operations.OperationKind
 import com.marcusfunt.neuroview.ui.operations.OperationProgress
@@ -36,9 +33,6 @@ import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
 import com.marcusfunt.neuroview.ui.operations.OperationStage
 import com.marcusfunt.neuroview.ui.operations.OperationStatus
 import com.marcusfunt.neuroview.ui.operations.OperationUnit
-import com.marcusfunt.neuroview.ui.operations.RecoveryAction
-import java.io.FileNotFoundException
-import java.io.IOException
 import java.util.IdentityHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -86,48 +80,6 @@ fun rememberConversionControls(): ConversionControls {
         coordinator.reportProgress(id, stage, progress)
     }
 
-    fun failure(error: Throwable): OperationFailure {
-        val detail = error.message.orEmpty()
-        return when {
-            error is OutOfMemoryError -> OperationFailure(
-                OperationFailureKind.OUT_OF_MEMORY,
-                "This device is low on memory. Try a smaller DICOM series or MRI volume.",
-                retryable = true,
-                actions = setOf(RecoveryAction.RETRY, RecoveryAction.CLEAR_DERIVED_CACHE),
-            )
-            detail.contains("Insufficient storage", ignoreCase = true) -> OperationFailure(
-                OperationFailureKind.INSUFFICIENT_STORAGE,
-                "There is not enough storage to finish this conversion.",
-                retryable = true,
-                actions = setOf(RecoveryAction.CLEAR_DERIVED_CACHE, RecoveryAction.RETRY),
-            )
-            error is FileNotFoundException || error is SecurityException -> OperationFailure(
-                OperationFailureKind.SOURCE_UNAVAILABLE,
-                "A selected MRI document is no longer accessible. Select it again.",
-                retryable = true,
-                actions = setOf(RecoveryAction.RECONNECT_SOURCE, RecoveryAction.RETRY),
-            )
-            error is IllegalArgumentException -> OperationFailure(
-                OperationFailureKind.INVALID_DATA,
-                detail.ifBlank { "The selected MRI data could not be converted." },
-                retryable = false,
-                actions = setOf(RecoveryAction.RECONNECT_SOURCE),
-            )
-            error is IOException -> OperationFailure(
-                OperationFailureKind.PROVIDER_ERROR,
-                "The selected file provider could not supply or save the MRI data.",
-                retryable = true,
-                actions = setOf(RecoveryAction.RECONNECT_SOURCE, RecoveryAction.RETRY),
-            )
-            else -> OperationFailure(
-                OperationFailureKind.INTERNAL_ERROR,
-                "NeuroView could not finish this conversion. Check source and destination access.",
-                retryable = true,
-                actions = setOf(RecoveryAction.RETRY, RecoveryAction.RECONNECT_SOURCE),
-            )
-        }
-    }
-
     fun beginWork(
         initialStage: OperationStage,
         outputToCleanOnFailure: Uri? = null,
@@ -168,7 +120,7 @@ fun rememberConversionControls(): ConversionControls {
                             .getOrDefault(false)
                     }
                 }
-                val typed = failure(error)
+                val typed = conversionFailure(error)
                 coordinator.fail(id, typed)
                 message = typed.safeMessage + when {
                     outputToCleanOnFailure == null -> ""
@@ -182,7 +134,7 @@ fun rememberConversionControls(): ConversionControls {
                             .getOrDefault(false)
                     }
                 }
-                val typed = failure(error)
+                val typed = conversionFailure(error)
                 coordinator.fail(id, typed)
                 message = typed.safeMessage + when {
                     outputToCleanOnFailure == null -> ""

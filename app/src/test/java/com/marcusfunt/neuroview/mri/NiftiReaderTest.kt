@@ -14,6 +14,49 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NiftiReaderTest {
+    @Test fun sourceProgressCountsActualBytesBeforeDecoderProgress() {
+        val source = synthetic()
+        val counts = mutableListOf<Long>()
+        val input = object : ByteArrayInputStream(source) {
+            override fun read(bytes: ByteArray, offset: Int, length: Int): Int =
+                super.read(bytes, offset, minOf(length, 7))
+        }
+        NiftiReader.read(input, NiftiReadOptions(sourceProgressSink = counts::add)).close()
+        assertTrue(counts.size > 10)
+        assertEquals(source.size.toLong(), counts.last())
+        assertTrue(counts.zipWithNext().all { (a, b) -> b > a })
+    }
+
+    @Test fun rejectsTruncatedGzipTrailerEvenWhenVoxelsAreComplete() {
+        val compressed = ByteArrayOutputStream().also { output ->
+            GZIPOutputStream(output).use { it.write(synthetic()) }
+        }.toByteArray()
+        assertThrows(java.io.EOFException::class.java) {
+            NiftiReader.read(ByteArrayInputStream(compressed.copyOf(compressed.size - 4)))
+        }
+    }
+
+    @Test fun cancellationAtDiskPreparationRemovesNewTemporaryFile() {
+        val directory = Files.createTempDirectory("nifti-before-disk-write").toFile()
+        try {
+            assertThrows(CancellationException::class.java) {
+                NiftiReader.read(ByteArrayInputStream(synthetic()), NiftiReadOptions(
+                    maxVoxels = 2,
+                    backingDirectory = directory,
+                    progressSink = {
+                        if (it.stage == NiftiReadStage.PREPARING_DISK_BACKING) {
+                            throw CancellationException("Injected before opening output")
+                        }
+                    },
+                ))
+            }
+            assertEquals(0, directory.listFiles()!!.size)
+        } finally {
+            directory.listFiles()?.forEach(File::delete)
+            directory.delete()
+        }
+    }
+
     private class CloseTrackingInputStream(bytes: ByteArray) : ByteArrayInputStream(bytes) {
         var closed = false
 

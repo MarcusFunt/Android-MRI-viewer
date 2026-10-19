@@ -7,6 +7,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.Closeable
 import java.io.InputStream
+import java.io.FilterInputStream
 import java.util.zip.GZIPInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -137,8 +138,29 @@ object NiftiReader {
             return samples
         }
 
-        val buffered = BufferedInputStream(input, 64 * 1024)
-        return buffered.use {
+        val tracked = object : FilterInputStream(input) {
+            private var received = 0L
+            private fun advanced(amount: Int) {
+                if (amount > 0) {
+                    received += amount
+                    options.cancellationCheck()
+                    options.sourceProgressSink(received)
+                }
+            }
+            override fun read(): Int {
+                options.cancellationCheck()
+                return `in`.read().also { if (it >= 0) advanced(1) }
+            }
+            override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                options.cancellationCheck()
+                return `in`.read(bytes, offset, length).also(::advanced)
+            }
+        }
+        val buffered = BufferedInputStream(tracked, 64 * 1024)
+        // Own mapped storage until stream closure also succeeds and the result is handed out.
+        var pendingBacking: MappedNiftiStore? = null
+        try {
+        val volume = buffered.use {
             options.cancellationCheck()
             buffered.mark(2)
             val first = buffered.read()
@@ -282,8 +304,8 @@ object NiftiReader {
                 }
                 val file = File.createTempFile("nifti-disk-", ".raw", directory)
                 val sampleCount = minOf(48_000L, count).toInt()
-                report(NiftiReadStage.PREPARING_DISK_BACKING, 0, needed, NiftiReadUnit.BYTES)
                 try {
+                    report(NiftiReadStage.PREPARING_DISK_BACKING, 0, needed, NiftiReadUnit.BYTES)
                     FileOutputStream(file).use { output ->
                         var index = 0L
                         var bytesWritten = 0L
@@ -306,6 +328,7 @@ object NiftiReader {
                     }
                     options.cancellationCheck()
                     backing = MappedNiftiStore(file, count, bytesPerVoxel, datatype, order, slope, intercept)
+                    pendingBacking = backing
                     options.cancellationCheck()
                     samples = sampleValues(count, sampleCount) { voxelIndex ->
                         requireNotNull(backing).value(voxelIndex)
@@ -338,6 +361,15 @@ object NiftiReader {
                     data[voxelIndex.toInt()]
                 }
             }
+            // A single-frame gzip must include its CRC/size trailer. Reading exactly
+            // the voxel payload alone can otherwise accept a truncated gzip file.
+            // Four-dimensional input intentionally loads only its first frame.
+            if (source is GZIPInputStream && timepoints == 1) {
+                while (true) {
+                    options.cancellationCheck()
+                    if (stream.read(chunk) < 0) break
+                }
+            }
             options.cancellationCheck()
             samples.sort()
             options.cancellationCheck()
@@ -346,6 +378,12 @@ object NiftiReader {
             val upper = if (high > low) high else low + 1f
             NiftiVolume(nx, ny, nz, data, affine, low, upper, transformSource, timepoints, backing)
             }
+        }
+        pendingBacking = null
+        return volume
+        } catch (error: Throwable) {
+            runCatching { pendingBacking?.close() }
+            throw error
         }
     }
 

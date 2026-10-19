@@ -120,6 +120,22 @@ class OperationCoordinator(
         return true
     }
 
+    /** Measurable work below a stage counter, e.g. gzip source bytes before a voxel batch completes. */
+    @Synchronized
+    fun observeWork(id: OperationId): Boolean {
+        val record = records[id] ?: return false
+        val previous = record.snapshot
+        if (latestByKind[previous.kind] != id || !previous.status.canReceiveProgress) return false
+        val now = observeTime(record)
+        record.snapshot = previous.copy(
+            status = OperationStatus.RUNNING,
+            lastWorkAdvanceElapsedMs = now,
+        )
+        if (previous.status != OperationStatus.RUNNING ||
+            now - record.lastPublishedAtMs >= progressPublishIntervalMs) publish(record, now)
+        return true
+    }
+
     /** Classifies staleness using the stage's work clock, never the heartbeat clock. */
     @Synchronized
     fun classifyStall(

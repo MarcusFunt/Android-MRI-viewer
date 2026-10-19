@@ -8,7 +8,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -103,6 +102,8 @@ fun BrainSuitePanel(
     var message by remember { mutableStateOf<String?>(null) }
     var showToken by remember { mutableStateOf(false) }
     var showConnection by rememberSaveable { mutableStateOf(true) }
+    var showJobs by rememberSaveable { mutableStateOf(false) }
+    var showLimitations by rememberSaveable { mutableStateOf(false) }
     val canConnect = remember(address, accessToken) {
         runCatching { BrainSuiteClient(address, accessToken) }.isSuccess
     }
@@ -166,7 +167,7 @@ fun BrainSuitePanel(
         activeJob?.cancel(CancellationException("BrainSuite transfer canceled by user"))
     }
 
-    LaunchedEffect(documentUri, address, stage) {
+    LaunchedEffect(documentUri, address, stage, accessToken) {
         consent = false
     }
 
@@ -178,6 +179,8 @@ fun BrainSuitePanel(
             try {
                 val result = withContext(Dispatchers.IO) { client().status(jobId) }
                 applyRemoteStatus(result, operationId)
+            } catch (canceled: CancellationException) {
+                throw canceled
             } catch (error: Exception) {
                 statusError = brainSuiteFailureMessage(error)
             }
@@ -202,8 +205,13 @@ fun BrainSuitePanel(
                 operation(id, signal)
             } catch (cancelled: CancellationException) {
                 withContext(NonCancellable) {
-                    coordinator.confirmCanceled(id)
-                    message = "Transfer canceled."
+                    coordinator.state(id)?.let { current ->
+                        if (!current.status.isTerminal) {
+                            if (current.status != OperationStatus.CANCELING) coordinator.requestCancel(id)
+                            coordinator.confirmCanceled(id)
+                        }
+                    }
+                    message = "Transfer stopped on this phone. A submitted remote job may continue; refresh its status to check."
                 }
                 throw cancelled
             } catch (error: Exception) {
@@ -266,39 +274,44 @@ fun BrainSuitePanel(
         modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("BrainSuite processing", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Selected MRI: ${documentName ?: "None"}",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Text(
-            "Run the official BrainSuite BIDS-App on your own Docker workstation. " +
-                "A selected T1-weighted NIfTI is sent over HTTPS; processing does not run on this phone.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = stage == "CSE",
-                onClick = { stage = "CSE" },
-                label = { Text("Cortical surfaces") },
-                enabled = !busy,
-            )
-            FilterChip(
-                selected = stage == "CSE+SVREG",
-                onClick = { stage = "CSE+SVREG" },
-                label = { Text("Surfaces + atlas") },
-                enabled = !busy,
-            )
+            FilterChip(modifier = Modifier.weight(1f),
+                selected = !showJobs, onClick = { showJobs = false },
+                label = { Text("New processing") })
+            FilterChip(modifier = Modifier.weight(1f),
+                selected = showJobs, onClick = { showJobs = true },
+                label = { Text("Previous jobs and results") })
         }
+        if (!showJobs) {
+            Text("1 · Select processing", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Process a T1-weighted NIfTI on your own HTTPS computer. BrainSuite runs there.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-        Text(
-            if (stage == "CSE") "CSE: brain/surface extraction and cortical thickness."
-            else "CSE + SVReg: also register the anatomy to BrainSuite's atlas.",
-            style = MaterialTheme.typography.bodySmall,
-        )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = stage == "CSE",
+                    onClick = { stage = "CSE" },
+                    label = { Text("Cortical surfaces") },
+                    enabled = !busy,
+                )
+                FilterChip(
+                    selected = stage == "CSE+SVREG",
+                    onClick = { stage = "CSE+SVREG" },
+                    label = { Text("Surfaces + atlas") },
+                    enabled = !busy,
+                )
+            }
 
+            Text(
+                if (stage == "CSE") "CSE: brain/surface extraction and cortical thickness."
+                else "CSE + SVReg: also register the anatomy to BrainSuite's atlas.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+        }
         OutlinedCard(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -306,7 +319,8 @@ fun BrainSuitePanel(
             ) {
                 Row(modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Processing computer", style = MaterialTheme.typography.titleSmall)
+                    Text(if (showJobs) "Processing computer" else "2 · Processing computer",
+                        style = MaterialTheme.typography.titleSmall)
                     TextButton(onClick = { showConnection = !showConnection }) {
                         Text(if (showConnection) "Hide details" else "Edit connection")
                     }
@@ -318,6 +332,16 @@ fun BrainSuitePanel(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (showConnection) {
+                    previousJobs.distinctBy { it.endpoint }.take(3).forEach { saved ->
+                        TextButton(
+                            onClick = {
+                                address = saved.endpoint
+                                jobStatus = null; operationId = null
+                                lastSuccessfulStatusAt = null; statusError = null
+                            },
+                            enabled = !busy,
+                        ) { Text("Use ${saved.endpoint}") }
+                    }
                     OutlinedTextField(
                         value = address,
                         onValueChange = {
@@ -350,124 +374,183 @@ fun BrainSuitePanel(
                         },
                         enabled = !busy,
                     )
+                    TextButton(
+                        onClick = { showConnection = false },
+                        enabled = canConnect && !busy,
+                    ) { Text("Use this computer") }
                 }
             }
         }
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Checkbox(
-                checked = consent,
-                onCheckedChange = { consent = it },
+        if (!showJobs) {
+            Text("3 · Confirm upload", style = MaterialTheme.typography.titleSmall)
+            Text("Selected NIfTI: ${documentName ?: "Open a T1w NIfTI first"}",
+                style = MaterialTheme.typography.bodyMedium)
+            if (canConnect) {
+                Text("Destination: $address", style = MaterialTheme.typography.bodySmall)
+            }
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Checkbox(
+                    checked = consent,
+                    onCheckedChange = { consent = it },
+                    enabled = !busy,
+                )
+                Text(
+                    "I understand this transfers the selected MRI to my configured computer. " +
+                        "MRI images may contain identifiable anatomy.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f).padding(top = 7.dp),
+                )
+            }
+            Button(
+                onClick = {
+                    perform(OperationStage.UPLOADING) { id, signal ->
+                        val source = requireNotNull(documentUri) { "Open a NIfTI series first." }
+                        val label = requireNotNull(documentName)
+                        require(consent) { "Confirm the privacy notice before sending MRI data." }
+                        val workerContext = currentCoroutineContext()
+                        val result = withContext(Dispatchers.IO) {
+                            client().submit(
+                                context.contentResolver,
+                                Uri.parse(source),
+                                label,
+                                stage,
+                                onProgress = { complete, total ->
+                                    coordinator.reportProgress(
+                                        id,
+                                        OperationStage.UPLOADING,
+                                        OperationProgress(complete, total, OperationUnit.BYTES),
+                                    )
+                                },
+                                cancellationCheck = {
+                                    workerContext.ensureActive()
+                                    if (signal.isCanceled) throw CancellationException("Upload canceled")
+                                },
+                            )
+                        }
+                        jobId = result.id
+                        showJobs = true
+                        showConnection = false
+                        consent = false
+                        history.add(result.id, address, stage)
+                        previousJobs = history.list()
+                        applyRemoteStatus(result, id, isStatusCheck = false)
+                        message = "BrainSuite job submitted. Use Refresh status to check its progress."
+                    }
+                },
+                enabled = !busy && canConnect && consent && documentUri != null && !documentName.isNullOrBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Send T1w scan for processing")
+            }
+            val missingInput = when {
+                busy -> "A transfer or status check is in progress."
+                documentUri == null || documentName.isNullOrBlank() -> "Open a T1w NIfTI to enable sending."
+                address.isBlank() -> "Enter your processing computer's HTTPS address."
+                accessToken.length < 24 -> "Enter the access token supplied by your processing computer."
+                !canConnect -> "Use a valid HTTPS server address without a path, query, or username."
+                !consent -> "Confirm the upload consent above to enable sending."
+                else -> null
+            }
+            missingInput?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            TextButton(onClick = { showLimitations = !showLimitations }) {
+                Text(if (showLimitations) "Hide requirements and limitations" else "Requirements and limitations")
+            }
+            if (showLimitations) {
+                Text(
+                    "Use a T1w scan with the official BrainSuite BIDS-App on a Docker workstation. " +
+                        "DWI/fMRI need complete BIDS datasets and are unavailable here. The source is never " +
+                        "overwritten. Results remain on the workstation until downloaded. " +
+                        "For research and exploration, not clinical diagnosis.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        if (showJobs) {
+
+            if (previousJobs.isNotEmpty()) {
+                Text("Recent jobs", style = MaterialTheme.typography.titleSmall)
+                previousJobs.take(5).forEach { entry ->
+                    Row(modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(enabled = !busy, onClick = {
+                            address = entry.endpoint
+                            jobId = entry.id
+                            jobStatus = null
+                            operationId = null
+                            lastSuccessfulStatusAt = null
+                            statusError = null
+                            consent = false
+                        }, modifier = Modifier.weight(1f)) {
+                            Text("${entry.stages} · ${entry.id.take(8)}…")
+                        }
+                        TextButton(onClick = {
+                            history.forget(entry.id)
+                            previousJobs = history.list()
+                        }) { Text("Forget") }
+                    }
+                }
+            }
+            Text("Monitor or retrieve a job", style = MaterialTheme.typography.titleSmall)
+            OutlinedTextField(
+                value = jobId,
+                onValueChange = {
+                    jobId = it.trim(); jobStatus = null; operationId = null
+                    lastSuccessfulStatusAt = null; statusError = null
+                },
+                label = { Text("Job identifier (paste to resume)") },
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = if (jobId.isNotBlank()) {
+                    { TextButton(onClick = { clipboard.setText(AnnotatedString(jobId)) }) { Text("Copy") } }
+                } else null,
+                singleLine = true,
                 enabled = !busy,
             )
-            Text(
-                "I understand this transfers the selected MRI to my configured computer. " +
-                    "MRI images may contain identifiable anatomy.",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.weight(1f).padding(top = 7.dp),
-            )
-        }
-        Button(
-            onClick = {
-                perform(OperationStage.UPLOADING) { id, signal ->
-                    val source = requireNotNull(documentUri) { "Open a NIfTI series first." }
-                    val label = requireNotNull(documentName)
-                    require(consent) { "Confirm the privacy notice before sending MRI data." }
-                    val workerContext = currentCoroutineContext()
-                    val result = withContext(Dispatchers.IO) {
-                        client().submit(
-                            context.contentResolver,
-                            Uri.parse(source),
-                            label,
-                            stage,
-                            onProgress = { complete, total ->
-                                coordinator.reportProgress(
-                                    id,
-                                    OperationStage.UPLOADING,
-                                    OperationProgress(complete, total, OperationUnit.BYTES),
-                                )
-                            },
-                            cancellationCheck = {
-                                workerContext.ensureActive()
-                                if (signal.isCanceled) throw CancellationException("Upload canceled")
-                            },
-                        )
-                    }
-                    jobId = result.id
-                    consent = false
-                    history.add(result.id, address, stage)
-                    previousJobs = history.list()
-                    applyRemoteStatus(result, id, isStatusCheck = false)
-                    message = "BrainSuite job submitted. Use Refresh status to check its progress."
+            jobStatus?.let { job ->
+                val displayState = when (job.state) {
+                    "queued" -> "Queued"
+                    "running" -> "Processing"
+                    "succeeded" -> "Completed"
+                    "failed" -> "Failed"
+                    else -> "Unknown status"
                 }
-            },
-            enabled = !busy && canConnect && consent && documentUri != null && !documentName.isNullOrBlank(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Send T1w scan for processing")
-        }
-        Text(
-            "Only a T1w scan is supported here. DWI/fMRI pipelines require full BIDS datasets " +
-                "with sequence metadata; they are not enabled in this workflow.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
-        )
-
-        if (previousJobs.isNotEmpty()) {
-            Text("Recent jobs", style = MaterialTheme.typography.titleSmall)
-            previousJobs.take(5).forEach { entry ->
-                Row(modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween) {
-                    TextButton(onClick = {
-                        address = entry.endpoint
-                        jobId = entry.id
-                        jobStatus = null
-                        operationId = null
-                        lastSuccessfulStatusAt = null
-                        statusError = null
-                        consent = false
-                    }, modifier = Modifier.weight(1f)) {
-                        Text("${entry.stages} · ${entry.id.take(8)}…")
-                    }
-                    TextButton(onClick = {
-                        history.forget(entry.id)
-                        previousJobs = history.list()
-                    }) { Text("Forget") }
+                Text("${displayState} · ${job.stages}",
+                    style = MaterialTheme.typography.bodyMedium)
+                job.message?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+                if (job.state == "queued" || job.state == "running") {
+                    CircularProgressIndicator(modifier = Modifier.height(24.dp))
+                    Text("Status checks automatically while this panel is open.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-        }
-        Text("Processing job", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = jobId,
-            onValueChange = {
-                jobId = it.trim(); jobStatus = null; operationId = null
-                lastSuccessfulStatusAt = null; statusError = null
-            },
-            label = { Text("Job identifier (paste to resume)") },
-            modifier = Modifier.fillMaxWidth(),
-            trailingIcon = if (jobId.isNotBlank()) {
-                { TextButton(onClick = { clipboard.setText(AnnotatedString(jobId)) }) { Text("Copy") } }
-            } else null,
-            singleLine = true,
-            enabled = !busy,
-        )
-        jobStatus?.let { job ->
-            val displayState = when (job.state) {
-                "queued" -> "Queued"
-                "running" -> "Processing"
-                "succeeded" -> "Completed"
-                "failed" -> "Failed"
-                else -> "Unknown status"
-            }
-            Text("${displayState} · ${job.stages}",
-                style = MaterialTheme.typography.bodyMedium)
-            job.message?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall)
-            }
-            if (job.state == "queued" || job.state == "running") {
-                CircularProgressIndicator(modifier = Modifier.height(24.dp))
-                Text("Status checks automatically while this panel is open.",
-                    style = MaterialTheme.typography.bodySmall,
+            lastSuccessfulStatusAt?.let { timestamp ->
+                val time = remember(timestamp) {
+                    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+                }
+                Text("Last successful status check · $time", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            statusError?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        perform(OperationStage.WAITING_FOR_REMOTE) { id, _ ->
+                            val result = withContext(Dispatchers.IO) { client().status(jobId) }
+                            applyRemoteStatus(result, id)
+                        }
+                    },
+                    enabled = !busy && canConnect && jobId.isNotBlank(),
+                ) { Text("Refresh status") }
+                Button(
+                    onClick = { saveResults.launch("NeuroView_BrainSuite_results.zip") },
+                    enabled = !busy && jobStatus?.state == "succeeded",
+                ) { Text("Save results ZIP") }
             }
         }
         operationId?.let { id ->
@@ -481,40 +564,7 @@ fun BrainSuitePanel(
                 )
             }
         }
-        lastSuccessfulStatusAt?.let { timestamp ->
-            val time = remember(timestamp) {
-                SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
-            }
-            Text("Last successful status check · $time", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        statusError?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = {
-                    perform(OperationStage.WAITING_FOR_REMOTE) { id, _ ->
-                        val result = withContext(Dispatchers.IO) { client().status(jobId) }
-                        applyRemoteStatus(result, id)
-                    }
-                },
-                enabled = !busy && canConnect && jobId.isNotBlank(),
-            ) { Text("Refresh status") }
-            Button(
-                onClick = { saveResults.launch("NeuroView_BrainSuite_results.zip") },
-                enabled = !busy && jobStatus?.state == "succeeded",
-            ) { Text("Save results ZIP") }
-        }
         message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "The source image is never overwritten. Results remain on the workstation until " +
-                "you download them. For research and exploration, not clinical diagnosis.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -542,7 +592,12 @@ internal fun BrainSuiteOperationCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("BrainSuite operation", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (operation.stage in setOf(OperationStage.UPLOADING, OperationStage.DOWNLOADING)) {
+                        "Phone transfer"
+                    } else "Remote job status",
+                    style = MaterialTheme.typography.titleSmall,
+                )
                 if (canCancelTransfer && operation.status != OperationStatus.CANCELING) {
                     TextButton(onClick = onCancel) { Text("CANCEL") }
                 } else if (operation.status == OperationStatus.CANCELING) {

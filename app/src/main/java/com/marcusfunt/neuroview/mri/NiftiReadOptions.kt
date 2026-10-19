@@ -31,4 +31,6 @@ data class NiftiReadOptions(
     val backingDirectory: File? = null,
     val cancellationCheck: () -> Unit = {},
     val progressSink: (NiftiReadProgress) -> Unit = {},
+    /** Actual source bytes received (compressed bytes for gzip); never a decoded-volume percentage. */
+    val sourceProgressSink: (Long) -> Unit = {},
 )
