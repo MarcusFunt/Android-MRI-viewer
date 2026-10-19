@@ -47,6 +47,7 @@ import com.marcusfunt.neuroview.navigation.Destination
 import com.marcusfunt.neuroview.navigation.NavigationActions
 import com.marcusfunt.neuroview.ui.screens.HomeScreen
 import com.marcusfunt.neuroview.ui.screens.LibraryScreen
+import com.marcusfunt.neuroview.ui.screens.CatalogQuantity
 import com.marcusfunt.neuroview.ui.screens.importResultSummary
 import com.marcusfunt.neuroview.ui.screens.importCanceledSummary
 import com.marcusfunt.neuroview.ui.screens.catalogQuantityText
@@ -853,7 +854,10 @@ fun NeuroViewApp() {
                                 scope.launch {
                                     try {
                                         val count = catalog.clearThumbnailCache()
-                                        libraryMessage = "Cleared $count cached thumbnails"
+                                        libraryMessage = context.resources.catalogQuantityText(
+                                            CatalogQuantity.THUMBNAILS_CLEARED,
+                                            count,
+                                        )
                                     } catch (error: Exception) {
                                         libraryMessage = error.message ?: "Cache cleanup failed"
                                     } finally {

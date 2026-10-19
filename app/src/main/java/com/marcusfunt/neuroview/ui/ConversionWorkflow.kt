@@ -33,6 +33,8 @@ import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
 import com.marcusfunt.neuroview.ui.operations.OperationStage
 import com.marcusfunt.neuroview.ui.operations.OperationStatus
 import com.marcusfunt.neuroview.ui.operations.OperationUnit
+import com.marcusfunt.neuroview.ui.screens.CatalogQuantity
+import com.marcusfunt.neuroview.ui.screens.catalogQuantityText
 import java.util.IdentityHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -217,8 +219,13 @@ fun rememberConversionControls(): ConversionControls {
                     } ?: throw IllegalArgumentException("Cannot write NIfTI destination")
                     series.nz
                 }
-                "Saved $count DICOM slices as .nii.gz." +
-                    (if (skippedFolderFiles > 0) " Skipped $skippedFolderFiles non-DICOM files." else "") +
+                context.resources.catalogQuantityText(CatalogQuantity.DICOM_SLICES_SAVED, count) +
+                    (if (skippedFolderFiles > 0) {
+                        " " + context.resources.catalogQuantityText(
+                            CatalogQuantity.NON_DICOM_FILES_SKIPPED,
+                            skippedFolderFiles,
+                        )
+                    } else "") +
                     " Use Import NIfTI to add the result to your library."
             }
             // The work captured these values and now owns the conversion lifetime.
@@ -269,9 +276,15 @@ fun rememberConversionControls(): ConversionControls {
                 }
                 dicomSource = selection.documents
                 ignoredFolderFiles = selection.ignoredFiles
-                message = "Found ${selection.documents.size} DICOM slices. Choose where to save the NIfTI."
+                message = context.resources.catalogQuantityText(
+                    CatalogQuantity.DICOM_SLICES_FOUND,
+                    selection.documents.size,
+                )
                 createNifti.launch("NeuroView_DICOM_derived.nii.gz")
-                "Found ${selection.documents.size} DICOM slices. Choose where to save the NIfTI."
+                context.resources.catalogQuantityText(
+                    CatalogQuantity.DICOM_SLICES_FOUND,
+                    selection.documents.size,
+                )
             }
         }
     }
@@ -325,8 +338,10 @@ fun rememberConversionControls(): ConversionControls {
                         volume.close()
                     }
                 }
-                "Saved $count anonymized DERIVED Secondary Capture DICOM slices " +
-                    "inside a ZIP archive. These are not original scanner DICOMs."
+                context.resources.catalogQuantityText(
+                    CatalogQuantity.DERIVED_DICOM_SLICES_SAVED,
+                    count,
+                ) + " These are not original scanner DICOMs."
             }
         }
     }

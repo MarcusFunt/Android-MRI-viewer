@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,6 +64,7 @@ import com.marcusfunt.neuroview.catalog.ImportCollection
 import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
+import com.marcusfunt.neuroview.R
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
@@ -282,7 +284,7 @@ private fun CollectionHeader(
             Text(collection.label, style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold)
             Text(
-                "$count volume${if (count == 1) "" else "s"}",
+                pluralStringResource(R.plurals.series_volumes, count, count),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

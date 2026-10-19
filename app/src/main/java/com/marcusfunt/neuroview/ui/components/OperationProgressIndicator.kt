@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -28,6 +29,8 @@ import com.marcusfunt.neuroview.ui.operations.OperationProgress
 import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
 import com.marcusfunt.neuroview.ui.operations.OperationStatus
 import com.marcusfunt.neuroview.ui.operations.OperationUnit
+import com.marcusfunt.neuroview.ui.screens.CatalogQuantity
+import com.marcusfunt.neuroview.ui.screens.catalogQuantityText
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
 import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
 import com.marcusfunt.neuroview.ui.theme.MotionToken
@@ -45,6 +48,7 @@ fun OperationProgressIndicator(
     val fraction = progress?.fraction
     val percent = progress?.percent
     val duration = MotionToken.QUICK.durationMs(LocalNeuroViewMotion.current)
+    val resources = LocalContext.current.resources
     val animatedFraction by animateFloatAsState(
         targetValue = fraction ?: 0f,
         animationSpec = tween(durationMillis = duration),
@@ -110,7 +114,7 @@ fun OperationProgressIndicator(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Top,
         ) {
-            val countText = progress?.countText()
+            val countText = progress?.countText(resources)
             if (countText != null) {
                 Text(
                     text = countText,
@@ -143,25 +147,29 @@ fun OperationProgressIndicator(
     }
 }
 
-private fun OperationProgress.countText(): String? {
+private fun OperationProgress.countText(resources: android.content.res.Resources): String? {
     val completed = completedUnits ?: return null
     val measurement = requireNotNull(unit)
     val completedText = formatCount(completed)
     val total = totalUnits
     return if (total == null) {
-        "$completedText ${measurement.label(completed)}"
+        resources.catalogQuantityText(measurement.toCatalogQuantity(), completed, completedText)
     } else {
-        "$completedText of ${formatCount(total)} ${measurement.label(total)}"
+        "$completedText of ${resources.catalogQuantityText(
+            measurement.toCatalogQuantity(),
+            total,
+            formatCount(total),
+        )}"
     }
 }
 
-private fun OperationUnit.label(count: Long): String = when (this) {
-    OperationUnit.BYTES -> if (count == 1L) "byte" else "bytes"
-    OperationUnit.VOXELS -> if (count == 1L) "voxel" else "voxels"
-    OperationUnit.FILES -> if (count == 1L) "file" else "files"
-    OperationUnit.SLICES -> if (count == 1L) "slice" else "slices"
-    OperationUnit.PIXELS -> if (count == 1L) "pixel" else "pixels"
-    OperationUnit.ITEMS -> if (count == 1L) "item" else "items"
+internal fun OperationUnit.toCatalogQuantity(): CatalogQuantity = when (this) {
+    OperationUnit.BYTES -> CatalogQuantity.OPERATION_BYTES
+    OperationUnit.VOXELS -> CatalogQuantity.OPERATION_VOXELS
+    OperationUnit.FILES -> CatalogQuantity.OPERATION_FILES
+    OperationUnit.SLICES -> CatalogQuantity.OPERATION_SLICES
+    OperationUnit.PIXELS -> CatalogQuantity.OPERATION_PIXELS
+    OperationUnit.ITEMS -> CatalogQuantity.OPERATION_ITEMS
 }
 
 private fun formatCount(value: Long): String =

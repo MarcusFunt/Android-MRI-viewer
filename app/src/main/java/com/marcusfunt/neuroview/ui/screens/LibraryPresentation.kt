@@ -18,10 +18,36 @@ internal enum class CatalogQuantity(val resourceName: String, val resourceId: In
     MRI_ENTRIES("library_mri_entries", R.plurals.library_mri_entries),
     FILES_CHECKED("import_files_checked", R.plurals.import_files_checked),
     FRAMES("scan_frames", R.plurals.scan_frames),
+    SERIES_VOLUMES("series_volumes", R.plurals.series_volumes),
+    DICOM_SLICES_FOUND("conversion_dicom_slices_found", R.plurals.conversion_dicom_slices_found),
+    DICOM_SLICES_SAVED("conversion_dicom_slices_saved", R.plurals.conversion_dicom_slices_saved),
+    NON_DICOM_FILES_SKIPPED("conversion_non_dicom_files_skipped", R.plurals.conversion_non_dicom_files_skipped),
+    DERIVED_DICOM_SLICES_SAVED("conversion_derived_dicom_slices_saved", R.plurals.conversion_derived_dicom_slices_saved),
+    THUMBNAILS_CLEARED("cache_thumbnails_cleared", R.plurals.cache_thumbnails_cleared),
+    PREVIEWS_CLEARED("cache_mri_previews_cleared", R.plurals.cache_mri_previews_cleared),
+    OPERATION_BYTES("operation_bytes", R.plurals.operation_bytes),
+    OPERATION_VOXELS("operation_voxels", R.plurals.operation_voxels),
+    OPERATION_FILES("operation_files", R.plurals.operation_files),
+    OPERATION_SLICES("operation_slices", R.plurals.operation_slices),
+    OPERATION_PIXELS("operation_pixels", R.plurals.operation_pixels),
+    OPERATION_ITEMS("operation_items", R.plurals.operation_items),
 }
 
 internal fun Resources.catalogQuantityText(quantity: CatalogQuantity, count: Int): String =
     getQuantityString(quantity.resourceId, count, count)
+
+internal fun Resources.catalogQuantityText(quantity: CatalogQuantity, count: Long): String =
+    getQuantityString(quantity.resourceId, if (count == 1L) 1 else 2, count)
+
+internal fun Resources.catalogQuantityText(
+    quantity: CatalogQuantity,
+    count: Long,
+    formattedCount: String,
+): String = getQuantityString(
+    quantity.resourceId,
+    count.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
+    formattedCount,
+)
 
 internal fun librarySummary(scans: Int, collections: Int, quantity: (CatalogQuantity, Int) -> String): String =
     "${quantity(CatalogQuantity.SCANS, scans)} · ${quantity(CatalogQuantity.COLLECTIONS, collections)}"

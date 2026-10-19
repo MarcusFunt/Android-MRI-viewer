@@ -41,4 +41,56 @@
         <item quantity="one">%d frame</item>
         <item quantity="other">%d frames</item>
     </plurals>
+    <plurals name="series_volumes">
+        <item quantity="one">%d volume</item>
+        <item quantity="other">%d volumes</item>
+    </plurals>
+    <plurals name="conversion_dicom_slices_found">
+        <item quantity="one">Found %d DICOM slice. Choose where to save the NIfTI.</item>
+        <item quantity="other">Found %d DICOM slices. Choose where to save the NIfTI.</item>
+    </plurals>
+    <plurals name="conversion_dicom_slices_saved">
+        <item quantity="one">Saved %d DICOM slice as .nii.gz.</item>
+        <item quantity="other">Saved %d DICOM slices as .nii.gz.</item>
+    </plurals>
+    <plurals name="conversion_non_dicom_files_skipped">
+        <item quantity="one">Skipped %d non-DICOM file.</item>
+        <item quantity="other">Skipped %d non-DICOM files.</item>
+    </plurals>
+    <plurals name="conversion_derived_dicom_slices_saved">
+        <item quantity="one">Saved %d anonymized DERIVED Secondary Capture DICOM slice inside a ZIP archive.</item>
+        <item quantity="other">Saved %d anonymized DERIVED Secondary Capture DICOM slices inside a ZIP archive.</item>
+    </plurals>
+    <plurals name="cache_thumbnails_cleared">
+        <item quantity="one">Cleared %d cached thumbnail</item>
+        <item quantity="other">Cleared %d cached thumbnails</item>
+    </plurals>
+    <plurals name="cache_mri_previews_cleared">
+        <item quantity="one">Cleared %d generated MRI preview</item>
+        <item quantity="other">Cleared %d generated MRI previews</item>
+    </plurals>
+    <plurals name="operation_bytes">
+        <item quantity="one">%1$s byte</item>
+        <item quantity="other">%1$s bytes</item>
+    </plurals>
+    <plurals name="operation_voxels">
+        <item quantity="one">%1$s voxel</item>
+        <item quantity="other">%1$s voxels</item>
+    </plurals>
+    <plurals name="operation_files">
+        <item quantity="one">%1$s file</item>
+        <item quantity="other">%1$s files</item>
+    </plurals>
+    <plurals name="operation_slices">
+        <item quantity="one">%1$s slice</item>
+        <item quantity="other">%1$s slices</item>
+    </plurals>
+    <plurals name="operation_pixels">
+        <item quantity="one">%1$s pixel</item>
+        <item quantity="other">%1$s pixels</item>
+    </plurals>
+    <plurals name="operation_items">
+        <item quantity="one">%1$s item</item>
+        <item quantity="other">%1$s items</item>
+    </plurals>
 </resources>

@@ -5,6 +5,8 @@ import com.marcusfunt.neuroview.catalog.ImportResult
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
 import com.marcusfunt.neuroview.mri.NiftiSeriesMetadata
+import com.marcusfunt.neuroview.ui.components.toCatalogQuantity
+import com.marcusfunt.neuroview.ui.operations.OperationUnit
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.*
@@ -19,13 +21,17 @@ class LibraryPresentationTest {
     private val resources = DocumentBuilderFactory.newInstance().newDocumentBuilder()
         .parse(File("src/main/res/values/strings.xml"))
     private fun quantity(key: CatalogQuantity, count: Int): String {
+        return resourceQuantity(key.resourceName, count)
+    }
+
+    private fun resourceQuantity(resourceName: String, count: Int, formattedCount: String? = null): String {
         val plurals = resources.getElementsByTagName("plurals")
         val plural = (0 until plurals.length).map { plurals.item(it) }
-            .single { it.attributes.getNamedItem("name").nodeValue == key.resourceName }
+            .single { it.attributes.getNamedItem("name").nodeValue == resourceName }
         val children = plural.childNodes
         val text = (0 until children.length).map { children.item(it) }
             .single { it.nodeName == "item" && it.attributes.getNamedItem("quantity").nodeValue == if (count == 1) "one" else "other" }.textContent
-        return String.format(text, count)
+        return if (formattedCount == null) String.format(text, count) else String.format(text, formattedCount)
     }
 
     @Test fun zeroOneManyCountsUseShippedPluralResources() {
@@ -36,6 +42,68 @@ class LibraryPresentationTest {
         assertEquals("0 matching scans", quantity(CatalogQuantity.MATCHING_SCANS, 0))
         assertEquals("1 MRI library entry", quantity(CatalogQuantity.MRI_ENTRIES, 1))
         assertEquals("2 MRI library entries", quantity(CatalogQuantity.MRI_ENTRIES, 2))
+    }
+
+    @Test fun conversionCacheSeriesAndProgressCountsHaveCorrectSingularAndPluralCopy() {
+        assertEquals("0 volumes", resourceQuantity("series_volumes", 0))
+        assertEquals("1 volume", resourceQuantity("series_volumes", 1))
+        assertEquals("2 volumes", resourceQuantity("series_volumes", 2))
+        assertEquals("Found 1 DICOM slice. Choose where to save the NIfTI.",
+            resourceQuantity("conversion_dicom_slices_found", 1))
+        assertEquals("Found 2 DICOM slices. Choose where to save the NIfTI.",
+            resourceQuantity("conversion_dicom_slices_found", 2))
+        assertEquals("Found 0 DICOM slices. Choose where to save the NIfTI.",
+            resourceQuantity("conversion_dicom_slices_found", 0))
+        assertEquals("Saved 0 DICOM slices as .nii.gz.", resourceQuantity("conversion_dicom_slices_saved", 0))
+        assertEquals("Saved 1 DICOM slice as .nii.gz.", resourceQuantity("conversion_dicom_slices_saved", 1))
+        assertEquals("Saved 2 DICOM slices as .nii.gz.", resourceQuantity("conversion_dicom_slices_saved", 2))
+        assertEquals("Skipped 0 non-DICOM files.", resourceQuantity("conversion_non_dicom_files_skipped", 0))
+        assertEquals("Skipped 1 non-DICOM file.", resourceQuantity("conversion_non_dicom_files_skipped", 1))
+        assertEquals("Skipped 2 non-DICOM files.", resourceQuantity("conversion_non_dicom_files_skipped", 2))
+        assertEquals("Saved 0 anonymized DERIVED Secondary Capture DICOM slices inside a ZIP archive.",
+            resourceQuantity("conversion_derived_dicom_slices_saved", 0))
+        assertEquals("Saved 1 anonymized DERIVED Secondary Capture DICOM slice inside a ZIP archive.",
+            resourceQuantity("conversion_derived_dicom_slices_saved", 1))
+        assertEquals("Saved 2 anonymized DERIVED Secondary Capture DICOM slices inside a ZIP archive.",
+            resourceQuantity("conversion_derived_dicom_slices_saved", 2))
+        assertEquals("Cleared 1 cached thumbnail", resourceQuantity("cache_thumbnails_cleared", 1))
+        assertEquals("Cleared 2 cached thumbnails", resourceQuantity("cache_thumbnails_cleared", 2))
+        assertEquals("Cleared 0 cached thumbnails", resourceQuantity("cache_thumbnails_cleared", 0))
+        assertEquals("Cleared 0 generated MRI previews", resourceQuantity("cache_mri_previews_cleared", 0))
+        assertEquals("Cleared 1 generated MRI preview", resourceQuantity("cache_mri_previews_cleared", 1))
+        assertEquals("Cleared 2 generated MRI previews", resourceQuantity("cache_mri_previews_cleared", 2))
+        assertEquals("0 bytes", resourceQuantity("operation_bytes", 0))
+        assertEquals("1 byte", resourceQuantity("operation_bytes", 1))
+        assertEquals("2 bytes", resourceQuantity("operation_bytes", 2))
+        assertEquals("0 slices", resourceQuantity("operation_slices", 0))
+        assertEquals("1 slice", resourceQuantity("operation_slices", 1))
+        assertEquals("2 slices", resourceQuantity("operation_slices", 2))
+        assertEquals("0 files", resourceQuantity("operation_files", 0))
+        assertEquals("1 file", resourceQuantity("operation_files", 1))
+        assertEquals("2 files", resourceQuantity("operation_files", 2))
+        assertEquals("65,536 bytes", resourceQuantity("operation_bytes", 65_536, "65,536"))
+        assertEquals("150,000 bytes", resourceQuantity("operation_bytes", 150_000, "150,000"))
+        for (name in listOf("operation_voxels", "operation_pixels", "operation_items")) {
+            assertEquals("0 ${name.substringAfter('_')}", resourceQuantity(name, 0))
+            assertEquals("1 ${name.substringAfter('_').dropLast(1)}", resourceQuantity(name, 1))
+            assertEquals("2 ${name.substringAfter('_')}", resourceQuantity(name, 2))
+        }
+    }
+
+    @Test fun operationProgressUsesPluralResourcesForEveryUnit() {
+        val expected = mapOf(
+            OperationUnit.BYTES to CatalogQuantity.OPERATION_BYTES,
+            OperationUnit.VOXELS to CatalogQuantity.OPERATION_VOXELS,
+            OperationUnit.FILES to CatalogQuantity.OPERATION_FILES,
+            OperationUnit.SLICES to CatalogQuantity.OPERATION_SLICES,
+            OperationUnit.PIXELS to CatalogQuantity.OPERATION_PIXELS,
+            OperationUnit.ITEMS to CatalogQuantity.OPERATION_ITEMS,
+        )
+        expected.forEach { (unit, label) ->
+            assertEquals("$unit", label, unit.toCatalogQuantity())
+            assertEquals("1 singular $unit", quantity(label, 1), resourceQuantity(label.resourceName, 1))
+            assertEquals("2 plural $unit", quantity(label, 2), resourceQuantity(label.resourceName, 2))
+        }
     }
 
     @Test fun importSummaryKeepsFailureDetailsAndOmitsIrrelevantZeroDetails() {

@@ -396,7 +396,8 @@ internal fun NeuroViewSettingsSheet(
             )
             TextButton(onClick = { scope.launch {
                 cacheStatus = try {
-                    "Cleared ${onClearCache()} generated MRI previews. Original files unchanged."
+                    context.resources.catalogQuantityText(CatalogQuantity.PREVIEWS_CLEARED, onClearCache()) +
+                        ". Original files unchanged."
                 } catch (error: Exception) {
                     "Could not clear previews: ${error.message ?: "Unknown error"}"
                 }
