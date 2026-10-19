@@ -51,10 +51,17 @@ class DocumentProviderFaultTest {
 
     private fun withScenario(test: FaultInjectionProvider.Scenario, body: () -> Unit) {
         FaultInjectionProvider.scenario = test
-        try { body() } finally {
+        var failure: Throwable? = null
+        try { body() } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
             test.resume.countDown()
-            if (!test.failOnOpen) assertTrue("Provider writer released", test.finished.await(10, TimeUnit.SECONDS))
             FaultInjectionProvider.scenario = null
+            if (!test.failOnOpen && !test.finished.await(10, TimeUnit.SECONDS)) {
+                val cleanup = AssertionError("Provider writer released")
+                if (failure == null) throw cleanup else failure.addSuppressed(cleanup)
+            }
         }
     }
 
@@ -136,6 +143,11 @@ class DocumentProviderFaultTest {
                 assertTrue(test.paused.await(10, TimeUnit.SECONDS))
                 coordinator.requestCancel(old)
                 signal.cancel()
+                // Android detaches the resolver's cancellation transport after open.
+                // Inject a provider-side request too, so ignored cancellation remains
+                // reproducible even when a late client signal cannot reach the provider.
+                val lateTransportRequests = test.cancellationRequests.get()
+                test.cancelProvider()
                 assertEquals(1, test.cancellationRequests.get())
                 assertFalse(reader.isDone)
                 assertEquals(OperationStatus.CANCELING, coordinator.state(old)?.status)
@@ -146,7 +158,8 @@ class DocumentProviderFaultTest {
                 reader.get(10, TimeUnit.SECONDS)
                 assertFalse(coordinator.confirmCanceled(old))
                 assertEquals(OperationStatus.RUNNING, coordinator.state(newer)?.status)
-                log("ignored-cancel: cleanup pending -> released; stale callback rejected")
+                log("ignored-cancel: cleanup pending -> released; stale callback rejected; " +
+                    "lateTransportRequests=$lateTransportRequests")
             }
         } finally { executor.shutdownNow() }
     }

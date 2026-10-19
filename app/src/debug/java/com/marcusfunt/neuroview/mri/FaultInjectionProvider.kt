@@ -6,10 +6,12 @@ import android.content.res.AssetFileDescriptor
 import android.database.Cursor
 import android.net.Uri
 import android.os.CancellationSignal
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /** Debug APK only. Each test owns and releases its pipe writer, including ignored cancellation. */
 class FaultInjectionProvider : ContentProvider() {
@@ -26,13 +28,28 @@ class FaultInjectionProvider : ContentProvider() {
         val resume = CountDownLatch(1)
         val finished = CountDownLatch(1)
         val cancellationRequests = AtomicInteger()
+        internal val providerCancellation = AtomicReference<CancellationSignal?>()
+
+        /** Explicit injection after open: the resolver only forwards cancellation during the open call. */
+        fun cancelProvider() = requireNotNull(providerCancellation.get()).cancel()
     }
+
+    // Read-only resolver opens use the typed path. Its platform default calls
+    // the legacy two-argument openAssetFile, bypassing the signal overload.
+    override fun openAssetFile(uri: Uri, mode: String): AssetFileDescriptor =
+        openAssetFile(uri, mode, null)
+
+    override fun openTypedAssetFile(
+        uri: Uri, mimeTypeFilter: String, opts: Bundle?, signal: CancellationSignal?,
+    ): AssetFileDescriptor = openAssetFile(uri, "r", signal)
 
     override fun openAssetFile(uri: Uri, mode: String, signal: CancellationSignal?): AssetFileDescriptor {
         val test = requireNotNull(scenario) { "Install a test scenario first" }
         if (test.failOnOpen) throw SecurityException("Injected permission failure")
         val pipe = ParcelFileDescriptor.createReliablePipe()
-        signal?.setOnCancelListener {
+        val providerSignal = signal ?: CancellationSignal()
+        test.providerCancellation.set(providerSignal)
+        providerSignal.setOnCancelListener {
             test.cancellationRequests.incrementAndGet()
             if (!test.ignoreCancellation) {
                 test.resume.countDown()
@@ -48,7 +65,7 @@ class FaultInjectionProvider : ContentProvider() {
                             test.paused.countDown()
                             check(test.resume.await(10, TimeUnit.MINUTES)) { "Test did not release provider" }
                         }
-                        if (!test.ignoreCancellation) signal?.throwIfCanceled()
+                        if (!test.ignoreCancellation) providerSignal.throwIfCanceled()
                         val count = minOf(test.chunkBytes, test.payload.size - offset)
                         output.write(test.payload, offset, count)
                         offset += count
