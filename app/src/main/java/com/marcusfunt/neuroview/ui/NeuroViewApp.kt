@@ -403,6 +403,7 @@ fun NeuroViewApp() {
                                         progress.toOperationProgress(),
                                     )
                                 },
+                                sourceProgressSink = { operationCoordinator.observeWork(operationId) },
                             ),
                         )
                     }

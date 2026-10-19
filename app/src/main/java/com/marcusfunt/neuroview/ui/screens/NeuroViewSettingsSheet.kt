@@ -271,6 +271,48 @@ internal fun NeuroViewSettingsSheet(
             )
             Text("Hold the slice thumb and move upward for finer horizontal adjustment.",
                 style = MaterialTheme.typography.bodySmall, color = SettingsSecondary)
+
+            HorizontalDivider(color = SettingsSecondary.copy(alpha = 0.28f))
+            Text("Quality", style = MaterialTheme.typography.titleSmall, color = SettingsForeground)
+            SettingsChoiceRow(
+                title = "Rendering priority",
+                selected = renderQualitySettings.mode.label,
+                options = RenderQualityMode.entries.map { it.label to it },
+                onSelected = { mode ->
+                    viewerPreferences.writeRenderQualitySettings(renderQualitySettings.copy(mode = mode))
+                },
+            )
+            SettingsSwitchRow(
+                title = "Adaptive rendering",
+                detail = "Adjust quality using render timing, memory, battery saver and thermal state.",
+                checked = renderQualitySettings.adaptive,
+                onCheckedChange = { adaptive ->
+                    viewerPreferences.writeRenderQualitySettings(
+                        renderQualitySettings.copy(adaptive = adaptive),
+                    )
+                },
+            )
+            if (!renderQualitySettings.adaptive) {
+                Text(
+                    "With adaptive rendering off, large scans may stutter on slower phones.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SettingsSecondary,
+                )
+            }
+            if (renderQualitySettings.mode == RenderQualityMode.MANUAL) {
+                ManualRenderSettings(
+                    settings = renderQualitySettings,
+                    onSettingsPreview = { renderQualitySettings = it },
+                    onSettingsCommitted = viewerPreferences::writeRenderQualitySettings,
+                )
+            }
+            Text(
+                "Selected sizes are maximum image sides. The current memory guard allows still frames up to $memorySafeMaximumSidePx px.",
+                style = MaterialTheme.typography.bodySmall,
+                color = SettingsSecondary,
+            )
+            HorizontalDivider(color = SettingsSecondary.copy(alpha = 0.28f))
+            Text("Display", style = MaterialTheme.typography.titleSmall, color = SettingsForeground)
             SettingsSwitchRow(
                 title = "Immersive Focus",
                 detail = "Hide system bars in Focus. Swipe from an edge to reveal them; Exit focus and Back remain available.",
@@ -326,47 +368,8 @@ internal fun NeuroViewSettingsSheet(
                     },
                 )
             }
-
-            HorizontalDivider(color = SettingsSecondary.copy(alpha = 0.28f))
-            Text("Rendering quality", style = MaterialTheme.typography.titleSmall, color = SettingsForeground)
-            SettingsChoiceRow(
-                title = "Rendering priority",
-                selected = renderQualitySettings.mode.label,
-                options = RenderQualityMode.entries.map { it.label to it },
-                onSelected = { mode ->
-                    viewerPreferences.writeRenderQualitySettings(renderQualitySettings.copy(mode = mode))
-                },
-            )
-            SettingsSwitchRow(
-                title = "Adaptive rendering",
-                detail = "Adjust quality using render timing, memory, battery saver and thermal state.",
-                checked = renderQualitySettings.adaptive,
-                onCheckedChange = { adaptive ->
-                    viewerPreferences.writeRenderQualitySettings(
-                        renderQualitySettings.copy(adaptive = adaptive),
-                    )
-                },
-            )
-            if (!renderQualitySettings.adaptive) {
-                Text(
-                    "With adaptive rendering off, large scans may stutter on slower phones.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = SettingsSecondary,
-                )
-            }
-            if (renderQualitySettings.mode == RenderQualityMode.MANUAL) {
-                ManualRenderSettings(
-                    settings = renderQualitySettings,
-                    onSettingsPreview = { renderQualitySettings = it },
-                    onSettingsCommitted = viewerPreferences::writeRenderQualitySettings,
-                )
-            }
-            Text(
-                "Selected sizes are maximum image sides. The current memory guard allows still frames up to $memorySafeMaximumSidePx px.",
-                style = MaterialTheme.typography.bodySmall,
-                color = SettingsSecondary,
-            )
             if (showRenderDiagnostics && renderPerformance != null && renderPerformance.sampleCount > 0) {
+                Text("Diagnostics", style = MaterialTheme.typography.titleSmall, color = SettingsForeground)
                 Text(
                     "Local render diagnostics · ${renderPerformance.displayedFrameCount} displayed frames · " +
                         "gesture→Compose p50/p95/p99 " +

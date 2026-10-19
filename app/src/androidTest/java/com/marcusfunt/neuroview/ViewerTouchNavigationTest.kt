@@ -33,29 +33,47 @@ class ViewerTouchNavigationTest {
         val bitmap = mutableStateOf(frame(0))
         val motion = mutableStateOf(MotionPreference.SYSTEM)
         val scrubbing = mutableStateOf(false)
-        compose.setContent { Harness(slice, bitmap, motion.value, scrubbing = scrubbing) }
+        val rerenderCount = mutableIntStateOf(0)
+        val observedSlices = mutableListOf<Int>()
+        compose.setContent {
+            Harness(
+                slice,
+                bitmap,
+                motion.value,
+                scrubbing = scrubbing,
+                onSliceChange = { nextSlice ->
+                    slice.intValue = nextSlice
+                    observedSlices += nextSlice
+                    bitmap.value = frame(++rerenderCount.intValue)
+                    motion.value = MotionPreference.entries[rerenderCount.intValue % MotionPreference.entries.size]
+                },
+            )
+        }
         val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
-        val height = image.fetchSemanticsNode().boundsInRoot.height
-        image.performTouchInput { down(Offset(centerX, height * 0.95f)) }
-        repeat(24) { step ->
-            image.performTouchInput { moveBy(Offset(0f, -height * 0.033f), delayMillis = 24) }
-            compose.runOnIdle {
-                bitmap.value = frame(step + 1) // Deliberately commit frames with pointer still DOWN.
-                motion.value = MotionPreference.entries[step % 3]
-            }
+        image.performTouchInput {
+            // Use the touch scope's untransformed node-local size. boundsInRoot includes
+            // the image's 1.35x zoom layer and gives coordinates outside the pointer box.
+            swipe(
+                start = Offset(centerX, height * 0.85f),
+                end = Offset(centerX, height * 0.15f),
+                durationMillis = 1_600,
+            )
         }
         compose.runOnIdle {
-            assertTrue("Drag canceled by recomposition", scrubbing.value)
-            assertTrue("Long drag truncated: ${slice.intValue}", slice.intValue >= 140)
+            assertTrue("Drag did not commit render frames", rerenderCount.intValue > 0)
+            assertTrue(
+                "Long drag truncated: ${slice.intValue}; rerenders=${rerenderCount.intValue}; observed=$observedSlices",
+                slice.intValue >= 140,
+            )
+            assertFalse("Scrubbing remained active after release", scrubbing.value)
         }
-        image.performTouchInput { up() }
-        compose.runOnIdle { assertFalse(scrubbing.value) }
     }
 
     @Test fun manualDragAndAccessibleSliderAdjustmentAreIdenticalInAllMotionModes() {
         val slice = mutableIntStateOf(128)
         val motion = mutableStateOf(MotionPreference.SYSTEM)
-        compose.setContent { Harness(slice, mutableStateOf(frame(0)), motion.value) }
+        val bitmap = mutableStateOf(frame(0))
+        compose.setContent { Harness(slice, bitmap, motion.value) }
         val results = mutableListOf<Int>()
         MotionPreference.entries.forEach { preference ->
             compose.runOnIdle { slice.intValue = 128; motion.value = preference }
@@ -91,14 +109,28 @@ class ViewerTouchNavigationTest {
     @Test fun focusPreservesZoomAndSelectedSlice() {
         val slice = mutableIntStateOf(137)
         val focus = mutableStateOf(false)
-        compose.setContent { Harness(slice, mutableStateOf(frame(0)), focus = focus) }
-        compose.onNodeWithText("Zoom", useUnmergedTree = true).performClick()
+        val bitmap = mutableStateOf(frame(0))
+        compose.setContent { Harness(slice, bitmap, focus = focus) }
+        compose.onNodeWithText("Scroll").performClick()
         compose.onNodeWithText("135% · drag to pan · pinch to zoom").assertExists()
-        compose.onNodeWithText("Focus").performClick()
+        compose.onNodeWithContentDescription("More viewer actions").performClick()
+        compose.onNodeWithText("Focus mode").performClick()
         compose.onNodeWithText("Exit focus").performClick()
         compose.onNodeWithText("135% · drag to pan · pinch to zoom").assertExists()
         compose.onNodeWithText("138 / 256").assertExists()
         compose.runOnIdle { assertEquals(137, slice.intValue) }
+    }
+
+    @Test fun commonViewerActionsStayVisibleAndProcessingRemainsInOverflow() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(frame(0))
+        compose.setContent { Harness(slice, bitmap) }
+        compose.onNodeWithContentDescription("Gesture mode").assertExists()
+        compose.onNodeWithContentDescription("Display adjustments").assertExists()
+        compose.onNodeWithContentDescription("More viewer actions").performClick()
+        compose.onNodeWithText("Focus mode").assertExists()
+        compose.onNodeWithText("Process with BrainSuite").performClick()
+        compose.onNodeWithText("MRI processing").assertExists()
     }
 
     @Test fun displayedDarkGrayscaleRampIsOpaqueAndUnchanged() {
@@ -145,12 +177,13 @@ class ViewerTouchNavigationTest {
         motion: MotionPreference = MotionPreference.SYSTEM,
         focus: MutableState<Boolean> = remember { mutableStateOf(false) },
         scrubbing: MutableState<Boolean> = remember { mutableStateOf(false) },
+        onSliceChange: ((Int) -> Unit)? = null,
     ) {
         NeuroViewTheme {
             CompositionLocalProvider(LocalNeuroViewMotion provides motion) {
                     MriContent(Modifier.fillMaxSize(), focus.value, false, false, { focus.value = !focus.value },
                         false, false, {}, 3f, volume, MriPlane.AXIAL, bitmap.value, false, {},
-                        slice.intValue, 256, { slice.intValue = it }, { scrubbing.value = it }, {},
+                        slice.intValue, 256, onSliceChange ?: { slice.intValue = it }, { scrubbing.value = it }, {},
                         null, "synthetic", null, {}, 0.4f, {}, 0.8f, {})
             }
         }

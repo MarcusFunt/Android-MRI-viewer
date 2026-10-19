@@ -51,6 +51,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -63,6 +64,8 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -969,6 +972,7 @@ internal fun MriContent(
     val currentReferenceWorldChange by rememberUpdatedState(onReferenceWorldChange)
     var showAdjustments by rememberSaveable { mutableStateOf(false) }
     var showProcessing by rememberSaveable { mutableStateOf(false) }
+    var showMoreActions by rememberSaveable { mutableStateOf(false) }
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
     var zoomMode by rememberSaveable(volume) { mutableStateOf(false) }
@@ -1426,38 +1430,63 @@ internal fun MriContent(
         ) {
             Row(
                 modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = {
-                    zoomMode = !zoomMode
-                    if (probeCrosshairEnabled) onProbeCrosshairChange(false)
-                    onReferenceWorldChange(null)
-                    scale = DEFAULT_MRI_IMAGE_SCALE
-                    panOffset = Offset.Zero
-                }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                    modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text(
-                        if (zoomMode) "Scroll" else "Zoom",
-                        style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp),
-                    )
-                }
-                TextButton(onClick = { showAdjustments = true },
+                FilterChip(
+                    selected = zoomMode,
+                    onClick = {
+                        zoomMode = !zoomMode
+                        if (probeCrosshairEnabled) onProbeCrosshairChange(false)
+                        onReferenceWorldChange(null)
+                        scale = DEFAULT_MRI_IMAGE_SCALE
+                        panOffset = Offset.Zero
+                    },
+                    label = { Text(if (zoomMode) "Zoom" else "Scroll") },
+                    modifier = Modifier.heightIn(min = 48.dp).semantics {
+                        contentDescription = "Gesture mode"
+                        stateDescription = if (zoomMode) "Zoom and pan" else "Scroll through slices"
+                    },
+                )
+                TextButton(
+                    onClick = { showAdjustments = true },
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                    modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text("Adjust", style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp))
-                }
-                TextButton(onClick = { showProcessing = true },
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                    modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text("Process", style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp))
+                    modifier = Modifier.heightIn(min = 48.dp).semantics {
+                        contentDescription = "Display adjustments"
+                    },
+                ) {
+                    Text("Adjust", style = MaterialTheme.typography.labelLarge)
                 }
             }
-            TextButton(
-                onClick = onFocusToggle,
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) { Text("Focus", color = NeuroChrome.accent) }
+            Box {
+                IconButton(
+                    onClick = { showMoreActions = true },
+                    modifier = Modifier.size(48.dp).semantics {
+                        contentDescription = "More viewer actions"
+                    },
+                ) {
+                    Icon(Icons.Default.MoreVert, contentDescription = null, tint = NeuroChrome.ink)
+                }
+                DropdownMenu(
+                    expanded = showMoreActions,
+                    onDismissRequest = { showMoreActions = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Focus mode") },
+                        onClick = {
+                            showMoreActions = false
+                            onFocusToggle()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Process with BrainSuite") },
+                        onClick = {
+                            showMoreActions = false
+                            showProcessing = true
+                        },
+                    )
+                }
+            }
         }
         if (orientationUnknown) {
             Text(

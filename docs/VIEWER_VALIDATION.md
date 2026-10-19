@@ -96,17 +96,22 @@ python scripts/qa/viewer_reference.py
 ```
 
 Result: **BUILD SUCCESSFUL in 11s**, 120 JVM tests across 23 suites; zero failures,
-errors or skipped tests. New JVM coverage includes fractional drag continuity,
+errors or skipped tests on the original viewer implementation worktree. After
+integration, the combined repository rerun built the app and test APKs, compiled
+Android tests, ran lint, and passed **133 JVM tests** with zero failures/errors.
+The full instrumentation suite then passed **30 tests** on the isolated API 35
+emulator (`emulator-5558`), including all seven viewer touch/navigation tests and
+the provider fault scenarios. The existing `emulator-5554` and `emulator-5556`
+profiles were not used for installs or test runs. New JVM coverage includes fractional drag continuity,
 precision interpolation and RTL, clamping, the momentum policy, independent
 geometry, 4D first-frame loading, sharp fixture detail and grayscale levels 0–32.
 
-`ViewerTouchNavigationTest` compiles six instrumented regressions: a held drag
+`ViewerTouchNavigationTest` includes seven instrumented regressions: a held drag
 with 24 deliberately replaced bitmaps and live motion preference changes, equal
 manual drag/accessible slider navigation across all motion modes, upward slider
 precision without jumps, Focus zoom/slice retention, exact dark grayscale Bitmap
-copying, and immediate persisted step-button activation without slice movement.
-They have **not been executed in this worktree**. The coordinator selects the
-disposable emulator after integration; no existing emulator was modified here.
+copying, immediate persisted step-button activation without slice movement, and
+visible toolbar/overflow actions. All seven passed in the integrated emulator run.
 
 Opt-in system traces expose `NeuroView.pointer.start/stop`,
 `NeuroView.drag.start/move/end/cancel`, `NeuroView.commit.preview/still` and counters
@@ -115,8 +120,7 @@ scan identity, patient metadata or voxel values.
 
 ## Release acceptance still pending
 
-- **#19/#20/#21/#22/#23:** Execute the instrumented suite on the selected emulator;
-  test long/slow/alternating/repeated drags and rapid flicks on a real touchscreen,
+- **#19/#20/#21/#22/#23:** Test long/slow/alternating/repeated drags and rapid flicks on a real touchscreen,
   both button states, Zoom/Probe modes, RTL/large font/small screen, rotation,
   back/forward and process recreation. The real-device run is a release gate.
 - **#24/#28:** Capture all-plane/window/zoom/probe/Focus reference screenshots with

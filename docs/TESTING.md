@@ -45,6 +45,8 @@ To run instrumented UI tests locally with a booted device/emulator:
 
 Do not claim that the emulator tests visually verify every screen or rendering correctness. In particular, review the captured screenshot and OpenGL diagnostic log before relying on the Home 3D preview.
 
+For the requested large-text, TalkBack, touch-target, landscape, cutout, reduced-motion, and long-content coverage, use the [accessibility and responsive-layout QA matrix](ACCESSIBILITY_QA.md). Record screenshots and the exact build/device configuration; the matrix distinguishes pending physical-device checks from emulator evidence.
+
 ## Manual device and release gates
 
 The following remain **verification tasks, not claims of completed validation**:
