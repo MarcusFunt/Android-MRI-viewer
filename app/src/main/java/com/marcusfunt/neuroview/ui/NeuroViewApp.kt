@@ -47,6 +47,9 @@ import com.marcusfunt.neuroview.navigation.Destination
 import com.marcusfunt.neuroview.navigation.NavigationActions
 import com.marcusfunt.neuroview.ui.screens.HomeScreen
 import com.marcusfunt.neuroview.ui.screens.LibraryScreen
+import com.marcusfunt.neuroview.ui.screens.importResultSummary
+import com.marcusfunt.neuroview.ui.screens.importCanceledSummary
+import com.marcusfunt.neuroview.ui.screens.catalogQuantityText
 import com.marcusfunt.neuroview.ui.screens.SeriesScreen
 import com.marcusfunt.neuroview.ui.screens.ViewerScreen
 import com.marcusfunt.neuroview.ui.operations.OperationCoordinator
@@ -657,15 +660,11 @@ fun NeuroViewApp() {
                             operationCoordinator.requestCancel(operationId)
                         }
                         operationCoordinator.confirmCanceled(operationId)
-                        importMessage = "Import canceled after ${importProgress?.filesProcessed ?: 0} " +
-                            "of $totalFiles files. ${result.added} accepted MRI entries were kept."
+                        importMessage = importCanceledSummary(result, importProgress?.filesProcessed ?: 0,
+                            totalFiles, context.resources::catalogQuantityText)
                     } else {
                         operationCoordinator.succeed(operationId)
-                        val summary = "Added ${result.added} MRI entries; " +
-                            "skipped ${result.skipped}; ${result.failed} failed."
-                        importMessage = if (result.errors.isEmpty()) summary else {
-                            summary + "\n" + result.errors.joinToString("\n")
-                        }
+                        importMessage = importResultSummary(result, context.resources::catalogQuantityText)
                     }
                 } catch (canceled: CancellationException) {
                     if (operationCoordinator.isCurrent(operationId)) {
@@ -763,6 +762,10 @@ fun NeuroViewApp() {
                         onBrowse = { navigate(Destination.Library) },
                         onImport = chooseDocuments,
                         lastScanName = snapshot.scans.firstOrNull { it.id == lastOpenedScanId }?.label,
+                        lastScan = snapshot.scans.firstOrNull { it.id == lastOpenedScanId },
+                        lastScanImportedAt = snapshot.scans.firstOrNull { it.id == lastOpenedScanId }?.let { scan ->
+                            snapshot.collections.firstOrNull { it.id == scan.collectionId }?.importedAt
+                        },
                         onResumeScan = {
                             snapshot.scans.firstOrNull { it.id == lastOpenedScanId }?.let(openScan)
                         },

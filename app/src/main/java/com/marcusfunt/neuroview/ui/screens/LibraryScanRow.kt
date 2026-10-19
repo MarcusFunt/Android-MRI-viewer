@@ -1,18 +1,14 @@
 package com.marcusfunt.neuroview.ui.screens
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -25,12 +21,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.catalog.ScanCatalog
 import com.marcusfunt.neuroview.catalog.ScanRecord
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
+import java.text.DateFormat
+import java.util.Date
 
 /** The same preview-rich row is used in grouped and flat library views. */
 @Composable
@@ -43,18 +43,16 @@ internal fun LibraryScanRow(
     onMove: () -> Unit,
     onExport: () -> Unit,
     onRemove: () -> Unit,
+    importedAt: Long? = null,
 ) {
     var actionsOpen by remember(scan.id) { mutableStateOf(false) }
-    Card(
-        onClick = onOpen,
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        border = BorderStroke(1.dp, NeuroChrome.stroke),
-        colors = CardDefaults.cardColors(containerColor = NeuroChrome.panel),
-    ) {
+    var detailsOpen by remember(scan.id) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onOpen)
+                .padding(vertical = 12.dp, horizontal = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             ScanThumbnail(scan, catalog)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -64,23 +62,16 @@ internal fun LibraryScanRow(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    scan.metadata.dimensions.joinToString(" × ") + " voxels",
+                    scanFormatLabel(scan) + " · ${if (scan.metadata.timepoints > 1) "4D" else "3D"} · " +
+                        scan.metadata.dimensions.joinToString(" × "),
                     color = NeuroChrome.muted, style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    scan.metadata.spacingMm.joinToString(" × ") {
-                        String.format(java.util.Locale.US, "%.2f", it).trimEnd('0').trimEnd('.')
-                    } + " mm",
-                    style = MaterialTheme.typography.labelSmall, color = NeuroChrome.muted,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    scan.metadata.orientation,
-                    color = if (scan.metadata.orientation == "unknown")
-                        MaterialTheme.colorScheme.error else NeuroChrome.muted,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
+                importedAt?.let {
+                    Text("Imported ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it))}",
+                        color = NeuroChrome.muted, style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
             androidx.compose.foundation.layout.Box {
                 IconButton(onClick = { actionsOpen = true }) {
@@ -89,6 +80,9 @@ internal fun LibraryScanRow(
                 DropdownMenu(expanded = actionsOpen, onDismissRequest = { actionsOpen = false }) {
                     DropdownMenuItem(text = { Text("Open volume") }, onClick = {
                         actionsOpen = false; onOpen()
+                    })
+                    DropdownMenuItem(text = { Text("MRI details / source filename") }, onClick = {
+                        actionsOpen = false; detailsOpen = true
                     })
                     DropdownMenuItem(text = { Text("Rename") }, enabled = !busy, onClick = {
                         actionsOpen = false; onRename()
@@ -105,5 +99,7 @@ internal fun LibraryScanRow(
                 }
             }
         }
+        HorizontalDivider(color = NeuroChrome.stroke.copy(alpha = 0.5f))
     }
+    if (detailsOpen) ScanDetailsDialog(scan, importedAt, onDismiss = { detailsOpen = false })
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -35,7 +37,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +51,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
@@ -60,6 +66,10 @@ import android.content.Context
 import androidx.compose.ui.unit.sp
 import com.marcusfunt.neuroview.ui.BrainPreview
 import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.marcusfunt.neuroview.catalog.ScanRecord
 
 private val Navy = Color(0xFF060F1A)
 private val Cyan = Color(0xFF79D6E6)
@@ -79,13 +89,31 @@ fun HomeScreen(
     lastScanName: String? = null,
     onResumeScan: () -> Unit = {},
     onClearCache: suspend () -> Int = { 0 },
+    lastScan: ScanRecord? = null,
+    lastScanImportedAt: Long? = null,
 ) {
     val context = LocalContext.current
     val motionPreference = LocalNeuroViewMotion.current
+    val browseInteraction = remember { MutableInteractionSource() }
+    val importInteraction = remember { MutableInteractionSource() }
     val preferences = remember(context.applicationContext) {
         context.getSharedPreferences("neuroview_home_appearance_v1", Context.MODE_PRIVATE)
     }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var recentDetailsOpen by rememberSaveable { mutableStateOf(false) }
+    val recentName = lastScan?.label ?: lastScanName
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var resumed by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    var previewVisible by remember { mutableStateOf(false) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, _ ->
+            resumed = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     var autoRotate by rememberSaveable {
         mutableStateOf(preferences.getBoolean("rotate", true))
     }
@@ -210,13 +238,19 @@ fun HomeScreen(
                 // The translucent GLES viewport is intentionally unframed;
                 // no card, border, or explanatory labels sit around the brain.
                 Box(
-                    modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 180.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 180.dp)
+                        .onGloballyPositioned { coordinates ->
+                            val bounds = coordinates.boundsInWindow()
+                            previewVisible = coordinates.isAttached && bounds.width > 0f && bounds.height > 0f
+                        },
                 ) {
-                    BrainPreview(
-                        modifier = Modifier.fillMaxSize(),
-                        autoRotation = autoRotate && motionPreference.allowsDecorativeMotion,
-                        resetRequest = resetRequest,
-                    )
+                    if (shouldShowHomePreview(previewVisible, resumed)) {
+                        BrainPreview(
+                            modifier = Modifier.fillMaxSize(),
+                            autoRotation = autoRotate && motionPreference.allowsDecorativeMotion,
+                            resetRequest = resetRequest,
+                        )
+                    }
                 }
 
                 // Keep GLSurfaceView in the fixed, non-scrolling composition.
@@ -225,21 +259,24 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(11.dp),
                 ) {
-                if (!lastScanName.isNullOrBlank()) {
+                if (!recentName.isNullOrBlank()) {
                     Row(
                         modifier = Modifier.fillMaxWidth()
                             .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFF11283A))
-                            .border(1.dp, Edge.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
                             .clickable(role = Role.Button, onClick = onResumeScan)
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Continue viewing", color = Secondary, fontSize = 12.sp)
-                            Text(lastScanName, color = Foreground, fontSize = 15.sp,
+                            Text(recentName, color = Foreground, fontSize = 15.sp,
                                 fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (lastScan != null) {
+                            IconButton(onClick = { recentDetailsOpen = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "MRI details for $recentName", tint = Secondary)
+                            }
                         }
                         Icon(Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = "Resume most recently opened scan", tint = Cyan)
@@ -255,7 +292,8 @@ fun HomeScreen(
                                 listOf(Color(0xFF12547C), Color(0xFF1B5F9B)),
                             ),
                         )
-                        .clickable(role = Role.Button, onClick = onBrowse)
+                        .clickable(interactionSource = browseInteraction, indication = ripple(color = Cyan),
+                            role = Role.Button, onClick = onBrowse)
                         .padding(horizontal = 21.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -280,7 +318,8 @@ fun HomeScreen(
                         .clip(primaryShape)
                         .background(Color(0xFF111F2E))
                         .border(1.dp, Color(0xFF7796B2).copy(alpha = 0.73f), primaryShape)
-                        .clickable(role = Role.Button, onClick = onImport)
+                        .clickable(interactionSource = importInteraction, indication = ripple(color = Cyan),
+                            role = Role.Button, onClick = onImport)
                         .padding(horizontal = 20.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -311,6 +350,10 @@ fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (recentDetailsOpen && lastScan != null) {
+        ScanDetailsDialog(lastScan, lastScanImportedAt, onDismiss = { recentDetailsOpen = false })
     }
 
     if (settingsOpen) {

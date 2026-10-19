@@ -10,11 +10,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,19 +33,16 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.CardDefaults
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedTextField
@@ -56,6 +51,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Tab
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,10 +68,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
 import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
 import com.marcusfunt.neuroview.ui.theme.MotionToken
@@ -130,6 +130,7 @@ fun LibraryScreen(
     onClearThumbnails: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val resources = LocalContext.current.resources
     val motionPreference = LocalNeuroViewMotion.current
     val motionDuration = MotionToken.STANDARD.durationMs(motionPreference)
     var dialog by remember { mutableStateOf<LibraryDialog?>(null) }
@@ -140,6 +141,9 @@ fun LibraryScreen(
     var sort by rememberSaveable { mutableStateOf("Recent") }
     var frameFilter by rememberSaveable { mutableStateOf("All") }
     var conversionOpen by rememberSaveable { mutableStateOf(false) }
+    var conversionHelpOpen by rememberSaveable { mutableStateOf(false) }
+    var filtersOpen by rememberSaveable { mutableStateOf(false) }
+    var sortOpen by remember { mutableStateOf(false) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     LaunchedEffect(snapshot.scans.isEmpty()) {
         if (snapshot.scans.isEmpty()) {
@@ -150,22 +154,9 @@ fun LibraryScreen(
         }
     }
     val query = search.trim()
-    val matching = snapshot.scans.filter { scan ->
-        val textMatches = query.isBlank() || scan.label.contains(query, true) ||
-            scan.displayName.contains(query, true) ||
-            scan.metadata.description.contains(query, true) ||
-            snapshot.collections.any { it.id == scan.collectionId && it.label.contains(query, true) }
-        val frameMatches = when (frameFilter) {
-            "3D" -> scan.metadata.timepoints == 1
-            "4D" -> scan.metadata.timepoints > 1
-            else -> true
-        }
-        textMatches && frameMatches
-    }
+    val matching = libraryScans(snapshot, query, sort, frameFilter)
     val dates = remember(snapshot.collections) { snapshot.collections.associate { it.id to it.importedAt } }
-    val ordered = if (sort == "Name") matching.sortedBy { it.label.lowercase() }
-        else matching.sortedWith(compareByDescending<ScanRecord> { dates[it.collectionId] ?: 0L }
-            .thenBy { it.label.lowercase() })
+    val ordered = matching
 
     Scaffold(
         containerColor = NeuroChrome.background,
@@ -202,43 +193,58 @@ fun LibraryScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            "${snapshot.scans.size} scans · ${snapshot.collections.size} collections",
+                            librarySummary(snapshot.scans.size, snapshot.collections.size, resources::catalogQuantityText),
+                            modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyMedium,
                             color = NeuroChrome.muted,
                         )
-                        TextButton(onClick = { conversionOpen = !conversionOpen }) {
-                            Text(if (conversionOpen) "Hide tools" else "Conversion tools")
+                        if (snapshot.scans.isNotEmpty()) {
+                            TextButton(onClick = onImport, enabled = !isBusy && !isImporting) {
+                                Text("Import MRI")
+                            }
                         }
                     }
-                    Button(
-                        onClick = onImport,
-                        enabled = !isBusy && !isImporting,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                    ) { Text("Import MRI volumes") }
+                    if (snapshot.scans.isEmpty()) {
+                        Button(onClick = onImport, enabled = !isBusy && !isImporting,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                            Text("Import MRI volumes")
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            .clickable(role = Role.Button) { conversionOpen = !conversionOpen }
+                            .semantics { stateDescription = if (conversionOpen) "Expanded" else "Collapsed" }
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Conversion tools", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                        Icon(if (conversionOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (conversionOpen) "Hide conversion tools" else "Show conversion tools")
+                    }
                     if (conversionOpen) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = NeuroChrome.panel,
-                            border = BorderStroke(1.dp, NeuroChrome.stroke),
-                        ) {
                             Column(
-                                modifier = Modifier.padding(14.dp),
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Text("DICOM → NIfTI", style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    "Select a compatible DICOM series and export it to NIfTI.",
+                                    "DICOM series → NIfTI (.nii.gz)",
                                     style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted,
                                 )
-                                OutlinedButton(
+                                Button(
                                     onClick = onConvertDicom, enabled = !isBusy && !isImporting,
                                     modifier = Modifier.fillMaxWidth(),
                                 ) { Text("Select DICOM folder") }
                                 TextButton(onClick = onConvertDicomFiles, enabled = !isBusy && !isImporting) {
                                     Text("Select DICOM files instead")
                                 }
+                                TextButton(onClick = { conversionHelpOpen = !conversionHelpOpen }) {
+                                    Text(if (conversionHelpOpen) "Hide compatibility help" else "Compatibility and export help")
+                                }
+                                if (conversionHelpOpen) {
+                                    Text("Select one compatible DICOM series with consistent geometry. If a transfer syntax or series is unsupported, pre-convert it with an external DICOM tool and import the NIfTI output.\n\nTo export a Library scan, use its actions menu. NIfTI → DICOM produces derived Secondary Capture objects, not original scanner DICOM.",
+                                        style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted)
+                                }
                             }
-                        }
                     }
                     if (snapshot.scans.isNotEmpty()) {
                         OutlinedTextField(
@@ -255,32 +261,34 @@ fun LibraryScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = mode == "All", onClick = { mode = "All" },
-                            label = { Text("All scans") })
-                        FilterChip(selected = mode == "Collections", onClick = { mode = "Collections" },
-                            label = { Text("Collections") })
-                        if (snapshot.scans.isNotEmpty()) {
-                            FilterChip(selected = sort == "Name", onClick = {
-                                sort = if (sort == "Name") "Recent" else "Name"
-                            }, label = { Text(if (sort == "Name") "A–Z" else "Newest imports") })
-                        }
+                    PrimaryTabRow(selectedTabIndex = if (mode == "All") 0 else 1,
+                        containerColor = Color.Transparent) {
+                        Tab(selected = mode == "All", onClick = { mode = "All" },
+                            text = { Text("All scans") })
+                        Tab(selected = mode == "Collections", onClick = { mode = "Collections" },
+                            text = { Text("Collections") })
                     }
                     if (snapshot.scans.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        Row(modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("Frames", color = NeuroChrome.muted,
-                                style = MaterialTheme.typography.labelSmall)
-                            listOf("All", "3D", "4D").forEach { selection ->
-                                FilterChip(selected = frameFilter == selection,
-                                    onClick = { frameFilter = selection },
-                                    label = { Text(selection) })
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Box {
+                                TextButton(onClick = { sortOpen = true }) {
+                                    Text("Sort by: ${if (sort == "Name") "Name" else "Newest"}")
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
+                                }
+                                DropdownMenu(expanded = sortOpen, onDismissRequest = { sortOpen = false }) {
+                                    DropdownMenuItem(text = { Text("Newest imports") }, onClick = { sort = "Recent"; sortOpen = false })
+                                    DropdownMenuItem(text = { Text("Name (A–Z)") }, onClick = { sort = "Name"; sortOpen = false })
+                                }
                             }
+                            TextButton(onClick = { filtersOpen = true }) { Text("Filters") }
                         }
+                    }
+                    if (frameFilter != "All") {
+                        FilterChip(selected = true, onClick = { frameFilter = "All" },
+                            label = { Text("$frameFilter only · Clear") },
+                            trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear frame filter") })
                     }
                     if (conversionOperation != null) {
                         ConversionProgressCard(
@@ -299,7 +307,7 @@ fun LibraryScreen(
                         Surface(
                             color = NeuroChrome.panel, shape = MaterialTheme.shapes.medium,
                         ) {
-                            Text(feedback, modifier = Modifier.padding(12.dp),
+                            Text(feedback, modifier = Modifier.padding(12.dp).semantics { liveRegion = LiveRegionMode.Polite },
                                 style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -313,12 +321,11 @@ fun LibraryScreen(
                     }
                 }
             }
-            if (matching.isEmpty()) {
+            if (matching.isEmpty() && (mode == "All" || query.isNotBlank() || frameFilter != "All")) {
                 item(key = "empty") {
                     Surface(
                         color = NeuroChrome.panel,
                         shape = RoundedCornerShape(18.dp),
-                        border = BorderStroke(1.dp, NeuroChrome.stroke),
                     ) {
                         Column(modifier = Modifier.padding(20.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -329,12 +336,15 @@ fun LibraryScreen(
                             )
                             Text(
                                 if (snapshot.scans.isEmpty()) "Import a NIfTI volume or convert a DICOM series to get started."
-                                else "Try another name or clear the search filter.",
+                                else "Try another name or clear the search and filters.",
                                 color = NeuroChrome.muted,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             if (search.isNotBlank()) {
                                 TextButton(onClick = { search = "" }) { Text("Clear search") }
+                            }
+                            if (frameFilter != "All") {
+                                TextButton(onClick = { frameFilter = "All" }) { Text("Clear filters") }
                             }
                         }
                     }
@@ -343,6 +353,7 @@ fun LibraryScreen(
                 items(ordered, key = { "all-${it.id}" }) { scan ->
                     LibraryScanRow(
                     scan = scan, catalog = catalog, busy = isBusy || isImporting,
+                        importedAt = dates[scan.collectionId],
                         onOpen = { onOpenScan(scan) },
                         onRename = { dialog = LibraryDialog.RenameScan(scan) },
                         onMove = { dialog = LibraryDialog.MoveScan(scan) },
@@ -372,8 +383,9 @@ fun LibraryScreen(
                                         tint = NeuroChrome.accent,
                                     )
                                     Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
-                                        Text(collection.label, style = MaterialTheme.typography.titleSmall)
-                                        Text("${records.size} matching scans", style = MaterialTheme.typography.labelSmall,
+                                        Text(collection.label, style = MaterialTheme.typography.titleSmall,
+                                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(resources.catalogQuantityText(CatalogQuantity.MATCHING_SCANS, records.size), style = MaterialTheme.typography.labelSmall,
                                             color = NeuroChrome.muted)
                                     }
                                     var menu by remember(collection.id) { mutableStateOf(false) }
@@ -401,6 +413,7 @@ fun LibraryScreen(
                             items(records, key = { "collection-scan-${it.id}" }) { scan ->
                                 LibraryScanRow(
                                     scan = scan, catalog = catalog, busy = isBusy || isImporting,
+                                    importedAt = dates[scan.collectionId],
                                     onOpen = { onOpenScan(scan) },
                                     onRename = { dialog = LibraryDialog.RenameScan(scan) },
                                     onMove = { dialog = LibraryDialog.MoveScan(scan) },
@@ -448,6 +461,28 @@ fun LibraryScreen(
                 )
             }
         }
+        }
+    }
+
+    if (filtersOpen) {
+        ModalBottomSheet(onDismissRequest = { filtersOpen = false }) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Filter scans", style = MaterialTheme.typography.titleLarge)
+                Text("Frames", style = MaterialTheme.typography.labelLarge, color = NeuroChrome.muted)
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("All", "3D", "4D").forEach { selection ->
+                        FilterChip(selected = frameFilter == selection,
+                            onClick = { frameFilter = selection },
+                            label = { Text(if (selection == "All") "All frames" else selection) })
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = { frameFilter = "All" }, enabled = frameFilter != "All") { Text("Clear filters") }
+                    TextButton(onClick = { filtersOpen = false }) { Text("Done") }
+                }
+            }
         }
     }
 
@@ -542,8 +577,9 @@ fun LibraryScreen(
             title = { Text("Remove collection?") },
             text = {
                 Text(
-                    "Remove ${current.collection.label} and its ${current.numberOfScans} " +
-                        "MRI library entries? This does NOT delete the actual MRI files. " +
+                    "Remove ${current.collection.label} and its " +
+                        resources.catalogQuantityText(CatalogQuantity.MRI_ENTRIES, current.numberOfScans) +
+                        "? This does NOT delete the actual MRI files. " +
                         "To keep the entries, move them into another collection first.",
                 )
             },
@@ -610,6 +646,7 @@ internal fun ImportProgressStrip(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val resources = LocalContext.current.resources
     var elapsedNow by remember(operation.id) {
         mutableLongStateOf(SystemMonotonicClock.nowMs())
     }
@@ -655,7 +692,8 @@ internal fun ImportProgressStrip(
             Text(
                 progress.currentFileName?.let {
                     "Checking $it · file ${progress.filesProcessed + 1} of ${progress.totalFiles}"
-                } ?: "Checked ${progress.filesProcessed} of ${progress.totalFiles} files",
+                } ?: (resources.catalogQuantityText(CatalogQuantity.FILES_CHECKED, progress.filesProcessed) +
+                    " · ${progress.totalFiles} total"),
                 modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

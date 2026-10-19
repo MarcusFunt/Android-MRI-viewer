@@ -1,4 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NeuroView</string>
+    <plurals name="library_scans">
+        <item quantity="one">%d scan</item>
+        <item quantity="other">%d scans</item>
+    </plurals>
+    <plurals name="library_collections">
+        <item quantity="one">%d collection</item>
+        <item quantity="other">%d collections</item>
+    </plurals>
+    <plurals name="library_matching_scans">
+        <item quantity="one">%d matching scan</item>
+        <item quantity="other">%d matching scans</item>
+    </plurals>
+    <plurals name="import_mris_added">
+        <item quantity="one">%d MRI added</item>
+        <item quantity="other">%d MRIs added</item>
+    </plurals>
+    <plurals name="library_mri_entries">
+        <item quantity="one">%d MRI library entry</item>
+        <item quantity="other">%d MRI library entries</item>
+    </plurals>
+    <plurals name="import_files_checked">
+        <item quantity="one">Checked %d file</item>
+        <item quantity="other">Checked %d files</item>
+    </plurals>
+    <plurals name="import_mris_kept">
+        <item quantity="one">%d accepted MRI kept</item>
+        <item quantity="other">%d accepted MRIs kept</item>
+    </plurals>
+    <plurals name="import_skipped">
+        <item quantity="one">%d skipped</item>
+        <item quantity="other">%d skipped</item>
+    </plurals>
+    <plurals name="import_failed">
+        <item quantity="one">%d failed</item>
+        <item quantity="other">%d failed</item>
+    </plurals>
+    <plurals name="scan_frames">
+        <item quantity="one">%d frame</item>
+        <item quantity="other">%d frames</item>
+    </plurals>
 </resources>
