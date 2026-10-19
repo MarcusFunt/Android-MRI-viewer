@@ -18,9 +18,6 @@ enum class MotionPreference(val label: String, val description: String) {
 
     val allowsDecorativeMotion: Boolean
         get() = this == SYSTEM
-
-    val allowsInertialMotion: Boolean
-        get() = this == SYSTEM
 }
 
 enum class MotionToken(private val systemDuration: Int) {

@@ -19,6 +19,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MenuDefaults
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import com.marcusfunt.neuroview.ui.theme.NeuroChrome
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +75,9 @@ internal const val ADAPTIVE_RENDERING_KEY = "adaptive_rendering"
 internal const val PREVIEW_MAX_SIDE_KEY = "render_preview_max_side"
 internal const val STILL_MAX_SIDE_KEY = "render_still_max_side"
 internal const val RENDER_REFINE_DELAY_KEY = "render_refine_delay_ms"
+internal const val SHOW_SLICE_BUTTONS_KEY = "show_slice_buttons"
+internal const val INERTIAL_SCROLLING_KEY = "inertial_slice_scrolling"
+internal const val IMMERSIVE_FOCUS_KEY = "immersive_focus"
 
 internal fun SharedPreferences.readRenderQualitySettings(): RenderQualitySettings {
     val mode = runCatching {
@@ -137,6 +147,9 @@ internal fun NeuroViewSettingsSheet(
     var renderQualitySettings by remember(viewerPreferences) {
         mutableStateOf(viewerPreferences.readRenderQualitySettings())
     }
+    var showSliceButtons by remember(viewerPreferences) { mutableStateOf(viewerPreferences.getBoolean(SHOW_SLICE_BUTTONS_KEY, false)) }
+    var inertialScrolling by remember(viewerPreferences) { mutableStateOf(viewerPreferences.getBoolean(INERTIAL_SCROLLING_KEY, true)) }
+    var immersiveFocus by remember(viewerPreferences) { mutableStateOf(viewerPreferences.getBoolean(IMMERSIVE_FOCUS_KEY, false)) }
     var cacheStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val viewerSectionRequester = remember { BringIntoViewRequester() }
@@ -146,6 +159,9 @@ internal fun NeuroViewSettingsSheet(
     DisposableEffect(viewerPreferences) {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { preferences, key ->
             when (key) {
+                SHOW_SLICE_BUTTONS_KEY -> showSliceButtons = preferences.getBoolean(SHOW_SLICE_BUTTONS_KEY, false)
+                INERTIAL_SCROLLING_KEY -> inertialScrolling = preferences.getBoolean(INERTIAL_SCROLLING_KEY, true)
+                IMMERSIVE_FOCUS_KEY -> immersiveFocus = preferences.getBoolean(IMMERSIVE_FOCUS_KEY, false)
                 SHOW_ORIENTATION_MARKERS_KEY -> {
                     showOrientationMarkers = preferences.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false)
                 }
@@ -234,6 +250,35 @@ internal fun NeuroViewSettingsSheet(
                 modifier = Modifier.bringIntoViewRequester(viewerSectionRequester),
                 style = MaterialTheme.typography.titleMedium,
                 color = SettingsForeground,
+            )
+            Text("Navigation", style = MaterialTheme.typography.titleSmall, color = SettingsForeground)
+            SettingsSwitchRow(
+                title = "Show previous/next slice buttons",
+                checked = showSliceButtons,
+                onCheckedChange = { enabled ->
+                    showSliceButtons = enabled
+                    viewerPreferences.edit().putBoolean(SHOW_SLICE_BUTTONS_KEY, enabled).apply()
+                },
+            )
+            SettingsSwitchRow(
+                title = "Inertial slice scrolling",
+                detail = "Continue a fast image swipe after release. Independent of Motion; disabled when Android animations are off. Drag and slider distance always stay the same.",
+                checked = inertialScrolling,
+                onCheckedChange = { enabled ->
+                    inertialScrolling = enabled
+                    viewerPreferences.edit().putBoolean(INERTIAL_SCROLLING_KEY, enabled).apply()
+                },
+            )
+            Text("Hold the slice thumb and move upward for finer horizontal adjustment.",
+                style = MaterialTheme.typography.bodySmall, color = SettingsSecondary)
+            SettingsSwitchRow(
+                title = "Immersive Focus",
+                detail = "Hide system bars in Focus. Swipe from an edge to reveal them; Exit focus and Back remain available.",
+                checked = immersiveFocus,
+                onCheckedChange = { enabled ->
+                    immersiveFocus = enabled
+                    viewerPreferences.edit().putBoolean(IMMERSIVE_FOCUS_KEY, enabled).apply()
+                },
             )
             SettingsSwitchRow(
                 title = "Orientation markers",
@@ -385,10 +430,20 @@ private fun <T> SettingsChoiceRow(
         Text(title, color = SettingsForeground)
         Box {
             TextButton(onClick = { expanded = true }) { Text(selected, color = SettingsCyan) }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
+                containerColor = NeuroChrome.topBar,
+                shape = RoundedCornerShape(16.dp),
+                tonalElevation = 0.dp,
+            ) {
                 options.forEach { (label, value) ->
                     DropdownMenuItem(
-                        text = { Text(label) },
+                        text = { Text(label, style = MaterialTheme.typography.bodyLarge) },
+                        modifier = Modifier.heightIn(min = 48.dp)
+                            .background(if (label == selected) NeuroChrome.accent.copy(alpha = 0.12f) else androidx.compose.ui.graphics.Color.Transparent)
+                            .semantics { this.selected = label == selected },
+                        colors = MenuDefaults.itemColors(
+                            textColor = if (label == selected) SettingsCyan else SettingsForeground,
+                        ),
                         onClick = {
                             expanded = false
                             onSelected(value)
@@ -468,7 +523,8 @@ private fun SettingsSwitchRow(
     detail: String? = null,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -478,7 +534,7 @@ private fun SettingsSwitchRow(
                 Text(it, style = MaterialTheme.typography.bodySmall, color = SettingsSecondary)
             }
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 

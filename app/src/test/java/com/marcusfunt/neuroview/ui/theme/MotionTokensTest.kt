@@ -25,10 +25,7 @@ class MotionTokensTest {
     @Test
     fun reducedAndOffModesDisableContinuousDecorativeMotion() {
         assertTrue(MotionPreference.SYSTEM.allowsDecorativeMotion)
-        assertTrue(MotionPreference.SYSTEM.allowsInertialMotion)
         assertFalse(MotionPreference.REDUCED.allowsDecorativeMotion)
-        assertFalse(MotionPreference.REDUCED.allowsInertialMotion)
         assertFalse(MotionPreference.OFF.allowsDecorativeMotion)
-        assertFalse(MotionPreference.OFF.allowsInertialMotion)
     }
 }

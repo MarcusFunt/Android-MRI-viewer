@@ -9,7 +9,10 @@ import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import android.os.Trace
+import android.animation.ValueAnimator
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -205,9 +208,17 @@ fun ViewerScreen(
     var renderQualitySettings by remember(displayPrefs) {
         mutableStateOf(displayPrefs.readRenderQualitySettings())
     }
+    var showSliceButtons by remember(displayPrefs) { mutableStateOf(displayPrefs.getBoolean(SHOW_SLICE_BUTTONS_KEY, false)) }
+    var inertialScrolling by remember(displayPrefs) { mutableStateOf(displayPrefs.getBoolean(INERTIAL_SCROLLING_KEY, true)) }
+    var immersiveFocus by remember(displayPrefs) { mutableStateOf(displayPrefs.getBoolean(IMMERSIVE_FOCUS_KEY, false)) }
+    FocusSystemBars(focusMode && immersiveFocus)
+    BackHandler(enabled = focusMode) { focusMode = false }
     DisposableEffect(displayPrefs) {
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
+                SHOW_SLICE_BUTTONS_KEY -> showSliceButtons = displayPrefs.getBoolean(SHOW_SLICE_BUTTONS_KEY, false)
+                INERTIAL_SCROLLING_KEY -> inertialScrolling = displayPrefs.getBoolean(INERTIAL_SCROLLING_KEY, true)
+                IMMERSIVE_FOCUS_KEY -> immersiveFocus = displayPrefs.getBoolean(IMMERSIVE_FOCUS_KEY, false)
                 SHOW_ORIENTATION_MARKERS_KEY -> {
                     showOrientationMarkers = displayPrefs.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false)
                 }
@@ -491,6 +502,7 @@ fun ViewerScreen(
                     }
                     if (renderRequestGate.isCurrent(request.generation) && latestSliceInput() == input) {
                         bitmap = quick
+                        traceViewerCommit(quick, request.generation, input.slice, "preview")
                         committedRenderGeneration = request.generation
                         committedInputStartedAtNs = request.inputStartedAtNs
                         committed = true
@@ -521,6 +533,7 @@ fun ViewerScreen(
                         }
                         if (renderRequestGate.isCurrent(request.generation) && latestSliceInput() == input) {
                             bitmap = refined
+                            traceViewerCommit(refined, request.generation, input.slice, "still")
                             committedRenderGeneration = request.generation
                             committedInputStartedAtNs = request.inputStartedAtNs
                             committed = true
@@ -652,6 +665,8 @@ fun ViewerScreen(
                         is VolumeLoadState.FirstSliceReady, is VolumeLoadState.Ready -> MriContent(
                             modifier = Modifier.fillMaxSize(),
                             focusMode = focusMode,
+                            showSliceButtons = showSliceButtons,
+                            inertialScrolling = inertialScrolling,
                             onFocusToggle = { focusMode = !focusMode },
                             showOrientationMarkers = showOrientationMarkers,
                             probeCrosshairEnabled = probeCrosshairEnabled,
@@ -734,21 +749,8 @@ fun ViewerScreen(
     }
 }
 
-private fun createViewerBitmap(image: MprImage): Bitmap {
-    // Let only the darkest display values blend with the canvas. This removes
-    // the opaque rectangular slice background while leaving source voxels alone.
-    val pixels = image.pixels.copyOf()
-    val lowEndRange = 24
-    for (index in pixels.indices) {
-        val intensity = pixels[index] and 0xff
-        if (intensity < lowEndRange) {
-            val alpha = (intensity * 255f / lowEndRange).roundToInt().coerceIn(0, 255)
-            pixels[index] = (alpha shl 24) or (intensity shl 16) or
-                (intensity shl 8) or intensity
-        }
-    }
-    return Bitmap.createBitmap(pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
-}
+internal fun createViewerBitmap(image: MprImage): Bitmap =
+    Bitmap.createBitmap(image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
 
 @Composable
 private fun ViewerBackdrop(modifier: Modifier = Modifier) {
@@ -866,6 +868,26 @@ private inline fun <T> traceViewerRender(section: String, block: () -> T): T {
     }
 }
 
+// Opt-in system tracing only: counts, index and event timing; no scan identity or voxel data.
+private fun traceViewerGesture(event: String, slice: Int) {
+    if (Build.VERSION.SDK_INT >= 29 && Trace.isEnabled()) {
+        Trace.beginSection("NeuroView.$event")
+        Trace.setCounter("NeuroView.slice.index", slice.toLong())
+        Trace.endSection()
+    }
+}
+
+private fun traceViewerCommit(bitmap: Bitmap, generation: Long, slice: Int, quality: String) {
+    if (Build.VERSION.SDK_INT >= 29 && Trace.isEnabled()) {
+        Trace.beginSection("NeuroView.commit.$quality")
+        Trace.setCounter("NeuroView.render.generation", generation)
+        Trace.setCounter("NeuroView.render.width", bitmap.width.toLong())
+        Trace.setCounter("NeuroView.render.height", bitmap.height.toLong())
+        Trace.setCounter("NeuroView.slice.index", slice.toLong())
+        Trace.endSection()
+    }
+}
+
 private data class SliceRenderInput(
     val slice: Int,
     val center: Float,
@@ -909,9 +931,11 @@ private fun ViewerMessage(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun MriContent(
+internal fun MriContent(
     modifier: Modifier,
     focusMode: Boolean,
+    showSliceButtons: Boolean,
+    inertialScrolling: Boolean,
     onFocusToggle: () -> Unit,
     showOrientationMarkers: Boolean,
     probeCrosshairEnabled: Boolean,
@@ -936,23 +960,27 @@ private fun MriContent(
     windowWidth: Float,
     onWindowWidth: (Float) -> Unit,
 ) {
-    val motionPreference = LocalNeuroViewMotion.current
     val motionDuration = MotionToken.QUICK.durationMs(LocalNeuroViewMotion.current)
     // Gesture coroutines persist across recompositions; always read the latest slice.
     val currentSlice by rememberUpdatedState(selectedSlice)
     val currentOnSliceChange by rememberUpdatedState(onSliceChange)
+    val currentBitmap by rememberUpdatedState(bitmap)
+    val currentInertialScrolling by rememberUpdatedState(inertialScrolling)
+    val currentReferenceWorldChange by rememberUpdatedState(onReferenceWorldChange)
     var showAdjustments by rememberSaveable { mutableStateOf(false) }
     var showProcessing by rememberSaveable { mutableStateOf(false) }
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
-    var zoomMode by remember(volume) { mutableStateOf(false) }
+    var zoomMode by rememberSaveable(volume) { mutableStateOf(false) }
     var probeReading by remember(volume) { mutableStateOf<String?>(null) }
-    var scale by remember(volume, plane) { mutableFloatStateOf(DEFAULT_MRI_IMAGE_SCALE) }
-    var panOffset by remember(volume, plane) { mutableStateOf(Offset.Zero) }
+    var scale by rememberSaveable(volume, plane) { mutableFloatStateOf(DEFAULT_MRI_IMAGE_SCALE) }
+    var panOffset by rememberSaveable(volume, plane, stateSaver = androidx.compose.runtime.saveable.Saver<Offset, List<Float>>(
+        save = { listOf(it.x, it.y) }, restore = { Offset(it[0], it[1]) },
+    )) { mutableStateOf(Offset.Zero) }
     var imageViewport by remember { mutableStateOf(IntSize.Zero) }
     LaunchedEffect(probeCrosshairEnabled, volume) {
         probeReading = null
-        onReferenceWorldChange(null)
+        currentReferenceWorldChange(null)
         if (probeCrosshairEnabled) {
             zoomMode = false
             scale = DEFAULT_MRI_IMAGE_SCALE
@@ -960,12 +988,6 @@ private fun MriContent(
         }
     }
     val orientationUnknown = volume.transformSource.startsWith("NO ORIENTATION")
-    val sliceSliderInteractionSource = remember { MutableInteractionSource() }
-    val sliceSliderColors = SliderDefaults.colors(
-        thumbColor = NeuroChrome.accent,
-        activeTrackColor = NeuroChrome.accent,
-        inactiveTrackColor = NeuroChrome.stroke,
-    )
     Column(
         modifier = modifier.padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -989,6 +1011,10 @@ private fun MriContent(
             ) {
                 MriPlane.entries.forEach { option ->
                     val selected = plane == option
+                    val tabColor by animateColorAsState(
+                        if (selected) NeuroChrome.accent else NeuroChrome.muted,
+                        animationSpec = tween(motionDuration), label = "Plane selection",
+                    )
                     Box(
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp)
                             .selectable(
@@ -1002,7 +1028,7 @@ private fun MriContent(
                             option.label,
                             style = MaterialTheme.typography.labelLarge.copy(fontSize = 16.sp),
                             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                            color = if (selected) NeuroChrome.accent else NeuroChrome.muted,
+                            color = tabColor,
                         )
                         if (selected) {
                             Box(
@@ -1020,24 +1046,32 @@ private fun MriContent(
         val flingScope = rememberCoroutineScope()
         var flingJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
         val currentScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
+        DisposableEffect(volume, plane, zoomMode, probeCrosshairEnabled) {
+            onDispose {
+                flingJob?.cancel()
+                currentScrubbingChanged(false)
+            }
+        }
         Box(
-            modifier = Modifier.fillMaxWidth().weight(1f)
+            modifier = Modifier.fillMaxWidth().weight(1f).background(Color.Black)
                 .onSizeChanged {
                     imageViewport = it
                     onImageViewportSizeChanged(it)
                 }
-                .pointerInput(zoomMode) {
+                .pointerInput(volume, plane, zoomMode) {
                     if (zoomMode) detectTapGestures(onDoubleTap = {
                         scale = DEFAULT_MRI_IMAGE_SCALE
                         panOffset = Offset.Zero
                     })
                 }
                 .pointerInput(
-                    volume, plane, totalSlices, zoomMode, probeCrosshairEnabled, bitmap, motionPreference,
+                    volume, plane, totalSlices, zoomMode, probeCrosshairEnabled,
                 ) {
+                    traceViewerGesture("pointer.start", currentSlice)
+                    try {
                     if (probeCrosshairEnabled) {
                         detectTapGestures(onTap = { tap ->
-                            val image = bitmap
+                            val image = currentBitmap
                             if (image != null && imageViewport.width > 0 && imageViewport.height > 0) {
                                 val fit = minOf(
                                     imageViewport.width.toFloat() / image.width,
@@ -1060,12 +1094,12 @@ private fun MriContent(
                                     fractionX.toDouble(), fractionY.toDouble(),
                                 )
                                 if (sampled != null) {
-                                    onReferenceWorldChange(sampled.worldRasMm)
+                                    currentReferenceWorldChange(sampled.worldRasMm)
                                     probeReading = "Voxel ${sampled.voxelIJK.joinToString(", ") {
                                         it.roundToInt().toString()
                                     }} · intensity ${String.format(java.util.Locale.US, "%.2f", sampled.intensity)}"
                                 } else {
-                                    onReferenceWorldChange(null)
+                                    currentReferenceWorldChange(null)
                                     probeReading = "No measured voxel at that position."
                                 }
                             }
@@ -1089,14 +1123,15 @@ private fun MriContent(
                     val pixelsPerSlice = 18.dp.toPx()
                     var horizontalDrag = 0f
                     var verticalDrag = 0f
-                    var anchorSlice = 0
+                    var dragAccumulator = SliceDragAccumulator(currentSlice.toFloat(), pixelsPerSlice, totalSlices - 1)
                     var scrollLocked = false
                     var tracker = VelocityTracker()
                     detectDragGestures(
                         onDragStart = {
+                            traceViewerGesture("drag.start", currentSlice)
                             flingJob?.cancel()
                             flingJob = null
-                            anchorSlice = currentSlice
+                            dragAccumulator = SliceDragAccumulator(currentSlice.toFloat(), pixelsPerSlice, totalSlices - 1)
                             horizontalDrag = 0f
                             verticalDrag = 0f
                             scrollLocked = false
@@ -1108,25 +1143,25 @@ private fun MriContent(
                             horizontalDrag += drag.x
                             verticalDrag += drag.y
                             tracker.addPosition(change.uptimeMillis, change.position)
+                            val previouslyLocked = scrollLocked
                             if (!scrollLocked && abs(verticalDrag) + abs(horizontalDrag) > 12.dp.toPx()) {
                                 scrollLocked = abs(verticalDrag) > abs(horizontalDrag)
                             }
                             if (scrollLocked) {
-                                // Anchor to the start of the gesture; don't lose steps when
-                                // several pointer events arrive before recomposition.
-                                currentOnSliceChange(
-                                    (anchorSlice - (verticalDrag / pixelsPerSlice).toInt())
-                                        .coerceIn(0, totalSlices - 1),
-                                )
+                                // The gesture owns a fractional coordinate, independently of
+                                // frame commits and the timing of selected-slice recomposition.
+                                val nextSlice = dragAccumulator.move(if (previouslyLocked) drag.y else verticalDrag)
+                                traceViewerGesture("drag.move", nextSlice)
+                                currentOnSliceChange(nextSlice)
                             }
                         },
                         onDragEnd = {
+                            traceViewerGesture("drag.end", currentSlice)
                             val pixelsPerSecond = tracker.calculateVelocity().y
-                            if (motionPreference.allowsInertialMotion &&
+                            if (allowsSliceInertia(currentInertialScrolling, !ValueAnimator.areAnimatorsEnabled()) &&
                                 scrollLocked && abs(pixelsPerSecond) > 380f
                             ) {
-                                val initialSlice = (anchorSlice - (verticalDrag / pixelsPerSlice).toInt())
-                                    .coerceIn(0, totalSlices - 1).toFloat()
+                                val initialSlice = dragAccumulator.position
                                 flingJob = flingScope.launch {
                                     try {
                                         Animatable(initialSlice).animateDecay(
@@ -1134,9 +1169,12 @@ private fun MriContent(
                                                 .coerceIn(-90f, 90f),
                                             animationSpec = exponentialDecay(frictionMultiplier = 3.0f),
                                         ) {
-                                            currentOnSliceChange(
-                                                value.roundToInt().coerceIn(0, totalSlices - 1),
-                                            )
+                                            if (allowsSliceInertia(currentInertialScrolling, !ValueAnimator.areAnimatorsEnabled())) {
+                                                currentOnSliceChange(value.roundToInt().coerceIn(0, totalSlices - 1))
+                                            } else {
+                                                currentScrubbingChanged(false)
+                                                throw kotlinx.coroutines.CancellationException("Slice inertia disabled")
+                                            }
                                             // Clamp out-of-bounds values; decay naturally stops.
                                         }
                                     } finally {
@@ -1147,9 +1185,13 @@ private fun MriContent(
                                 currentScrubbingChanged(false)
                             }
                         },
-                        onDragCancel = { currentScrubbingChanged(false) },
+                        onDragCancel = {
+                            traceViewerGesture("drag.cancel", currentSlice)
+                            currentScrubbingChanged(false)
+                        },
                     )
                     }
+                    } finally { traceViewerGesture("pointer.stop", currentSlice) }
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -1325,73 +1367,54 @@ private fun MriContent(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(
-                        onClick = {
-                            flingJob?.cancel()
-                            onScrubbingChanged(false)
-                            onSliceChange((selectedSlice - 1).coerceAtLeast(0))
-                        },
-                        enabled = selectedSlice > 0,
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                        modifier = Modifier.heightIn(min = 48.dp).semantics {
-                            contentDescription = "Previous slice"
-                        },
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null,
-                            modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("Prev", style = MaterialTheme.typography.labelMedium)
+                    if (showSliceButtons) {
+                        TextButton(
+                            onClick = {
+                                flingJob?.cancel()
+                                onScrubbingChanged(false)
+                                onSliceChange((selectedSlice - 1).coerceAtLeast(0))
+                            },
+                            enabled = selectedSlice > 0,
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                                contentDescription = "Previous slice"
+                            },
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null,
+                                modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("Prev", style = MaterialTheme.typography.labelMedium)
+                        }
                     }
-                    Slider(
-                        value = selectedSlice.toFloat(),
-                        onValueChange = {
+                    PrecisionSliceSlider(
+                        selectedSlice = selectedSlice,
+                        totalSlices = totalSlices,
+                        positionLabel = positionLabel,
+                        onSliceChange = currentOnSliceChange,
+                        onScrubbingChanged = {
                             flingJob?.cancel()
-                            onScrubbingChanged(true)
-                            onSliceChange(it.roundToInt())
+                            onScrubbingChanged(it)
                         },
-                        onValueChangeFinished = { onScrubbingChanged(false) },
-                        valueRange = 0f..(totalSlices - 1).coerceAtLeast(1).toFloat(),
-                        enabled = totalSlices > 1,
-                        interactionSource = sliceSliderInteractionSource,
-                        modifier = Modifier.weight(1f).semantics {
-                            contentDescription = "Slice position"
-                            stateDescription = "Slice ${selectedSlice + 1} of $totalSlices, $positionLabel"
-                        },
-                        colors = sliceSliderColors,
-                        thumb = {
-                            SliderDefaults.Thumb(
-                                interactionSource = sliceSliderInteractionSource,
-                                colors = sliceSliderColors,
-                                enabled = totalSlices > 1,
-                                thumbSize = DpSize(18.dp, 18.dp),
-                            )
-                        },
-                        track = { sliderState ->
-                            SliderDefaults.Track(
-                                sliderState = sliderState,
-                                modifier = Modifier.height(4.dp),
-                                colors = sliceSliderColors,
-                                enabled = totalSlices > 1,
-                                thumbTrackGapSize = 0.dp,
-                            )
-                        },
+                        modifier = Modifier.weight(1f),
                     )
-                    TextButton(
-                        onClick = {
-                            flingJob?.cancel()
-                            onScrubbingChanged(false)
-                            onSliceChange((selectedSlice + 1).coerceAtMost(totalSlices - 1))
-                        },
-                        enabled = selectedSlice < totalSlices - 1,
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                        modifier = Modifier.heightIn(min = 48.dp).semantics {
-                            contentDescription = "Next slice"
-                        },
-                    ) {
-                        Text("Next", style = MaterialTheme.typography.labelMedium)
-                        Spacer(Modifier.width(3.dp))
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
-                            modifier = Modifier.size(16.dp))
+                    if (showSliceButtons) {
+                        TextButton(
+                            onClick = {
+                                flingJob?.cancel()
+                                onScrubbingChanged(false)
+                                onSliceChange((selectedSlice + 1).coerceAtMost(totalSlices - 1))
+                            },
+                            enabled = selectedSlice < totalSlices - 1,
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                                contentDescription = "Next slice"
+                            },
+                        ) {
+                            Text("Next", style = MaterialTheme.typography.labelMedium)
+                            Spacer(Modifier.width(3.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
+                                modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
             }
