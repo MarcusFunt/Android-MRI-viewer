@@ -98,7 +98,7 @@ python scripts/qa/viewer_reference.py
 Result: **BUILD SUCCESSFUL in 11s**, 120 JVM tests across 23 suites; zero failures,
 errors or skipped tests on the original viewer implementation worktree. After
 integration, the combined repository rerun built the app and test APKs, compiled
-Android tests, ran lint, and passed **133 JVM tests** with zero failures/errors.
+Android tests, ran lint, and passed **135 JVM tests** with zero failures/errors.
 The full instrumentation suite then passed **30 tests** on the isolated API 35
 emulator (`emulator-5558`), including all seven viewer touch/navigation tests and
 the provider fault scenarios. The existing `emulator-5554` and `emulator-5556`

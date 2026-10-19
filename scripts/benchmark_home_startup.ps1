@@ -75,8 +75,12 @@ $apkSha256 = if (Test-Path -LiteralPath $resolvedApk) {
 }
 $signingCertificateSha256 = ''
 if ($apkSha256) {
-    $apksigner = Join-Path $SdkRoot 'build-tools/35.0.0/apksigner.bat'
-    if (Test-Path -LiteralPath $apksigner) {
+    $apksigner = Get-ChildItem -LiteralPath (Join-Path $SdkRoot 'build-tools') -Directory -ErrorAction SilentlyContinue |
+        Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending |
+        ForEach-Object { Join-Path $_.FullName 'apksigner.bat' } |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
+    if ($apksigner -and (Test-Path -LiteralPath $apksigner)) {
         $signerOutput = & $apksigner verify --print-certs $resolvedApk 2>&1
         if ($LASTEXITCODE -eq 0) {
             $signerMatch = [regex]::Match(($signerOutput -join "`n"), '(?im)^Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f:]+)\s*$')

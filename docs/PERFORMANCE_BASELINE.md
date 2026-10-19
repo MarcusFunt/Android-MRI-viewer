@@ -70,13 +70,28 @@ The repository's `scripts/benchmark_home_startup.ps1` captures process-start `am
 
 It writes CSV under `app/build/reports/performance/`, including source commit, APK and signing-certificate hashes, device configuration, and a bounded wait for a launch-matched first-GL-draw log. It force-stops/starts the app without clearing data. The two launch values are proxies: `TotalTime` is not first usable interaction, and the script does not measure touch latency, dropped frames, memory, thermals, or a physical phone. Use tracing and the full protocol above for those measures.
 
-### Paired API 35 emulator proxy run (2026-10-19)
+### Initial v1.4.0 API 35 emulator proxy run (2026-10-19)
 
-The exact `v1.4.0` commit (`bbd4cef65953d14d31c24bb72c5952ccf9bde7`) was installed on a newly created Pixel 8 profile / Google Play API 35 x86_64 emulator (`sdk_gphone64_x86_64`, 1080 × 2400, 420 dpi, 60 Hz). Ten launches used `am force-stop` followed by `am start -W`; app data was retained. Nearest-rank p95 is shown, so with ten samples it equals the maximum.
+The exact `v1.4.0` commit (`bbd4cef65953d14d31c24bbcb72c5952ccf9bde7`) was installed on a newly created Pixel 8 profile / Google Play API 35 x86_64 emulator (`sdk_gphone64_x86_64`, 1080 × 2400, 420 dpi, 60 Hz). Ten launches used `am force-stop` followed by `am start -W`; app data was retained. Nearest-rank p95 is shown, so with ten samples it equals the maximum. This was an initial unpaired run, before the integrated test suite warmed the emulator.
 
 | Process-start proxy | Samples | p50 | p95 | Range |
 |---|---:|---:|---:|---:|
 | `am start -W` `TotalTime` | 10 | 7,162 ms | 8,223 ms | 5,560–8,223 ms |
 | First logged GL draw from launch | 10 | 8,406 ms | 10,169 ms | 5,683–10,169 ms |
 
-The APK SHA-256 was `48740c83078dddbc4a61278ff5dd1d7690ce476d69fdf0cf563bcad29b2fd9bb`; the debug signing-certificate SHA-256 was `1962b07fac8a5c0562d3833263e8e392dbd4e87beff7f1a88307414c91ef46e2`. The raw sanitized samples are in [`docs/performance/2026-10-19-v1.4.0-api35-emulator.csv`](performance/2026-10-19-v1.4.0-api35-emulator.csv). Candidate measurements on this same emulator are pending. These emulator proxies do not satisfy the issue's real-phone, first-usable-interaction, scroll-jank, memory, touch-latency, or thermal checks.
+The APK SHA-256 was `48740c83078dddbc4a61278ff5dd1d7690ce476d69fdf0cf563bcad29b2fd9bb`; the debug signing-certificate SHA-256 was `1962b07fac8a5c0562d3833263e8e392dbd4e87beff7f1a88307414c91ef46e2`. The raw sanitized samples are in [`docs/performance/2026-10-19-v1.4.0-api35-emulator.csv`](performance/2026-10-19-v1.4.0-api35-emulator.csv). A matched v1.4.0/candidate emulator run appears below. These emulator proxies do not satisfy the issue's real-phone, first-usable-interaction, scroll-jank, memory, touch-latency, or thermal checks.
+
+### Matched API 35 emulator proxy run (2026-10-19)
+
+To reduce first-run and instrumentation-warmup differences, both builds were installed in turn on the same disposable API 35 Pixel 8 profile emulator. App data was cleared and one uncounted warm-up launch was completed before each ten-sample capture. No imported studies were present; the bundled Home brain preview was the only image workload, and no external document provider was used. Measurements used `am force-stop` / `am start -W` and the first logged GL draw. With ten samples, nearest-rank p95 equals the maximum. The device reports `sdk_gphone64_x86_64`, 1080 × 2400, 420 dpi, and 60 Hz; it is not a physical Pixel 8.
+
+| Proxy | Build/source | Samples | p50 | p95 | Range |
+|---|---|---:|---:|---:|---:|
+| `am start -W` `TotalTime` | v1.4.0 / `bbd4cef` | 10 | 2,564.5 ms | 2,775 ms | 2,331–2,775 ms |
+| `am start -W` `TotalTime` | Candidate / `04ba76e` | 10 | 2,300 ms | 3,729 ms | 2,082–3,729 ms |
+| First logged GL draw | v1.4.0 / `bbd4cef` | 10 | 2,616 ms | 2,882 ms | 2,382–2,882 ms |
+| First logged GL draw | Candidate / `04ba76e` | 10 | 3,023.5 ms | 4,808 ms | 2,663–4,808 ms |
+
+In this emulator sample, candidate `TotalTime` has a lower median but a higher p95, while its first GL draw is later at both p50 and p95. These are process-start/rendering proxies; they do not establish a user-perceived speedup or explain the draw delay, and no performance improvement is claimed. The raw samples are in [`paired v1.4.0 CSV`](performance/2026-10-19-paired-v1.4.0-api35-emulator.csv) and [`candidate CSV`](performance/2026-10-19-candidate-api35-emulator.csv).
+
+Baseline APK SHA-256: `48740c83078dddbc4a61278ff5dd1d7690ce476d69fdf0cf563bcad29b2fd9bb`. Candidate APK SHA-256: `3b0c10e54437ede8cfd1feca7037161f256eb7f0c9d96ac2c56015f7886483fd`. Both debug APKs use certificate SHA-256 `1962b07fac8a5c0562d3833263e8e392dbd4e87beff7f1a88307414c91ef46e2`. The candidate source commit is `04ba76eea77fa2c4a1415909a2fb1b32579cbe56`.
