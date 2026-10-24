@@ -60,11 +60,11 @@ class LibraryPresentationTest {
         assertEquals("Skipped 0 non-DICOM files.", resourceQuantity("conversion_non_dicom_files_skipped", 0))
         assertEquals("Skipped 1 non-DICOM file.", resourceQuantity("conversion_non_dicom_files_skipped", 1))
         assertEquals("Skipped 2 non-DICOM files.", resourceQuantity("conversion_non_dicom_files_skipped", 2))
-        assertEquals("Saved 0 anonymized DERIVED Secondary Capture DICOM slices inside a ZIP archive.",
+        assertEquals("Saved 0 derived DICOM slices in a ZIP archive.",
             resourceQuantity("conversion_derived_dicom_slices_saved", 0))
-        assertEquals("Saved 1 anonymized DERIVED Secondary Capture DICOM slice inside a ZIP archive.",
+        assertEquals("Saved 1 derived DICOM slice in a ZIP archive.",
             resourceQuantity("conversion_derived_dicom_slices_saved", 1))
-        assertEquals("Saved 2 anonymized DERIVED Secondary Capture DICOM slices inside a ZIP archive.",
+        assertEquals("Saved 2 derived DICOM slices in a ZIP archive.",
             resourceQuantity("conversion_derived_dicom_slices_saved", 2))
         assertEquals("Cleared 1 cached thumbnail", resourceQuantity("cache_thumbnails_cleared", 1))
         assertEquals("Cleared 2 cached thumbnails", resourceQuantity("cache_thumbnails_cleared", 2))

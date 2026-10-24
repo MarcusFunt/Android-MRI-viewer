@@ -4,10 +4,12 @@ import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.res.AssetFileDescriptor
 import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
 import android.os.CancellationSignal
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -20,6 +22,7 @@ class FaultInjectionProvider : ContentProvider() {
         val chunkBytes: Int = 512,
         val chunkDelayMs: Long = 0,
         val pauseAt: Int? = null,
+        val pauseAfterPayload: Boolean = false,
         val ignoreCancellation: Boolean = false,
         val failOnOpen: Boolean = false,
         val failAfterPayload: Boolean = false,
@@ -71,6 +74,10 @@ class FaultInjectionProvider : ContentProvider() {
                         offset += count
                         if (test.chunkDelayMs > 0) Thread.sleep(test.chunkDelayMs)
                     }
+                    if (test.pauseAfterPayload) {
+                        test.paused.countDown()
+                        check(test.resume.await(10, TimeUnit.MINUTES)) { "Test did not release provider" }
+                    }
                     if (test.failAfterPayload) pipe[1].closeWithError("Injected read failure")
                 }
             } catch (_: Exception) {
@@ -84,7 +91,20 @@ class FaultInjectionProvider : ContentProvider() {
 
     override fun onCreate() = true
     override fun getType(uri: Uri) = "application/gzip"
-    override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
+    override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? {
+        val test = scenario ?: return null
+        val columns = projection?.toList()?.takeIf { it.isNotEmpty() } ?: listOf(OpenableColumns.SIZE)
+        return MatrixCursor(columns.toTypedArray()).apply {
+            val row = Array<Any?>(columns.size) { index ->
+                when (columns[index]) {
+                    OpenableColumns.SIZE -> test.payload.size.toLong()
+                    OpenableColumns.DISPLAY_NAME -> "synthetic.nii.gz"
+                    else -> null
+                }
+            }
+            addRow(row)
+        }
+    }
     override fun insert(uri: Uri, values: ContentValues?): Uri? = null
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0

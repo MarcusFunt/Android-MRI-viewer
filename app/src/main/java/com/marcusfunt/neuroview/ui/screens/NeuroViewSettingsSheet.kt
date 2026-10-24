@@ -20,6 +20,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MenuDefaults
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.toggleable
@@ -41,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,8 +54,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import com.marcusfunt.neuroview.mri.RenderQualityMode
 import com.marcusfunt.neuroview.mri.RenderQualityPolicy
 import com.marcusfunt.neuroview.mri.RenderQualitySettings
@@ -155,6 +158,9 @@ internal fun NeuroViewSettingsSheet(
     val viewerSectionRequester = remember { BringIntoViewRequester() }
     val configuration = LocalConfiguration.current
     val maxSheetHeight = (configuration.screenHeightDp * 0.86f).dp
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = scrollToViewerSettings,
+    )
 
     DisposableEffect(viewerPreferences) {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { preferences, key ->
@@ -189,13 +195,14 @@ internal fun NeuroViewSettingsSheet(
 
     LaunchedEffect(scrollToViewerSettings) {
         if (scrollToViewerSettings) {
-            // Let the modal sheet finish its first layout before requesting the section.
-            delay(180)
+            snapshotFlow { sheetState.currentValue }
+                .first { it == SheetValue.Expanded }
             viewerSectionRequester.bringIntoView()
         }
     }
 
     ModalBottomSheet(
+        sheetState = sheetState,
         onDismissRequest = onDismiss,
         containerColor = androidx.compose.ui.graphics.Color(0xFF101F30),
     ) {

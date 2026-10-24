@@ -181,6 +181,17 @@ class OperationCoordinator(
     @Synchronized
     fun confirmCanceled(id: OperationId): Boolean = transition(id, OperationStatus.CANCELED)
 
+    /** Completes cleanup bookkeeping for an old generation without changing the latest operation. */
+    @Synchronized
+    fun confirmStaleCanceledAfterCleanup(id: OperationId): Boolean {
+        val record = records[id] ?: return false
+        if (latestByKind[record.snapshot.kind] == id ||
+            record.snapshot.status != OperationStatus.CANCELING
+        ) return false
+        transitionRecord(record, OperationStatus.CANCELED, observeTime(record))
+        return true
+    }
+
     @Synchronized
     fun fail(id: OperationId, failure: OperationFailure): Boolean =
         transition(id, OperationStatus.FAILED, failure = failure)

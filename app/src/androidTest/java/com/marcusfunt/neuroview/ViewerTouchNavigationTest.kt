@@ -133,6 +133,33 @@ class ViewerTouchNavigationTest {
         compose.onNodeWithText("MRI processing").assertExists()
     }
 
+    @Test fun viewerSettingsOpenAtViewerControlsWithoutManualScrolling() {
+        compose.setContent {
+            NeuroViewTheme {
+                ViewerScreen(
+                    VolumeLoadState.Ready("synthetic", volume),
+                    onFirstSliceBitmapReady = {},
+                    onFirstSliceDisplayed = {},
+                    onFirstSliceRenderStarted = { _, _, _ -> },
+                    onFirstSliceRenderFinished = { _, _, _ -> },
+                    onCancelLoad = {},
+                    onRetryLoad = {},
+                    onReturnToLibrary = {},
+                    onImport = {},
+                    onNavigate = {},
+                )
+            }
+        }
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithContentDescription("Real Axial MRI slice").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        compose.onNodeWithContentDescription("Viewer settings").performClick()
+
+        compose.onNodeWithText("MRI viewer").assertIsDisplayed()
+        compose.onNodeWithText("Show previous/next slice buttons").assertIsDisplayed()
+    }
+
     @Test fun displayedDarkGrayscaleRampIsOpaqueAndUnchanged() {
         val ramp = IntArray(33) { intensity -> 0xff000000.toInt() or (intensity * 0x010101) }
         val bitmap = createViewerBitmap(MprImage(33, 1, ramp))

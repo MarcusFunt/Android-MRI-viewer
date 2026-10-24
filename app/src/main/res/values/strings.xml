@@ -57,10 +57,10 @@
         <item quantity="one">Skipped %d non-DICOM file.</item>
         <item quantity="other">Skipped %d non-DICOM files.</item>
     </plurals>
-    <plurals name="conversion_derived_dicom_slices_saved">
-        <item quantity="one">Saved %d anonymized DERIVED Secondary Capture DICOM slice inside a ZIP archive.</item>
-        <item quantity="other">Saved %d anonymized DERIVED Secondary Capture DICOM slices inside a ZIP archive.</item>
-    </plurals>
+      <plurals name="conversion_derived_dicom_slices_saved">
+          <item quantity="one">Saved %d derived DICOM slice in a ZIP archive.</item>
+          <item quantity="other">Saved %d derived DICOM slices in a ZIP archive.</item>
+      </plurals>
     <plurals name="cache_thumbnails_cleared">
         <item quantity="one">Cleared %d cached thumbnail</item>
         <item quantity="other">Cleared %d cached thumbnails</item>

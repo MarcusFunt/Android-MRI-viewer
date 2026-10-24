@@ -172,6 +172,7 @@ fun ViewerScreen(
     volumeState: VolumeLoadState,
     displayNameOverride: String? = null,
     selectedDocumentUri: String? = null,
+    pendingProviderCleanup: Boolean = false,
     onFirstSliceBitmapReady: (OperationId) -> Unit,
     onFirstSliceDisplayed: (OperationId) -> Unit,
     onFirstSliceRenderStarted: (OperationId, NiftiVolume, Job) -> Unit,
@@ -650,6 +651,8 @@ fun ViewerScreen(
                             operation = volumeState.operation,
                             displayName = volumeState.displayName,
                             cancelRequestedAtElapsedMs = volumeState.cancelRequestedAtElapsedMs,
+                            recoveryMessage = volumeState.recoveryMessage,
+                            pendingProviderCleanup = pendingProviderCleanup,
                             onCancel = onCancelLoad,
                             onReturnToLibrary = onReturnToLibrary,
                         )
@@ -781,6 +784,8 @@ private fun ViewerLoadingScreen(
     operation: OperationSnapshot,
     displayName: String?,
     cancelRequestedAtElapsedMs: Long?,
+    recoveryMessage: String?,
+    pendingProviderCleanup: Boolean,
     onCancel: () -> Unit,
     onReturnToLibrary: () -> Unit,
 ) {
@@ -839,10 +844,28 @@ private fun ViewerLoadingScreen(
                 elapsedMs = (elapsedNow - operation.startedAtElapsedMs).coerceAtLeast(0L),
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (pendingProviderCleanup) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "A canceled file-provider read is still pending cleanup. Its resources remain owned until it returns.",
+                    color = NeuroChrome.muted,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                )
+            }
             Spacer(Modifier.height(24.dp))
             if (operation.status == OperationStatus.CANCELING) {
                 Text("Stopping…", color = NeuroChrome.muted, style = MaterialTheme.typography.labelLarge)
-                if (cancelRequestedAtElapsedMs != null &&
+                if (recoveryMessage != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        recoveryMessage,
+                        color = NeuroChrome.muted,
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                    )
+                    TextButton(onClick = onReturnToLibrary) { Text("RETURN TO LIBRARY") }
+                } else if (cancelRequestedAtElapsedMs != null &&
                     elapsedNow - cancelRequestedAtElapsedMs >= 8_000L
                 ) {
                     Spacer(Modifier.height(8.dp))

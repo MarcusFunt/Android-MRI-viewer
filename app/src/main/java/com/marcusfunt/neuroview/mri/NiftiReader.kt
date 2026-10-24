@@ -33,9 +33,16 @@ class NiftiVolume(
 
     val isDiskBacked: Boolean get() = backing != null
 
+    /** Returns one x-fastest linear voxel without requiring an in-memory volume array. */
+    fun valueAt(index: Long): Float {
+        val voxelCount = nx.toLong() * ny * nz
+        require(index in 0 until voxelCount) { "Voxel index is outside the volume" }
+        return backing?.value(index) ?: values[index.toInt()]
+    }
+
     fun nearest(i: Int, j: Int, k: Int): Float {
         val index = (k.toLong() * ny + j) * nx + i
-        return backing?.value(index) ?: values[index.toInt()]
+        return valueAt(index)
     }
 
     override fun close() { backing?.close() }

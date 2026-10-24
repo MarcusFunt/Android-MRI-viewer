@@ -25,6 +25,7 @@ import com.marcusfunt.neuroview.mri.NiftiReadProgress
 import com.marcusfunt.neuroview.mri.NiftiReadStage
 import com.marcusfunt.neuroview.mri.NiftiReadUnit
 import com.marcusfunt.neuroview.mri.NiftiReader
+import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.ui.operations.OperationCoordinator
 import com.marcusfunt.neuroview.ui.operations.OperationId
 import com.marcusfunt.neuroview.ui.operations.OperationKind
@@ -35,7 +36,9 @@ import com.marcusfunt.neuroview.ui.operations.OperationStatus
 import com.marcusfunt.neuroview.ui.operations.OperationUnit
 import com.marcusfunt.neuroview.ui.screens.CatalogQuantity
 import com.marcusfunt.neuroview.ui.screens.catalogQuantityText
+import java.io.File
 import java.util.IdentityHashMap
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -301,25 +304,29 @@ fun rememberConversionControls(): ConversionControls {
                     if (signal.isCanceled) throw CancellationException("Export canceled")
                 }
                 val count = withContext(Dispatchers.IO) {
-                    val source = context.contentResolver.openInputStream(
-                        Uri.parse(record.documentUri),
-                    ) ?: throw IllegalArgumentException("Source NIfTI no longer accessible")
-                    val volume = source.use {
-                        NiftiReader.read(
-                            it,
-                            NiftiReadOptions(
-                                maxVoxels = MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory()),
-                                cancellationCheck = checkCanceled,
-                                progressSink = { progress ->
-                                    reportProgress(id, progress.toOperationStage(),
-                                        progress.toOperationProgress()?.completedUnits,
-                                        progress.toOperationProgress()?.totalUnits,
-                                        progress.toOperationProgress()?.unit)
-                                },
-                            ),
-                        )
-                    }
+                    val backingDirectory = File(context.cacheDir, "nifti_export_${UUID.randomUUID()}")
+                    var volumeForCleanup: NiftiVolume? = null
                     try {
+                        val source = context.contentResolver.openInputStream(
+                            Uri.parse(record.documentUri),
+                        ) ?: throw IllegalArgumentException("Source NIfTI no longer accessible")
+                        val volume = source.use {
+                            NiftiReader.read(
+                                it,
+                                NiftiReadOptions(
+                                    maxVoxels = MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory()),
+                                    backingDirectory = backingDirectory,
+                                    cancellationCheck = checkCanceled,
+                                    progressSink = { progress ->
+                                        reportProgress(id, progress.toOperationStage(),
+                                            progress.toOperationProgress()?.completedUnits,
+                                            progress.toOperationProgress()?.totalUnits,
+                                            progress.toOperationProgress()?.unit)
+                                    },
+                                ),
+                            )
+                        }
+                        volumeForCleanup = volume
                         reportProgress(id, OperationStage.PACKAGING, 0L,
                             volume.nz.toLong(), OperationUnit.SLICES)
                         context.contentResolver.openOutputStream(output, "wt")?.use { stream ->
@@ -335,7 +342,11 @@ fun rememberConversionControls(): ConversionControls {
                         } ?: throw IllegalArgumentException("Cannot write DICOM ZIP")
                         volume.nz
                     } finally {
-                        volume.close()
+                        try {
+                            volumeForCleanup?.close()
+                        } finally {
+                            backingDirectory.deleteRecursively()
+                        }
                     }
                 }
                 context.resources.catalogQuantityText(

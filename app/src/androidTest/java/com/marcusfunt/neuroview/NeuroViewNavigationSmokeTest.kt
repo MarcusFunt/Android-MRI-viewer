@@ -5,6 +5,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
@@ -70,5 +71,14 @@ class NeuroViewNavigationSmokeTest {
         compose.onNodeWithText("Select DICOM folder").assertExists()
         compose.onNodeWithText("Select DICOM files instead").assertExists()
         compose.onNodeWithText("Import MRI volumes").assertExists()
+    }
+
+    @Test
+    fun expandedConversionHelpKeepsEmptyLibraryStateVisible() {
+        compose.onNodeWithText("Browse scans").performClick()
+        compose.onNodeWithText("Convert DICOM").performClick()
+        compose.onNodeWithText("Compatibility and export help").performClick()
+
+        compose.onNodeWithText("Your library is empty").assertIsDisplayed()
     }
 }

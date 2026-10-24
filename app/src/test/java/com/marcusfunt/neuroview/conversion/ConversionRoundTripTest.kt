@@ -5,6 +5,9 @@ import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.mri.SpatialAffine
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.file.Files
 import java.util.concurrent.CancellationException
 import java.util.zip.ZipInputStream
 import org.junit.Assert.assertEquals
@@ -48,6 +51,43 @@ class ConversionRoundTripTest {
         return parts
     }
 
+    private fun smallFloatNifti(): ByteArray {
+        val nx = 4
+        val ny = 3
+        val nz = 3
+        val data = ByteBuffer.allocate(352 + nx * ny * nz * 4).order(ByteOrder.LITTLE_ENDIAN)
+        data.putInt(0, 348)
+        data.putShort(40, 3)
+        data.putShort(42, nx.toShort())
+        data.putShort(44, ny.toShort())
+        data.putShort(46, nz.toShort())
+        data.putShort(70, 16) // float32
+        data.putShort(72, 32)
+        data.putFloat(108, 352f)
+        data.putShort(254, 1) // sform
+        data.putFloat(280, 1f)
+        data.putFloat(300, 1f)
+        data.putFloat(320, 1f)
+        data.put(344, 'n'.code.toByte())
+        data.put(345, '+'.code.toByte())
+        data.put(346, '1'.code.toByte())
+        for (index in 0 until nx * ny * nz) data.putFloat(352 + index * 4, index - 10f)
+        return data.array()
+    }
+
+    private fun slicesFromZipBytes(bytes: ByteArray): List<DicomSlice> {
+        val parts = mutableListOf<DicomSlice>()
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            while (zip.nextEntry != null) {
+                val data = ByteArrayOutputStream()
+                zip.copyTo(data)
+                parts += DicomReader.read(ByteArrayInputStream(data.toByteArray()))
+                zip.closeEntry()
+            }
+        }
+        return parts
+    }
+
     @Test fun derivedSecondaryCaptureFilesCanBeReadAsSingleSeries() {
         val slices = slicesFromZip()
         assertEquals(3, slices.size)
@@ -55,6 +95,62 @@ class ConversionRoundTripTest {
         assertEquals(1, slices.map { it.seriesUid }.distinct().size)
         assertEquals(1, slices.map { it.studyUid }.distinct().size)
         assertEquals(12, slices.first().pixels.size)
+    }
+
+    @Test fun mappedNiftiExportsSameDicomPixelsAndGeometryAsInMemoryVolume() {
+        val backingDirectory = Files.createTempDirectory("derived-dicom-mapped").toFile()
+        val nifti = smallFloatNifti()
+        val inMemory = NiftiReader.read(ByteArrayInputStream(nifti))
+        val mapped = NiftiReader.read(
+            ByteArrayInputStream(nifti),
+            maxVoxels = 1,
+            backingDirectory = backingDirectory,
+        )
+        try {
+            assertFalse(inMemory.isDiskBacked)
+            assertTrue(mapped.isDiskBacked)
+            assertTrue(mapped.values.isEmpty())
+
+            val expectedZip = ByteArrayOutputStream()
+            val actualZip = ByteArrayOutputStream()
+            DerivedDicomWriter.writeZip(inMemory, expectedZip)
+            DerivedDicomWriter.writeZip(mapped, actualZip)
+            val expected = slicesFromZipBytes(expectedZip.toByteArray())
+            val actual = slicesFromZipBytes(actualZip.toByteArray())
+
+            assertEquals(expected.size, actual.size)
+            expected.zip(actual).forEach { (expectedSlice, actualSlice) ->
+                assertEquals(expectedSlice.rows, actualSlice.rows)
+                assertEquals(expectedSlice.columns, actualSlice.columns)
+                assertEquals(expectedSlice.positionLps.toList(), actualSlice.positionLps.toList())
+                assertEquals(expectedSlice.orientationLps.toList(), actualSlice.orientationLps.toList())
+                assertEquals(expectedSlice.pixelSpacing.toList(), actualSlice.pixelSpacing.toList())
+                assertEquals(expectedSlice.pixels.size, actualSlice.pixels.size)
+                expectedSlice.pixels.indices.forEach { index ->
+                    assertEquals(expectedSlice.pixels[index], actualSlice.pixels[index], 0.001f)
+                }
+            }
+        } finally {
+            mapped.close()
+            inMemory.close()
+            val remainingBackingFiles = backingDirectory.listFiles().orEmpty()
+            if (!System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
+                assertEquals(0, remainingBackingFiles.size)
+            } else {
+                // Windows keeps a mapped file locked until its MappedByteBuffer is collected.
+                assertTrue(remainingBackingFiles.all { it.name.startsWith("nifti-disk-") })
+                remainingBackingFiles.forEach { it.deleteOnExit() }
+                backingDirectory.deleteOnExit()
+            }
+            backingDirectory.deleteRecursively()
+        }
+    }
+
+    @Test fun generatedStudyDescriptionAndExportCopyDoNotClaimAnonymization() {
+        val slices = slicesFromZip()
+        assertTrue(slices.isNotEmpty())
+        assertTrue(slices.all { it.studyDescription == "NIfTI-derived images" })
+        assertTrue(slices.all { !it.studyDescription.orEmpty().contains("anonym", ignoreCase = true) })
     }
 
     @Test fun dicomToNiftiRoundTripPreservesLpsRasGeometryAndVoxelValues() {

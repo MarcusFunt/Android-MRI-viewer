@@ -297,6 +297,45 @@ two-scan comparison, direct BrainSuite surface mesh display, and diagnostic
 validation. A completed UI does not imply those scientific capabilities are
 implemented. The latest APK and device validation are gated by CI.
 
+## NeuroView 1.5.0 candidate — viewer, conversion and provider hardening (2026-10-24)
+
+This candidate builds on the v1.4.0 tag with the issue #19–#40 work already on
+`origin/main`, followed by targeted audit fixes. Viewer loading allows one
+current provider reader and at most one detached reader awaiting provider I/O;
+the Library explains the recovery path if that capacity is occupied. NIfTI to
+derived DICOM export now supports mapped volumes, uses per-export private
+backing, and removes the unsupported “anonymized” claim from the UI and DICOM
+Study Description. Viewer Settings opens at viewer controls, conversion help
+uses a dialog, and the empty Library offers a DICOM conversion shortcut.
+
+The BrainSuite upload extra-read check remains in place. The controlled Android
+provider demonstrates that a provider can stall after advertised bytes, but no
+stall has been observed with a real supported provider; the integrity/liveness
+tradeoff remains evidence-gated.
+
+On API 35, the focused provider, mapped-export and viewer-loading checks passed,
+as did the full 36-test instrumentation suite, 140 JVM tests, debug and
+instrumentation APK builds, and lint. A manual large-volume run opened a
+290 × 512 × 512 NIfTI, exported 512 derived DICOM slices through the Android
+save picker, converted the result back to NIfTI and reopened it. The original
+Drive DICOM set was not available for import testing, and the local NIfTI
+archive was matched to the Drive listing by size only. The earlier settings
+rotation failure did not reproduce in the isolated or full instrumentation
+run.
+
+Candidate artifacts: debug APK SHA-256
+`679D4871AF42E8604B728ABD941BE6BE312F52726104538DA60ABB2B08EFC603`; unsigned
+release APK SHA-256
+`74D7991BCE606AA6B0BB0EFD474FAFC6000C336A101E5A6CCA668B68348830AB`.
+`apksigner verify` reports `DOES NOT VERIFY` / `Missing META-INF/MANIFEST.MF`;
+the release APK is not signed for distribution.
+
+This is a candidate record, not a claim that the APK is ready for distribution.
+Physical-device and accessibility checks, a real supported-provider stall
+reproduction, SAF failure/cancel cleanup, and a protected release signing
+identity remain outstanding. No performance improvement or diagnostic claim is
+made.
+
 ## Maintenance convention
 
 Record future changes here with a version or date, an explanation of what actually changed, compatibility/limitations, and verification evidence where available. Keep installation, usage, and current feature claims in the README and topic-specific documentation. Mark any unverified release gates explicitly; do not infer device or clinical validation from passing synthetic tests.

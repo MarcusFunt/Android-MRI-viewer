@@ -1,6 +1,6 @@
-# NeuroView architecture (current source: v1.4.0)
+# NeuroView architecture (current source: v1.5.0 candidate)
 
-This document describes the Android source on `main` as inspected on 2026-10-18, **not the older v0.7 tagged APK**. Historical phase-by-phase implementation notes live in the [development log](DEVELOPMENT_LOG.md).
+This document describes the Android source prepared for `main` as inspected on 2026-10-24. The v1.5.0 candidate is not yet a signed distribution build. Historical phase-by-phase implementation notes live in the [development log](DEVELOPMENT_LOG.md).
 
 ## Application structure
 

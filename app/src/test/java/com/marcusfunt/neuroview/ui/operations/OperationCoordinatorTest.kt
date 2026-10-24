@@ -203,6 +203,21 @@ class OperationCoordinatorTest {
     }
 
     @Test
+    fun completedStaleReaderCleanupMarksOnlyItsCanceledGenerationComplete() {
+        val coordinator = OperationCoordinator(FakeClock())
+        val old = coordinator.begin(OperationKind.VIEWER_LOAD, OperationStage.OPENING_SOURCE)
+        assertTrue(coordinator.requestCancel(old))
+        val current = coordinator.begin(OperationKind.VIEWER_LOAD, OperationStage.OPENING_SOURCE)
+
+        assertFalse(coordinator.confirmCanceled(old))
+        assertTrue(coordinator.confirmStaleCanceledAfterCleanup(old))
+        assertEquals(OperationStatus.CANCELED, coordinator.state(old)?.status)
+        assertEquals(current, coordinator.latest(OperationKind.VIEWER_LOAD)?.id)
+        assertEquals(OperationStatus.RUNNING, coordinator.state(current)?.status)
+        assertFalse(coordinator.confirmStaleCanceledAfterCleanup(current))
+    }
+
+    @Test
     fun stateFlowThrottlesUiProgressButCoordinatorKeepsExactCounters() {
         val clock = FakeClock()
         val coordinator = OperationCoordinator(clock, progressPublishIntervalMs = 100)

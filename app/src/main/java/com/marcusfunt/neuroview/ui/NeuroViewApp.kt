@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +54,6 @@ import com.marcusfunt.neuroview.ui.screens.importCanceledSummary
 import com.marcusfunt.neuroview.ui.screens.catalogQuantityText
 import com.marcusfunt.neuroview.ui.screens.SeriesScreen
 import com.marcusfunt.neuroview.ui.screens.ViewerScreen
-import com.marcusfunt.neuroview.ui.operations.OperationCoordinator
 import com.marcusfunt.neuroview.ui.operations.OperationFailure
 import com.marcusfunt.neuroview.ui.operations.OperationFailureKind
 import com.marcusfunt.neuroview.ui.operations.OperationId
@@ -84,11 +84,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.io.FilterInputStream
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.EOFException
+import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 sealed interface VolumeLoadState {
@@ -98,6 +102,7 @@ sealed interface VolumeLoadState {
         val displayName: String? = null,
         val decodedVolume: NiftiVolume? = null,
         val cancelRequestedAtElapsedMs: Long? = null,
+        val recoveryMessage: String? = null,
     ) : VolumeLoadState
     data class FirstSliceReady(
         val operation: OperationSnapshot,
@@ -114,6 +119,7 @@ private class ViewerLoadSession(
     val firstSliceReady: CompletableDeferred<Unit>,
     val job: Job,
     val cancellationSignal: AtomicReference<CancellationSignal>,
+    val providerIoActive: AtomicBoolean,
     val workerJob: AtomicReference<Job?> = AtomicReference(null),
     val renderJob: AtomicReference<Job?> = AtomicReference(null),
 ) {
@@ -128,10 +134,51 @@ private class ViewerLoadSession(
         firstSliceReady.cancel(CancellationException("MRI load canceled by user"))
     }
 
-    suspend fun stopAndJoinOwnedWork() = withContext(NonCancellable) {
-        workerJob.get()?.cancelAndJoin()
-        renderJob.get()?.cancelAndJoin()
+    suspend fun stopAndJoinOwnedWork(registry: ViewerLoadWorkerRegistry): ViewerWorkerCleanup =
+        withContext(NonCancellable) {
+            val worker = workerJob.get()
+            worker?.cancel(CancellationException("Viewer load ended"))
+            val workerFinished = worker == null || withTimeoutOrNull(VIEWER_READER_CANCEL_GRACE_MS) {
+                worker.join()
+                true
+            } == true
+            renderJob.get()?.cancelAndJoin()
+            if (workerFinished) {
+                ViewerWorkerCleanup.FINISHED
+            } else if (registry.detachCurrentProviderReader(
+                    worker!!,
+                    insideProviderIo = providerIoActive.get(),
+                )
+            ) {
+                ViewerWorkerCleanup.DETACHED_PROVIDER_READ
+            } else {
+                ViewerWorkerCleanup.CAPACITY_BLOCKED
+            }
+        }
+
+    private companion object {
+        const val VIEWER_READER_CANCEL_GRACE_MS = 1_500L
     }
+}
+
+private const val VIEWER_READER_CAPACITY_RECOVERY =
+    "Another file provider is still pending. Return to the Library, retry after it returns, or restart NeuroView if it never does."
+
+private enum class ViewerWorkerCleanup { FINISHED, DETACHED_PROVIDER_READ, CAPACITY_BLOCKED }
+
+private inline fun <T> duringProviderIo(active: AtomicBoolean, block: () -> T): T {
+    active.set(true)
+    return try { block() } finally { active.set(false) }
+}
+
+private class ProviderIoTrackingInputStream(
+    input: InputStream,
+    private val active: AtomicBoolean,
+) : FilterInputStream(input) {
+    override fun read(): Int = duringProviderIo(active) { super.read() }
+
+    override fun read(bytes: ByteArray, offset: Int, length: Int): Int =
+        duringProviderIo(active) { super.read(bytes, offset, length) }
 }
 
 private data class LoadedViewerVolume(val displayName: String, val volume: NiftiVolume)
@@ -211,6 +258,7 @@ private fun Throwable.toOperationFailure(): OperationFailure {
 @Composable
 fun NeuroViewApp() {
     val context = LocalContext.current
+    val applicationContext = context.applicationContext
     val motionPreference = rememberMotionPreference()
     val navigationMotionMs = MotionToken.NAVIGATION.durationMs(motionPreference)
     val scope = rememberCoroutineScope()
@@ -260,7 +308,10 @@ fun NeuroViewApp() {
     val backStack = rememberNavBackStack(Destination.Home)
     val navigate: (Destination) -> Unit = { NavigationActions.navigate(backStack, it) }
 
-    val operationCoordinator = remember { OperationCoordinator() }
+    val operationCoordinator = ViewerLoadWorkerOwner.operationCoordinator
+    val viewerLoadWorkers = ViewerLoadWorkerOwner.registry
+    val pendingDetachedProviderCleanup by viewerLoadWorkers.detachedReaderPending.collectAsState()
+    val pendingViewerReaderCount by viewerLoadWorkers.pendingReaderCount.collectAsState()
     val viewerRenderJobs = remember { ConcurrentHashMap<Job, NiftiVolume>() }
     var volumeState by remember { mutableStateOf<VolumeLoadState>(VolumeLoadState.Empty) }
     var loadAttempt by remember { mutableIntStateOf(0) }
@@ -288,6 +339,23 @@ fun NeuroViewApp() {
         }
     }
 
+    LaunchedEffect(pendingViewerReaderCount, activeLoadSession?.operationId) {
+        val session = activeLoadSession ?: return@LaunchedEffect
+        if (!session.job.isCompleted || session.workerJob.get()?.isCompleted == false ||
+            session.renderJob.get()?.isCompleted == false
+        ) return@LaunchedEffect
+        val current = operationCoordinator.state(session.operationId)
+        if (operationCoordinator.isCurrent(session.operationId) &&
+            current?.status == OperationStatus.CANCELING &&
+            operationCoordinator.confirmCanceled(session.operationId)
+        ) {
+            operationCoordinator.state(session.operationId)?.let { canceled ->
+                volumeState = VolumeLoadState.Canceled(canceled)
+            }
+            if (activeLoadSession == session) activeLoadSession = null
+        }
+    }
+
     LaunchedEffect(selectedUri, viewerVisible, loadAttempt) {
         val source = selectedUri
         val attemptAtStart = loadAttempt
@@ -296,12 +364,25 @@ fun NeuroViewApp() {
             return@LaunchedEffect
         }
 
-        val previousSession = activeLoadSession
-        if (previousSession != null && !previousSession.job.isCompleted) {
-            operationCoordinator.state(previousSession.operationId)?.let { previous ->
-                volumeState = VolumeLoadState.Loading(previous)
+        if (!viewerLoadWorkers.canStartCurrentReader()) {
+            val pendingSession = activeLoadSession
+            val pendingOperation = pendingSession?.let { operationCoordinator.state(it.operationId) }
+                ?: operationCoordinator.latest(OperationKind.VIEWER_LOAD)
+            if (pendingOperation != null) {
+                val existingLoading = (volumeState as? VolumeLoadState.Loading)
+                    ?.takeIf { it.operation.id == pendingOperation.id }
+                volumeState = existingLoading?.copy(
+                    operation = pendingOperation,
+                    recoveryMessage = VIEWER_READER_CAPACITY_RECOVERY,
+                ) ?: VolumeLoadState.Loading(
+                    operation = pendingOperation,
+                    cancelRequestedAtElapsedMs = if (pendingOperation.status == OperationStatus.CANCELING) {
+                        SystemMonotonicClock.nowMs()
+                    } else null,
+                    recoveryMessage = VIEWER_READER_CAPACITY_RECOVERY,
+                )
             }
-            previousSession.job.join()
+            return@LaunchedEffect
         }
         if (source != selectedUri || backStack.lastOrNull() !is Destination.Viewer) {
             return@LaunchedEffect
@@ -317,6 +398,7 @@ fun NeuroViewApp() {
             firstSliceReady = CompletableDeferred(),
             job = currentCoroutineContext()[Job] ?: error("Viewer load needs a coroutine job"),
             cancellationSignal = AtomicReference(signal),
+            providerIoActive = AtomicBoolean(false),
         )
         activeLoadSession = session
         var volumeTransferredToUi = false
@@ -347,24 +429,9 @@ fun NeuroViewApp() {
             }
         }
 
-        fun markCanceled() {
-            if (!operationCoordinator.isCurrent(operationId)) return
-            val current = operationCoordinator.state(operationId) ?: return
-            if (!current.status.isTerminal && current.status != OperationStatus.CANCELING) {
-                operationCoordinator.requestCancel(operationId)
-            }
-            val stopping = operationCoordinator.state(operationId)
-            if (stopping?.status == OperationStatus.CANCELING) {
-                operationCoordinator.confirmCanceled(operationId)
-            }
-            operationCoordinator.state(operationId)?.let { canceled ->
-                volumeState = VolumeLoadState.Canceled(canceled)
-            }
-        }
-
         try {
             operationCoordinator.transition(operationId, OperationStatus.WAITING_FOR_PROVIDER)
-            val worker = async(Dispatchers.IO) {
+            val worker = ViewerLoadWorkerOwner.scope.async(Dispatchers.IO, start = CoroutineStart.LAZY) {
                 val workerContext = currentCoroutineContext()
                 val cancellationBridge = launch(start = CoroutineStart.UNDISPATCHED) {
                     try {
@@ -376,50 +443,79 @@ fun NeuroViewApp() {
                 try {
                     val uri = Uri.parse(source)
                     val displayName = runCatching {
-                        context.contentResolver.query(
-                            uri,
-                            arrayOf(OpenableColumns.DISPLAY_NAME),
-                            null,
-                            null,
-                            null,
-                            signal,
-                        )?.use { cursor ->
-                            if (cursor.moveToFirst()) cursor.getString(0) else null
+                        duringProviderIo(session.providerIoActive) {
+                            applicationContext.contentResolver.query(
+                                uri,
+                                arrayOf(OpenableColumns.DISPLAY_NAME),
+                                null,
+                                null,
+                                null,
+                                signal,
+                            )?.use { cursor ->
+                                if (cursor.moveToFirst()) cursor.getString(0) else null
+                            }
                         }
                     }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Selected MRI"
                     workerContext.ensureActive()
-                    val descriptor = context.contentResolver.openAssetFileDescriptor(uri, "r", signal)
-                        ?: throw FileNotFoundException("Selected MRI is unavailable")
+                    val descriptor = duringProviderIo(session.providerIoActive) {
+                        applicationContext.contentResolver.openAssetFileDescriptor(uri, "r", signal)
+                    } ?: throw FileNotFoundException("Selected MRI is unavailable")
                     val volume = descriptor.use { asset ->
-                        NiftiReader.read(
-                            asset.createInputStream(),
-                            NiftiReadOptions(
-                                maxVoxels = MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory()),
-                                backingDirectory = File(context.cacheDir, "nifti_mapped"),
-                                cancellationCheck = { workerContext.ensureActive() },
-                                progressSink = { progress ->
-                                    operationCoordinator.reportProgress(
-                                        operationId,
-                                        progress.stage.toOperationStage(),
-                                        progress.toOperationProgress(),
-                                    )
-                                },
-                                sourceProgressSink = { operationCoordinator.observeWork(operationId) },
-                            ),
-                        )
+                        val sourceStream = duringProviderIo(session.providerIoActive) {
+                            asset.createInputStream()
+                        }
+                        ProviderIoTrackingInputStream(sourceStream, session.providerIoActive).use { input ->
+                            NiftiReader.read(
+                                input,
+                                NiftiReadOptions(
+                                    maxVoxels = MriMemoryBudget.maxVoxels(Runtime.getRuntime().maxMemory()),
+                                    backingDirectory = File(applicationContext.cacheDir, "nifti_mapped"),
+                                    cancellationCheck = { workerContext.ensureActive() },
+                                    progressSink = { progress ->
+                                        operationCoordinator.reportProgress(
+                                            operationId,
+                                            progress.stage.toOperationStage(),
+                                            progress.toOperationProgress(),
+                                        )
+                                    },
+                                    sourceProgressSink = { operationCoordinator.observeWork(operationId) },
+                                ),
+                            )
+                        }
                     }
-                    decodedVolume.set(volume)
-                    operationCoordinator.reportProgress(
-                        operationId,
-                        OperationStage.RENDERING_FIRST_SLICE,
-                        null,
-                    )
-                    LoadedViewerVolume(displayName, volume)
+                    try {
+                        workerContext.ensureActive()
+                        decodedVolume.set(volume)
+                        operationCoordinator.reportProgress(
+                            operationId,
+                            OperationStage.RENDERING_FIRST_SLICE,
+                            null,
+                        )
+                        workerContext.ensureActive()
+                        LoadedViewerVolume(displayName, volume)
+                    } catch (error: Throwable) {
+                        decodedVolume.compareAndSet(volume, null)
+                        volume.close()
+                        throw error
+                    }
                 } finally {
                     cancellationBridge.cancel()
                 }
             }
+            if (!viewerLoadWorkers.registerCurrentReader(worker)) {
+                worker.cancel()
+                throw IllegalStateException(
+                    "A file provider is still pending. Return to the Library and retry after it responds.",
+                )
+            }
             session.workerJob.set(worker)
+            worker.invokeOnCompletion { failure ->
+                if (failure != null) {
+                    decodedVolume.getAndSet(null)?.close()
+                    operationCoordinator.confirmStaleCanceledAfterCleanup(operationId)
+                }
+            }
+            worker.start()
             val loaded = worker.await()
             if (!operationCoordinator.isCurrent(operationId)) {
                 throw CancellationException("A newer viewer load replaced this request")
@@ -438,10 +534,7 @@ fun NeuroViewApp() {
             }
         } catch (canceled: CancellationException) {
             if (!session.job.isActive) throw canceled
-            if (session.userRequestedCancel) {
-                session.stopAndJoinOwnedWork()
-                markCanceled()
-            } else {
+            if (!session.userRequestedCancel) {
                 val failure = OperationFailure(
                     kind = OperationFailureKind.PROVIDER_ERROR,
                     safeMessage = "The selected file provider stopped responding. Try opening the file again.",
@@ -458,10 +551,7 @@ fun NeuroViewApp() {
             }
         } catch (canceled: OperationCanceledException) {
             if (!session.job.isActive) throw CancellationException("Viewer load canceled", canceled)
-            if (session.userRequestedCancel) {
-                session.stopAndJoinOwnedWork()
-                markCanceled()
-            } else {
+            if (!session.userRequestedCancel) {
                 val failure = canceled.toOperationFailure()
                 if (operationCoordinator.isCurrent(operationId)) {
                     operationCoordinator.fail(operationId, failure)
@@ -511,7 +601,9 @@ fun NeuroViewApp() {
                     }
                 }
             }
-            if (!succeeded) session.stopAndJoinOwnedWork()
+            val cleanup = if (!succeeded) {
+                session.stopAndJoinOwnedWork(viewerLoadWorkers)
+            } else ViewerWorkerCleanup.FINISHED
             if (!volumeTransferredToUi) decodedVolume.getAndSet(null)?.close()
             val currentOperation = operationCoordinator.state(operationId)
             if (operationCoordinator.isCurrent(operationId) &&
@@ -520,7 +612,20 @@ fun NeuroViewApp() {
                 if (session.workerJob.get()?.isCompleted != false &&
                     session.renderJob.get()?.isCompleted != false
                 ) {
-                    operationCoordinator.confirmCanceled(operationId)
+                    if (operationCoordinator.confirmCanceled(operationId)) {
+                        operationCoordinator.state(operationId)?.let { canceled ->
+                            volumeState = VolumeLoadState.Canceled(canceled)
+                        }
+                    }
+                } else if (cleanup == ViewerWorkerCleanup.CAPACITY_BLOCKED) {
+                    val stopping = operationCoordinator.state(operationId)
+                    val currentLoad = volumeState as? VolumeLoadState.Loading
+                    if (stopping != null && currentLoad?.operation?.id == operationId) {
+                        volumeState = currentLoad.copy(
+                            operation = stopping,
+                            recoveryMessage = VIEWER_READER_CAPACITY_RECOVERY,
+                        )
+                    }
                 }
             }
             val currentLoad = volumeState as? VolumeLoadState.Loading
@@ -872,6 +977,7 @@ fun NeuroViewApp() {
                 entry<Destination.Viewer> { destination ->
                     ViewerScreen(
                         volumeState = volumeState,
+                        pendingProviderCleanup = pendingDetachedProviderCleanup,
                         selectedDocumentUri = selectedUri,
                         displayNameOverride = snapshot.scans.firstOrNull {
                             it.id == destination.seriesId

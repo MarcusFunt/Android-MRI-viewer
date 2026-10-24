@@ -1,6 +1,6 @@
 # Testing and validation
 
-These are **developer and QA procedures for the current source**, not medical-device validation. The v0.7.0 tagged APK is older than the v1.4.0 source. See [README](../README.md) for installation and [Architecture](ARCHITECTURE.md) for module boundaries.
+These are **developer and QA procedures for the current source**, not medical-device validation. The current source is the v1.5.0 candidate; tagged APKs may be older. See [README](../README.md) for installation and [Architecture](ARCHITECTURE.md) for module boundaries.
 
 ## Basic Android checks
 

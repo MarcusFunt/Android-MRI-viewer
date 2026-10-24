@@ -237,12 +237,8 @@ fun LibraryScreen(
                                 TextButton(onClick = onConvertDicomFiles, enabled = !isBusy && !isImporting) {
                                     Text("Select DICOM files instead")
                                 }
-                                TextButton(onClick = { conversionHelpOpen = !conversionHelpOpen }) {
-                                    Text(if (conversionHelpOpen) "Hide compatibility help" else "Compatibility and export help")
-                                }
-                                if (conversionHelpOpen) {
-                                    Text("Select one compatible DICOM series with consistent geometry. If a transfer syntax or series is unsupported, pre-convert it with an external DICOM tool and import the NIfTI output.\n\nTo export a Library scan, use its actions menu. NIfTI → DICOM produces derived Secondary Capture objects, not original scanner DICOM.",
-                                        style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted)
+                                TextButton(onClick = { conversionHelpOpen = true }) {
+                                    Text("Compatibility and export help")
                                 }
                             }
                     }
@@ -340,6 +336,11 @@ fun LibraryScreen(
                                 color = NeuroChrome.muted,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
+                            if (snapshot.scans.isEmpty()) {
+                                TextButton(onClick = { conversionOpen = true }) {
+                                    Text("Convert DICOM")
+                                }
+                            }
                             if (search.isNotBlank()) {
                                 TextButton(onClick = { search = "" }) { Text("Clear search") }
                             }
@@ -462,6 +463,22 @@ fun LibraryScreen(
             }
         }
         }
+    }
+
+    if (conversionHelpOpen) {
+        AlertDialog(
+            onDismissRequest = { conversionHelpOpen = false },
+            title = { Text("DICOM compatibility and export") },
+            text = {
+                Text(
+                    "Select one compatible DICOM series with consistent geometry. If a transfer syntax or series is unsupported, pre-convert it with an external DICOM tool and import the NIfTI output.\n\n" +
+                        "To export a Library scan, use its actions menu. NIfTI → DICOM produces derived Secondary Capture objects, not original scanner DICOM.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { conversionHelpOpen = false }) { Text("Done") }
+            },
+        )
     }
 
     if (filtersOpen) {

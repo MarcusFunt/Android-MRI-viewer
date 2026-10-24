@@ -25,6 +25,7 @@ data class DicomSlice(
     val pixelSpacing: DoubleArray,
     val sliceSpacing: Double,
     val pixels: FloatArray,
+    val studyDescription: String? = null,
 )
 
 object DicomReader {
@@ -34,7 +35,7 @@ object DicomReader {
     private const val MAX_ELEMENT = 128 * 1024 * 1024L
     private val longVr = setOf("OB", "OD", "OF", "OL", "OV", "OW", "SQ", "UC", "UR", "UT", "UN", "SV", "UV")
     private val textTags = setOf(
-        0x00080016, 0x00080060, 0x0020000D, 0x0020000E,
+        0x00080016, 0x00080060, 0x00081030, 0x0020000D, 0x0020000E,
         0x00200032, 0x00200037, 0x00280004, 0x00280008,
         0x00280030, 0x00180050, 0x00180088, 0x00281052, 0x00281053,
     )
@@ -162,6 +163,7 @@ object DicomReader {
             rows = rows, columns = columns,
             positionLps = position, orientationLps = orientation,
             pixelSpacing = spacing, sliceSpacing = spacingZ, pixels = values,
+            studyDescription = data[0x00081030]?.let(::asText),
         )
     }
 

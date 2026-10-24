@@ -17,9 +17,11 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * Exports anonymized DERIVED Secondary Capture (SC) DICOM Part 10 slices in a ZIP.
+ * Exports DERIVED Secondary Capture (SC) DICOM Part 10 slices in a ZIP.
  * NOT an original MR DICOM reconstruction: scanner/patient/acquisition information
  * absent from NIfTI cannot be restored. Data is linearly mapped to unsigned 16-bit.
+ * Output metadata is regenerated and some patient fields are blank; this is not an
+ * anonymization guarantee, since identifiable information may remain in image pixels.
  */
 object DerivedDicomWriter {
     private const val SC_UID = "1.2.840.10008.5.1.4.1.1.7"
@@ -59,8 +61,10 @@ object DerivedDicomWriter {
         val orientation = rowDirection + colDirection
         var min = Float.POSITIVE_INFINITY
         var max = Float.NEGATIVE_INFINITY
-        for ((index, v) in volume.values.withIndex()) {
-            if (index % 65_536 == 0) cancellationCheck()
+        val voxelCount = volume.nx.toLong() * volume.ny * volume.nz
+        for (index in 0 until voxelCount) {
+            if (index % 65_536L == 0L) cancellationCheck()
+            val v = volume.valueAt(index)
             if (v.isFinite()) {
                 if (v < min) min = v
                 if (v > max) max = v
@@ -133,7 +137,7 @@ object DerivedDicomWriter {
         write(zip, 0x00080060, "CS", "OT")
         write(zip, 0x00080064, "CS", "WSD") // workstation conversion
         write(zip, 0x00080070, "LO", "NeuroView")
-        write(zip, 0x00081030, "LO", "Anonymized NIfTI-derived images")
+        write(zip, 0x00081030, "LO", "NIfTI-derived images")
         write(zip, 0x0008103E, "LO", "DERIVED SECONDARY CAPTURE")
         write(zip, 0x00082111, "ST", "Converted from NIfTI. Not original acquisition DICOM.")
         write(zip, 0x00100010, "PN", "") // No identifying patient information
@@ -161,10 +165,10 @@ object DerivedDicomWriter {
         write(zip, 0x00281053, "DS", decimal(slope))
         // Raw pixel values use column-fastest NIfTI indexing in the original voxel plane.
         val packed = ByteBuffer.allocate(volume.nx * volume.ny * 2).order(ByteOrder.LITTLE_ENDIAN)
-        val offset = slice * volume.nx * volume.ny
+        val offset = slice.toLong() * volume.nx * volume.ny
         for (pixel in 0 until volume.nx * volume.ny) {
             if (pixel % 8192 == 0) cancellationCheck()
-            val raw = volume.values[offset + pixel]
+            val raw = volume.valueAt(offset + pixel)
             val normalized = if (!raw.isFinite()) 0 else {
                 ((raw.toDouble() - minimum) / slope).roundToInt().coerceIn(0, 65535)
             }

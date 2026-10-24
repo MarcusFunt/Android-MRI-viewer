@@ -104,4 +104,50 @@ class ViewerLoadingScreenTest {
         compose.onNodeWithText("RETURN TO LIBRARY").performClick()
         assertTrue(returnedToLibrary)
     }
+
+    @Test
+    fun occupiedProviderReaderCapExplainsRetryAndRestartRecovery() {
+        val now = SystemMonotonicClock.nowMs()
+        val snapshot = OperationSnapshot(
+            id = OperationId(3),
+            kind = OperationKind.VIEWER_LOAD,
+            status = OperationStatus.CANCELING,
+            stage = OperationStage.OPENING_SOURCE,
+            progress = null,
+            startedAtElapsedMs = now - 2_000,
+            stageStartedAtElapsedMs = now - 2_000,
+            lastWorkAdvanceElapsedMs = now - 2_000,
+            lastHeartbeatElapsedMs = now,
+        )
+        val recovery = "Another file provider is still pending. Return to the Library, retry after it returns, or restart NeuroView if it never does."
+        var returnedToLibrary = false
+
+        compose.setContent {
+            NeuroViewTheme {
+                ViewerScreen(
+                    volumeState = VolumeLoadState.Loading(
+                        snapshot,
+                        cancelRequestedAtElapsedMs = now,
+                        recoveryMessage = recovery,
+                    ),
+                    pendingProviderCleanup = true,
+                    onFirstSliceBitmapReady = {},
+                    onFirstSliceDisplayed = {},
+                    onFirstSliceRenderStarted = { _, _, _ -> },
+                    onFirstSliceRenderFinished = { _, _, _ -> },
+                    onCancelLoad = {},
+                    onRetryLoad = {},
+                    onReturnToLibrary = { returnedToLibrary = true },
+                    onImport = {},
+                    onNavigate = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText(recovery).assertExists()
+        compose.onNodeWithText("A canceled file-provider read is still pending cleanup. Its resources remain owned until it returns.")
+            .assertExists()
+        compose.onNodeWithText("RETURN TO LIBRARY").performClick()
+        assertTrue(returnedToLibrary)
+    }
 }
