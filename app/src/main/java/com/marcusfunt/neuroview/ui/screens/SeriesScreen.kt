@@ -29,12 +29,11 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -299,15 +298,11 @@ private fun CollectionHeader(
 
 @Composable
 private fun ScanSeriesCard(scan: ScanRecord, catalog: ScanCatalog, onClick: () -> Unit) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, NeuroChrome.stroke),
-        colors = CardDefaults.cardColors(containerColor = NeuroChrome.panel),
+    Column(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -351,6 +346,7 @@ private fun ScanSeriesCard(scan: ScanRecord, catalog: ScanCatalog, onClick: () -
                 tint = NeuroChrome.accent,
             )
         }
+        HorizontalDivider(color = NeuroChrome.stroke.copy(alpha = 0.55f))
     }
 }
 

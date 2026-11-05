@@ -16,5 +16,14 @@ sealed interface Destination : NavKey {
     data object Library : Destination
 
     @Serializable
-    data class Viewer(val seriesId: String) : Destination
+    data object Settings : Destination
+
+    @Serializable
+    data object Notes : Destination
+
+    @Serializable
+    data class NoteDetail(val noteId: String) : Destination
+
+    @Serializable
+    data class Viewer(val seriesId: String, val noteId: String? = null) : Destination
 }

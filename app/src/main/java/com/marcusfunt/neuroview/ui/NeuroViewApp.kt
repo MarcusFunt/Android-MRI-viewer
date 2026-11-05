@@ -46,6 +46,8 @@ import com.marcusfunt.neuroview.mri.NiftiReader
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.navigation.Destination
 import com.marcusfunt.neuroview.navigation.NavigationActions
+import com.marcusfunt.neuroview.notes.ScanNote
+import com.marcusfunt.neuroview.notes.ScanNoteStore
 import com.marcusfunt.neuroview.ui.screens.HomeScreen
 import com.marcusfunt.neuroview.ui.screens.LibraryScreen
 import com.marcusfunt.neuroview.ui.screens.CatalogQuantity
@@ -53,6 +55,9 @@ import com.marcusfunt.neuroview.ui.screens.importResultSummary
 import com.marcusfunt.neuroview.ui.screens.importCanceledSummary
 import com.marcusfunt.neuroview.ui.screens.catalogQuantityText
 import com.marcusfunt.neuroview.ui.screens.SeriesScreen
+import com.marcusfunt.neuroview.ui.screens.NoteDetailScreen
+import com.marcusfunt.neuroview.ui.screens.NotesScreen
+import com.marcusfunt.neuroview.ui.screens.SettingsScreen
 import com.marcusfunt.neuroview.ui.screens.ViewerScreen
 import com.marcusfunt.neuroview.ui.operations.OperationFailure
 import com.marcusfunt.neuroview.ui.operations.OperationFailureKind
@@ -285,6 +290,30 @@ fun NeuroViewApp() {
     var lastOpenedScanId by rememberSaveable {
         mutableStateOf(navigationPrefs.getString("last_opened_id", null))
     }
+    val noteStore = remember(applicationContext) { ScanNoteStore(applicationContext) }
+    var notes by remember { mutableStateOf(noteStore.load()) }
+    val viewerSettings = remember(applicationContext) {
+        applicationContext.getSharedPreferences("neuroview_viewer_settings_v1", Context.MODE_PRIVATE)
+    }
+    val appearanceSettings = remember(applicationContext) {
+        applicationContext.getSharedPreferences("neuroview_home_appearance_v1", Context.MODE_PRIVATE)
+    }
+    var responsiveScrollEnabled by rememberSaveable {
+        mutableStateOf(viewerSettings.getBoolean("responsive_scroll", true))
+    }
+    var scrollPreviewQuality by rememberSaveable {
+        mutableStateOf(
+            viewerSettings.getFloat("scroll_preview_quality", ViewerRenderPolicy.DEFAULT_PREVIEW_QUALITY)
+                .coerceIn(ViewerRenderPolicy.MIN_PREVIEW_QUALITY, ViewerRenderPolicy.MAX_PREVIEW_QUALITY),
+        )
+    }
+    var autoRotate by rememberSaveable {
+        mutableStateOf(appearanceSettings.getBoolean("rotate", true))
+    }
+    var glowEnabled by rememberSaveable {
+        mutableStateOf(appearanceSettings.getBoolean("glow", true))
+    }
+    var resetOrientationRequest by rememberSaveable { mutableIntStateOf(0) }
 
     fun updateCatalog(description: String, action: suspend () -> ScanCatalogSnapshot) {
         if (importBusy || editBusy || conversions.busy) return
@@ -306,7 +335,16 @@ fun NeuroViewApp() {
 
 
     val backStack = rememberNavBackStack(Destination.Home)
-    val navigate: (Destination) -> Unit = { NavigationActions.navigate(backStack, it) }
+    val navigate: (Destination) -> Unit = { destination ->
+        if (destination == Destination.Notes) notes = noteStore.load()
+        NavigationActions.navigate(backStack, destination)
+    }
+    val activeViewer = NavigationActions.activeViewer(backStack)
+    val activeScan = snapshot.scans.firstOrNull { it.id == activeViewer?.seriesId }
+    LaunchedEffect(activeViewer?.seriesId, activeScan?.documentUri) {
+        selectedScanId = activeScan?.id
+        selectedUri = activeScan?.documentUri
+    }
 
     val operationCoordinator = ViewerLoadWorkerOwner.operationCoordinator
     val viewerLoadWorkers = ViewerLoadWorkerOwner.registry
@@ -868,6 +906,8 @@ fun NeuroViewApp() {
                     HomeScreen(
                         onBrowse = { navigate(Destination.Library) },
                         onImport = chooseDocuments,
+                        onOpenSettings = { navigate(Destination.Settings) },
+                        onOpenNotes = { navigate(Destination.Notes) },
                         lastScanName = snapshot.scans.firstOrNull { it.id == lastOpenedScanId }?.label,
                         lastScan = snapshot.scans.firstOrNull { it.id == lastOpenedScanId },
                         lastScanImportedAt = snapshot.scans.firstOrNull { it.id == lastOpenedScanId }?.let { scan ->
@@ -876,8 +916,68 @@ fun NeuroViewApp() {
                         onResumeScan = {
                             snapshot.scans.firstOrNull { it.id == lastOpenedScanId }?.let(openScan)
                         },
-                        onClearCache = { catalog.clearThumbnailCache() },
+                        resetRequest = resetOrientationRequest,
                     )
+                }
+                entry<Destination.Settings> {
+                    SettingsScreen(
+                        responsiveScrollEnabled = responsiveScrollEnabled,
+                        onResponsiveScrollChange = { enabled ->
+                            responsiveScrollEnabled = enabled
+                            viewerSettings.edit().putBoolean("responsive_scroll", enabled).apply()
+                        },
+                        scrollPreviewQuality = scrollPreviewQuality,
+                        onScrollPreviewQualityChange = { quality ->
+                            val bounded = quality.coerceIn(
+                                ViewerRenderPolicy.MIN_PREVIEW_QUALITY,
+                                ViewerRenderPolicy.MAX_PREVIEW_QUALITY,
+                            )
+                            scrollPreviewQuality = bounded
+                            viewerSettings.edit().putFloat("scroll_preview_quality", bounded).apply()
+                        },
+                        autoRotate = autoRotate,
+                        onAutoRotateChange = { enabled ->
+                            autoRotate = enabled
+                            appearanceSettings.edit().putBoolean("rotate", enabled).apply()
+                        },
+                        glowEnabled = glowEnabled,
+                        onGlowEnabledChange = { enabled ->
+                            glowEnabled = enabled
+                            appearanceSettings.edit().putBoolean("glow", enabled).apply()
+                        },
+                        onResetOrientation = { resetOrientationRequest++ },
+                        onClearCache = { catalog.clearThumbnailCache() },
+                        onBack = { NavigationActions.back(backStack) },
+                    )
+                }
+                entry<Destination.Notes> {
+                    NotesScreen(
+                        notes = notes,
+                        availableScanIds = snapshot.scans.mapTo(mutableSetOf()) { it.id },
+                        onBack = { NavigationActions.back(backStack) },
+                        onBrowse = { navigate(Destination.Library) },
+                        onOpenNote = { note -> navigate(Destination.NoteDetail(note.id)) },
+                    )
+                }
+                entry<Destination.NoteDetail> { destination ->
+                    val note = notes.firstOrNull { it.id == destination.noteId }
+                    if (note != null) {
+                        val scan = snapshot.scans.firstOrNull { it.id == note.scanId }
+                        NoteDetailScreen(
+                            note = note,
+                            available = scan != null,
+                            onBack = { NavigationActions.back(backStack) },
+                            onOpenSavedSlice = {
+                                if (scan != null) {
+                                    selectedUri = scan.documentUri
+                                    selectedScanId = scan.id
+                                    lastOpenedScanId = scan.id
+                                    navigationPrefs.edit().putString("last_opened_id", scan.id).apply()
+                                    navigate(Destination.Viewer(scan.id, note.id))
+                                }
+                            },
+                        )
+                    }
                 }
                 entry<Destination.Series> {
                     SeriesScreen(
@@ -975,10 +1075,24 @@ fun NeuroViewApp() {
                     )
                 }
                 entry<Destination.Viewer> { destination ->
+                    val scan = snapshot.scans.firstOrNull { it.id == destination.seriesId }
+                    val note = notes.firstOrNull {
+                        it.id == destination.noteId && it.scanId == destination.seriesId
+                    }
+                    val routeVolumeState = if (scan?.documentUri == selectedUri) {
+                        volumeState
+                    } else {
+                        VolumeLoadState.Empty
+                    }
                     ViewerScreen(
-                        volumeState = volumeState,
+                        volumeState = routeVolumeState,
                         pendingProviderCleanup = pendingDetachedProviderCleanup,
-                        selectedDocumentUri = selectedUri,
+                        selectedDocumentUri = scan?.documentUri,
+                        responsiveScrollEnabled = responsiveScrollEnabled,
+                        scrollPreviewQuality = scrollPreviewQuality,
+                        initialNoteId = note?.id,
+                        initialNotePlane = note?.planeName,
+                        initialNoteSlice = note?.sliceIndex,
                         displayNameOverride = snapshot.scans.firstOrNull {
                             it.id == destination.seriesId
                         }?.label,
@@ -1028,6 +1142,28 @@ fun NeuroViewApp() {
                         onImport = chooseDocuments,
                         onNavigate = navigate,
                         onClearCache = { catalog.clearThumbnailCache() },
+                        onSaveNote = { plane, slice, count, orientationVerified, body ->
+                            if (scan != null && body.isNotBlank()) {
+                                val collection = snapshot.collections.firstOrNull {
+                                    it.id == scan.collectionId
+                                }?.label.orEmpty()
+                                noteStore.save(
+                                    ScanNote(
+                                        id = java.util.UUID.randomUUID().toString(),
+                                        scanId = scan.id,
+                                        collectionLabel = collection,
+                                        seriesLabel = scan.label,
+                                        planeName = plane.name,
+                                        sliceIndex = slice,
+                                        sliceCount = count,
+                                        createdAtMillis = System.currentTimeMillis(),
+                                        body = body.trim(),
+                                        orientationVerified = orientationVerified,
+                                    ),
+                                )
+                                notes = noteStore.load()
+                            }
+                        },
                     )
                 }
             },

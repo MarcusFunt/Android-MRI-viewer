@@ -41,7 +41,6 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -86,9 +85,11 @@ private val Edge = Color(0xFF385069)
 fun HomeScreen(
     onBrowse: () -> Unit,
     onImport: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenNotes: () -> Unit,
     lastScanName: String? = null,
     onResumeScan: () -> Unit = {},
-    onClearCache: suspend () -> Int = { 0 },
+    resetRequest: Int = 0,
     lastScan: ScanRecord? = null,
     lastScanImportedAt: Long? = null,
 ) {
@@ -99,7 +100,6 @@ fun HomeScreen(
     val preferences = remember(context.applicationContext) {
         context.getSharedPreferences("neuroview_home_appearance_v1", Context.MODE_PRIVATE)
     }
-    var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var recentDetailsOpen by rememberSaveable { mutableStateOf(false) }
     val recentName = lastScan?.label ?: lastScanName
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -130,7 +130,6 @@ fun HomeScreen(
         preferences.registerOnSharedPreferenceChangeListener(listener)
         onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    var resetRequest by rememberSaveable { mutableIntStateOf(0) }
 
     Box(
         Modifier.fillMaxSize().background(
@@ -225,7 +224,7 @@ fun HomeScreen(
                             .border(1.dp, Edge.copy(alpha = 0.55f), RoundedCornerShape(19.dp)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        IconButton(onClick = { settingsOpen = true }) {
+                        IconButton(onClick = onOpenSettings) {
                             Icon(
                                 Icons.Default.Settings,
                                 contentDescription = "Settings",
@@ -338,6 +337,12 @@ fun HomeScreen(
                         tint = Secondary,
                     )
                 }
+                TextButton(
+                    onClick = onOpenNotes,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
+                    Text("Notes", color = Cyan)
+                }
                 Text(
                     "Local viewing · For exploration, not diagnosis",
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 7.dp),
@@ -356,24 +361,6 @@ fun HomeScreen(
         ScanDetailsDialog(lastScan, lastScanImportedAt, onDismiss = { recentDetailsOpen = false })
     }
 
-    if (settingsOpen) {
-        NeuroViewSettingsSheet(
-            autoRotate = autoRotate,
-            onAutoRotateChange = { enabled ->
-                autoRotate = enabled
-                preferences.edit().putBoolean("rotate", enabled).apply()
-            },
-            glowEnabled = glowEnabled,
-            onGlowEnabledChange = { enabled ->
-                glowEnabled = enabled
-                preferences.edit().putBoolean("glow", enabled).apply()
-            },
-            onResetBrainOrientation = { resetRequest++ },
-            onClearCache = onClearCache,
-            scrollToViewerSettings = false,
-            onDismiss = { settingsOpen = false },
-        )
-    }
 }
 
 @Composable

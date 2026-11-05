@@ -47,4 +47,19 @@ class NavigationActionsTest {
         NavigationActions.navigate(stack, Destination.Viewer("demo-t2"))
         assertEquals(Destination.Viewer("demo-t2"), stack.last())
     }
+
+    @Test
+    fun activeViewerTracksBackStackAcrossNotesAndRestoresPreviousScan() {
+        val first = Destination.Viewer("scan-b")
+        val noteViewer = Destination.Viewer("scan-a", "note-1")
+        val stack = mutableListOf<NavKey>(
+            Destination.Home, first, Destination.Notes, Destination.NoteDetail("note-1"), noteViewer,
+        )
+
+        assertEquals(noteViewer, NavigationActions.activeViewer(stack))
+        NavigationActions.back(stack)
+        NavigationActions.back(stack)
+        NavigationActions.back(stack)
+        assertEquals(first, NavigationActions.activeViewer(stack))
+    }
 }

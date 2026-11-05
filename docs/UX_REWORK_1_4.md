@@ -23,7 +23,8 @@ DICOM conversions or BrainSuite's upstream processing algorithms.
   and carries its RAS+ reference point across axial/coronal/sagittal planes.
   Unknown-orientation files don't display affirmative R/L markers. Focus
   mode removes the top bar but retains an exit action. Single-slice controls
-  are disabled when they cannot change the image.
+  are disabled when they cannot change the image. The primary slice fills an
+  open, unframed surface, with position and labeled actions below it.
 - **Display** — Separate *Adjust* and *Process* sheets, window presets,
   explicit reset behavior and per-scan saved display adjustments.
 - **BrainSuite** — Validated HTTPS entry, optional access-token visibility,
@@ -33,11 +34,30 @@ DICOM conversions or BrainSuite's upstream processing algorithms.
   scan filenames, pixels or credentials are persisted in job history.
 - **Home/settings** — More accessible supporting typography, less duplicated
   decorative chrome, consistent accent colors, stronger white-on-blue button
-  contrast, scrollable small-screen layout, persistent landing appearance
-  preferences and a safe MRI-preview-cache cleanup action.
-- **Testing** — Added pure Kotlin tests covering the new RAS-space probe
-  coordinates and cross-plane projection; updated emulator navigation tests
-  for the new screen hierarchy.
+  contrast, persistent landing appearance preferences, and a safe
+  MRI-preview-cache cleanup action. Settings is a shared destination from Home
+  and the viewer menu. It saves the responsive-scroll toggle and adjustable
+  25–75% preview quality. Landscape Home places the brain beside a scrollable
+  action column so the preview remains visible on short screens.
+- **Notes** — Notes can be written from the viewer at its current plane and
+  slice, stored app-private on this device without the source URI, and reopened
+  from the Notes list at their saved location. A full detail screen keeps long
+  notes readable even if their scan is unavailable. Saved note metadata marks
+  orientation as verified or unverified; legacy note records default to
+  unverified. The uncertainty warning remains visible in the notes list.
+- **Session continuity** — Plane and slice position are saved per scan and
+  restored on reopen; out-of-range saved slices are clamped to the loaded
+  volume. Note locations apply once when their matching scan is loaded, and
+  volume identity follows the active viewer route across back navigation.
+  Zoom/pan state survives secondary destinations. Display adjustments remain
+  per-scan.
+- **Library/series rows** — Replaced the heavy scan-card outlines with open
+  preview rows and quiet separators.
+- **Testing** — Added pure Kotlin tests for the note codec, legacy-note
+  orientation migration, navigation's active viewer, and configurable preview
+  resolution. Emulator checks cover settings navigation, notes empty and
+  unavailable states, full long-note reading, and saving a note on a synthetic
+  volume at the current slice.
 
 ## Remaining feature boundaries
 
@@ -62,11 +82,14 @@ Do not present these as implemented, and do not infer missing metadata.
 
 ## Release/device QA
 
-- [ ] Android compile, JVM tests, lint and synthetic reference checks pass.
-- [ ] Fresh emulator screenshot reviewed for clipping, text contrast and
-      actual button hierarchy.
+- [x] `:app:testDebugUnitTest` (72 tests), `:app:assembleDebug`, and
+      `:app:connectedDebugAndroidTest` (9 tests) pass. Lint was not run.
+- [x] Emulator screenshots reviewed in portrait and landscape for Home,
+      Settings, and Notes; the synthetic viewer test covers its note editor.
 - [ ] Open an existing app install; existing catalog and scan IDs survive.
 - [ ] Import several NIfTI files and navigate through Library/Collections.
+      No real scan was available in the emulator, so small/large imported-scan
+      performance and the full import-to-note journey remain unexercised.
 - [ ] Check sorting, 3D/4D filtering, large filenames and empty states.
 - [ ] Test portrait/landscape and system font sizes, especially 1.5× and 2×.
 - [ ] Verify orientation labels and probe crosshair against asymmetric,

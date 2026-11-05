@@ -75,6 +75,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -145,6 +146,7 @@ import com.marcusfunt.neuroview.mri.RenderRequestGate
 import com.marcusfunt.neuroview.mri.ThermalStatus
 import com.marcusfunt.neuroview.navigation.Destination
 import com.marcusfunt.neuroview.ui.VolumeLoadState
+import com.marcusfunt.neuroview.ui.ViewerRenderPolicy
 import com.marcusfunt.neuroview.ui.components.OperationProgressIndicator
 import com.marcusfunt.neuroview.ui.operations.OperationId
 import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
@@ -172,6 +174,12 @@ fun ViewerScreen(
     volumeState: VolumeLoadState,
     displayNameOverride: String? = null,
     selectedDocumentUri: String? = null,
+    responsiveScrollEnabled: Boolean = true,
+    scrollPreviewQuality: Float = ViewerRenderPolicy.DEFAULT_PREVIEW_QUALITY,
+    initialNoteId: String? = null,
+    initialNotePlane: String? = null,
+    initialNoteSlice: Int? = null,
+    onSaveNote: (MriPlane, Int, Int, Boolean, String) -> Unit = { _, _, _, _, _ -> },
     pendingProviderCleanup: Boolean = false,
     onFirstSliceBitmapReady: (OperationId) -> Unit,
     onFirstSliceDisplayed: (OperationId) -> Unit,
@@ -184,9 +192,17 @@ fun ViewerScreen(
     onNavigate: (Destination) -> Unit,
     onClearCache: suspend () -> Int = { 0 },
 ) {
-    var plane by rememberSaveable { mutableStateOf(MriPlane.AXIAL) }
+    var plane by rememberSaveable(selectedDocumentUri, initialNoteId) {
+        mutableStateOf(
+            initialNotePlane?.let { saved -> runCatching { MriPlane.valueOf(saved) }.getOrNull() }
+                ?: MriPlane.AXIAL,
+        )
+    }
     var focusMode by rememberSaveable { mutableStateOf(false) }
-    var sliceIndex by rememberSaveable { mutableIntStateOf(0) }
+    var sliceIndex by rememberSaveable(selectedDocumentUri, initialNoteId, initialNotePlane) {
+        mutableIntStateOf(initialNoteSlice ?: 0)
+    }
+    var restoredInitialNoteId by rememberSaveable(selectedDocumentUri) { mutableStateOf<String?>(null) }
     var windowCenter by rememberSaveable { mutableFloatStateOf(0.5f) }
     var windowWidth by rememberSaveable { mutableFloatStateOf(1.0f) }
     val context = LocalContext.current
@@ -375,8 +391,29 @@ fun ViewerScreen(
         mutableStateOf(AdaptiveQualityLevel.STANDARD)
     }
     val adaptiveQualityController = remember(volume) { AdaptiveRenderQualityController() }
-    val renderQualityProfile = remember(renderQualitySettings, renderEnvironment, adaptiveQualityLevel) {
+    val baseRenderQualityProfile = remember(renderQualitySettings, renderEnvironment, adaptiveQualityLevel) {
         RenderQualityPolicy.resolve(renderQualitySettings, renderEnvironment, adaptiveQualityLevel)
+    }
+    val renderQualityProfile = remember(
+        baseRenderQualityProfile,
+        responsiveScrollEnabled,
+        scrollPreviewQuality,
+    ) {
+        baseRenderQualityProfile.copy(
+            previewMaxSide = if (responsiveScrollEnabled &&
+                baseRenderQualityProfile.stillMaxSide > ViewerRenderPolicy.MIN_PREVIEW_RESOLUTION
+            ) {
+                (baseRenderQualityProfile.previewMaxSide *
+                    (scrollPreviewQuality / ViewerRenderPolicy.DEFAULT_PREVIEW_QUALITY))
+                    .roundToInt()
+                    .coerceIn(
+                        ViewerRenderPolicy.MIN_PREVIEW_RESOLUTION,
+                        baseRenderQualityProfile.stillMaxSide,
+                    )
+            } else {
+                baseRenderQualityProfile.stillMaxSide
+            },
+        )
     }
     val renderPerformanceMonitor = remember(volume) { RenderPerformanceMonitor() }
     var renderPerformance by remember(volume) { mutableStateOf(RenderPerformanceSnapshot()) }
@@ -387,17 +424,35 @@ fun ViewerScreen(
     val sliceCount = if (volume != null) MprRenderer.sliceCount(volume, plane) else 1
     val selectedSlice = sliceIndex.coerceIn(0, sliceCount - 1)
 
+    LaunchedEffect(volume, plane, initialNoteId) {
+        if (volume == null) {
+            sliceIndex = 0
+            return@LaunchedEffect
+        }
+        val count = MprRenderer.sliceCount(volume, plane)
+        if (initialNoteId != null && restoredInitialNoteId != initialNoteId) {
+            if (initialNotePlane == plane.name && initialNoteSlice != null) {
+                sliceIndex = initialNoteSlice.coerceIn(0, count - 1)
+            }
+            restoredInitialNoteId = initialNoteId
+        } else {
+            sliceIndex = when {
+                referenceWorld != null -> MprProbe.sliceForWorld(volume, plane, requireNotNull(referenceWorld))
+                scanKey != null -> displayPrefs.getInt("${scanKey}_${plane.name}_slice", count / 2)
+                    .coerceIn(0, count - 1)
+                else -> count / 2
+            }
+        }
+    }
+    LaunchedEffect(scanKey, plane, sliceIndex, sliceCount, volume) {
+        if (scanKey == null || volume == null) return@LaunchedEffect
+        delay(180L)
+        displayPrefs.edit().putInt("${scanKey}_${plane.name}_slice", selectedSlice).apply()
+    }
+
     LaunchedEffect(volume) {
         // A newly loaded scan starts a fresh latency sample window.
         noteViewerInput()
-    }
-
-    LaunchedEffect(volume, plane) {
-        sliceIndex = when {
-            volume == null -> 0
-            referenceWorld != null -> MprProbe.sliceForWorld(volume, plane, requireNotNull(referenceWorld))
-            else -> MprRenderer.sliceCount(volume, plane) / 2
-        }
     }
 
     fun latestSliceInput() = SliceRenderInput(
@@ -722,6 +777,7 @@ fun ViewerScreen(
                                 noteViewerInput()
                                 setWindowWidth(it)
                             },
+                            onSaveNote = onSaveNote,
                         )
                     }
 
@@ -985,6 +1041,7 @@ internal fun MriContent(
     onWindowCenter: (Float) -> Unit,
     windowWidth: Float,
     onWindowWidth: (Float) -> Unit,
+    onSaveNote: (MriPlane, Int, Int, Boolean, String) -> Unit = { _, _, _, _, _ -> },
 ) {
     val motionDuration = MotionToken.QUICK.durationMs(LocalNeuroViewMotion.current)
     // Gesture coroutines persist across recompositions; always read the latest slice.
@@ -996,6 +1053,9 @@ internal fun MriContent(
     var showAdjustments by rememberSaveable { mutableStateOf(false) }
     var showProcessing by rememberSaveable { mutableStateOf(false) }
     var showMoreActions by rememberSaveable { mutableStateOf(false) }
+    var noteEditorOpen by rememberSaveable { mutableStateOf(false) }
+    var noteText by rememberSaveable { mutableStateOf("") }
+    var noteSaved by rememberSaveable { mutableStateOf(false) }
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
     var zoomMode by rememberSaveable(volume) { mutableStateOf(false) }
@@ -1480,6 +1540,17 @@ internal fun MriContent(
                 ) {
                     Text("Adjust", style = MaterialTheme.typography.labelLarge)
                 }
+                TextButton(
+                    onClick = {
+                        noteText = ""
+                        noteSaved = false
+                        noteEditorOpen = true
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("Add note", style = MaterialTheme.typography.labelLarge)
+                }
             }
             Box {
                 IconButton(
@@ -1677,6 +1748,46 @@ internal fun MriContent(
                         onAccessTokenChange = { bridgeToken = it },
                     )
                 }
+            }
+        }
+    }
+    if (noteEditorOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { noteEditorOpen = false },
+            containerColor = NeuroChrome.topBar,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Add note", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Saved on this device with this series and slice location. The source file is not changed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NeuroChrome.muted,
+                )
+                OutlinedTextField(
+                    value = noteText,
+                    onValueChange = { noteText = it },
+                    label = { Text("Observation") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 7,
+                )
+                if (noteSaved) Text("Note saved on this device.", color = NeuroChrome.accent)
+                Button(
+                    onClick = {
+                        onSaveNote(plane, selectedSlice, totalSlices, !orientationUnknown, noteText)
+                        noteSaved = true
+                    },
+                    enabled = noteText.isNotBlank() && !noteSaved,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) { Text(if (noteSaved) "Saved" else "Save note") }
+                TextButton(
+                    onClick = { noteEditorOpen = false },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (noteSaved) "Done" else "Cancel") }
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
