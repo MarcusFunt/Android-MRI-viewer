@@ -103,6 +103,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -110,7 +111,10 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.DpSize
@@ -123,6 +127,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -130,6 +135,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.marcusfunt.neuroview.BuildConfig
+import com.marcusfunt.neuroview.ui.traceComposeFirstDraw
 import com.marcusfunt.neuroview.mri.MprRenderSession
 import com.marcusfunt.neuroview.mri.MprRenderer
 import com.marcusfunt.neuroview.mri.MprProbe
@@ -1091,42 +1098,53 @@ internal fun MriContent(
                 targetOffsetY = { it / 6 },
             ),
         ) {
-            Row(
+            Box(
+                modifier = Modifier.fillMaxWidth().traceComposeFirstDraw("viewer.plane-tabs"),
+            ) {
+                Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
                     .offset(y = (-4).dp).selectableGroup(),
                 verticalAlignment = Alignment.CenterVertically,
-            ) {
-                MriPlane.entries.forEach { option ->
-                    val selected = plane == option
-                    val tabColor by animateColorAsState(
-                        if (selected) NeuroChrome.accent else NeuroChrome.muted,
-                        animationSpec = tween(motionDuration), label = "Plane selection",
-                    )
-                    Box(
-                        modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-                            .selectable(
-                                selected = selected,
-                                role = Role.Tab,
-                                onClick = { onPlaneSelect(option) },
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            option.label,
-                            style = MaterialTheme.typography.labelLarge.copy(fontSize = 16.sp),
-                            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                            color = tabColor,
+                ) {
+                    MriPlane.entries.forEach { option ->
+                        val selected = plane == option
+                        val tabColor by animateColorAsState(
+                            if (selected) NeuroChrome.accent else NeuroChrome.muted,
+                            animationSpec = tween(motionDuration), label = "Plane selection",
                         )
-                        if (selected) {
-                            Box(
-                                modifier = Modifier.align(Alignment.BottomCenter)
-                                    .padding(horizontal = 28.dp)
-                                    .fillMaxWidth()
-                                    .height(2.dp)
-                                    .background(NeuroChrome.accent, RoundedCornerShape(1.dp)),
+                        Box(
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                                .selectable(
+                                    selected = selected,
+                                    role = Role.Tab,
+                                    onClick = { onPlaneSelect(option) },
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                option.label,
+                                style = MaterialTheme.typography.labelLarge.copy(fontSize = 16.sp),
+                                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                                color = tabColor,
                             )
+                            if (selected) {
+                                Box(
+                                    modifier = Modifier.align(Alignment.BottomCenter)
+                                        .padding(horizontal = 28.dp)
+                                        .fillMaxWidth()
+                                        .height(2.dp)
+                                        .background(NeuroChrome.accent, RoundedCornerShape(1.dp)),
+                                )
+                            }
                         }
                     }
+                }
+                if (BuildConfig.DEBUG) {
+                    Box(
+                        modifier = Modifier.align(Alignment.Center).offset(x = 140.dp).size(12.dp)
+                            .zIndex(10f).background(Color.Magenta)
+                            .testTag("viewer-tabs-overlay-diagnostic"),
+                    )
                 }
             }
         }
@@ -1140,7 +1158,10 @@ internal fun MriContent(
             }
         }
         Box(
-            modifier = Modifier.fillMaxWidth().weight(1f).background(Color.Black)
+            modifier = Modifier.fillMaxWidth().weight(1f)
+                .traceComposeFirstDraw("viewer.image-viewport")
+                .clipToBounds()
+                .background(Color.Black)
                 .onSizeChanged {
                     imageViewport = it
                     onImageViewportSizeChanged(it)
