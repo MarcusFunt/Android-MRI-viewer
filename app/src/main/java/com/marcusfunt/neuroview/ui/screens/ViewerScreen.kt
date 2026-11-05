@@ -57,6 +57,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -174,6 +175,60 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 private const val DEFAULT_MRI_IMAGE_SCALE = 1.35f
+
+private data class MprMeasurementPoint(
+    val fractionX: Double,
+    val fractionY: Double,
+    val worldRasMm: DoubleArray,
+)
+
+private fun imageFractionsFromTap(
+    tap: Offset,
+    image: Bitmap?,
+    viewport: IntSize,
+    scale: Float,
+    panOffset: Offset,
+): Pair<Double, Double>? {
+    if (image == null || viewport.width <= 0 || viewport.height <= 0 || scale <= 0f) return null
+    val fit = minOf(
+        viewport.width.toFloat() / image.width,
+        viewport.height.toFloat() / image.height,
+    )
+    val imageWidth = image.width * fit
+    val imageHeight = image.height * fit
+    val centerX = viewport.width / 2f
+    val centerY = viewport.height / 2f
+    val imageX = (tap.x - centerX - panOffset.x) / scale + centerX
+    val imageY = (tap.y - centerY - panOffset.y) / scale + centerY
+    val fractionX = (imageX - (viewport.width - imageWidth) / 2f) / imageWidth
+    val fractionY = (imageY - (viewport.height - imageHeight) / 2f) / imageHeight
+    if (!fractionX.isFinite() || !fractionY.isFinite()) return null
+    return fractionX.toDouble() to fractionY.toDouble()
+}
+
+private fun viewportPointForImageFraction(
+    fractionX: Double,
+    fractionY: Double,
+    image: Bitmap,
+    viewport: IntSize,
+    scale: Float,
+    panOffset: Offset,
+): Offset? {
+    if (viewport.width <= 0 || viewport.height <= 0 || scale <= 0f) return null
+    val fit = minOf(
+        viewport.width.toFloat() / image.width,
+        viewport.height.toFloat() / image.height,
+    )
+    val imageWidth = image.width * fit
+    val imageHeight = image.height * fit
+    val centerX = viewport.width / 2f
+    val centerY = viewport.height / 2f
+    val x = ((viewport.width - imageWidth) / 2f + fractionX.toFloat() * imageWidth - centerX) *
+        scale + centerX + panOffset.x
+    val y = ((viewport.height - imageHeight) / 2f + fractionY.toFloat() * imageHeight - centerY) *
+        scale + centerY + panOffset.y
+    return Offset(x, y).takeIf { it.x.isFinite() && it.y.isFinite() }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1066,16 +1121,44 @@ internal fun MriContent(
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
     var zoomMode by rememberSaveable(volume) { mutableStateOf(false) }
+    var measurementMode by rememberSaveable(volume) { mutableStateOf(false) }
+    var resumeZoomModeAfterMeasurement by rememberSaveable(volume) { mutableStateOf(false) }
+    var showUnknownSpatialUnitsDialog by remember(volume) { mutableStateOf(false) }
+    val measurementPoints = remember(volume, plane, selectedSlice) {
+        mutableStateOf<List<MprMeasurementPoint>>(emptyList())
+    }
+    val currentMeasurementPoints by rememberUpdatedState(measurementPoints)
     var probeReading by remember(volume) { mutableStateOf<String?>(null) }
     var scale by rememberSaveable(volume, plane) { mutableFloatStateOf(DEFAULT_MRI_IMAGE_SCALE) }
     var panOffset by rememberSaveable(volume, plane, stateSaver = androidx.compose.runtime.saveable.Saver<Offset, List<Float>>(
         save = { listOf(it.x, it.y) }, restore = { Offset(it[0], it[1]) },
     )) { mutableStateOf(Offset.Zero) }
     var imageViewport by remember { mutableStateOf(IntSize.Zero) }
+
+    fun setMeasurementMode(enabled: Boolean) {
+        if (enabled && !volume.hasKnownSpatialUnits) {
+            showUnknownSpatialUnitsDialog = true
+            return
+        }
+        measurementPoints.value = emptyList()
+        if (enabled) {
+            resumeZoomModeAfterMeasurement = zoomMode
+            measurementMode = true
+            if (probeCrosshairEnabled) onProbeCrosshairChange(false)
+            zoomMode = false
+            onReferenceWorldChange(null)
+        } else {
+            measurementMode = false
+            zoomMode = resumeZoomModeAfterMeasurement
+            resumeZoomModeAfterMeasurement = false
+        }
+    }
+
     LaunchedEffect(probeCrosshairEnabled, volume) {
         probeReading = null
         currentReferenceWorldChange(null)
         if (probeCrosshairEnabled) {
+            setMeasurementMode(false)
             zoomMode = false
             scale = DEFAULT_MRI_IMAGE_SCALE
             panOffset = Offset.Zero
@@ -1151,7 +1234,7 @@ internal fun MriContent(
         val flingScope = rememberCoroutineScope()
         var flingJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
         val currentScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
-        DisposableEffect(volume, plane, zoomMode, probeCrosshairEnabled) {
+        DisposableEffect(volume, plane, zoomMode, probeCrosshairEnabled, measurementMode) {
             onDispose {
                 flingJob?.cancel()
                 currentScrubbingChanged(false)
@@ -1173,33 +1256,43 @@ internal fun MriContent(
                     })
                 }
                 .pointerInput(
-                    volume, plane, totalSlices, zoomMode, probeCrosshairEnabled,
+                    volume, plane, totalSlices, zoomMode, probeCrosshairEnabled, measurementMode,
                 ) {
                     traceViewerGesture("pointer.start", currentSlice)
                     try {
-                    if (probeCrosshairEnabled) {
+                    if (measurementMode) {
                         detectTapGestures(onTap = { tap ->
-                            val image = currentBitmap
-                            if (image != null && imageViewport.width > 0 && imageViewport.height > 0) {
-                                val fit = minOf(
-                                    imageViewport.width.toFloat() / image.width,
-                                    imageViewport.height.toFloat() / image.height,
+                            val fractions = imageFractionsFromTap(
+                                tap, currentBitmap, imageViewport, scale, panOffset,
+                            )
+                            if (fractions != null) {
+                                val sampled = MprProbe.sample(
+                                    volume, plane, currentSlice, fractions.first, fractions.second,
                                 )
-                                val imageWidth = image.width * fit
-                                val imageHeight = image.height * fit
-                                val centerX = imageViewport.width / 2f
-                                val centerY = imageViewport.height / 2f
-                                val imageX =
-                                    (tap.x - centerX - panOffset.x) / scale + centerX
-                                val imageY =
-                                    (tap.y - centerY - panOffset.y) / scale + centerY
-                                val fractionX = (imageX - (imageViewport.width - imageWidth) / 2f) /
-                                    imageWidth
-                                val fractionY = (imageY - (imageViewport.height - imageHeight) / 2f) /
-                                    imageHeight
+                                if (sampled != null) {
+                                    val point = MprMeasurementPoint(
+                                        fractionX = fractions.first,
+                                        fractionY = fractions.second,
+                                        worldRasMm = sampled.worldRasMm,
+                                    )
+                                    val points = currentMeasurementPoints.value
+                                    currentMeasurementPoints.value = if (points.size < 2) {
+                                        points + point
+                                    } else {
+                                        listOf(point)
+                                    }
+                                }
+                            }
+                        })
+                    } else if (probeCrosshairEnabled) {
+                        detectTapGestures(onTap = { tap ->
+                            val fractions = imageFractionsFromTap(
+                                tap, currentBitmap, imageViewport, scale, panOffset,
+                            )
+                            if (fractions != null) {
                                 val sampled = MprProbe.sample(
                                     volume, plane, currentSlice,
-                                    fractionX.toDouble(), fractionY.toDouble(),
+                                    fractions.first, fractions.second,
                                 )
                                 if (sampled != null) {
                                     currentReferenceWorldChange(sampled.worldRasMm)
@@ -1400,6 +1493,35 @@ internal fun MriContent(
                     }
                 }
             }
+            val pointsForSlice = measurementPoints.value
+            if (measurementMode && bitmap != null && pointsForSlice.isNotEmpty()) {
+                val overlayPoints = pointsForSlice.mapNotNull { point ->
+                    viewportPointForImageFraction(
+                        point.fractionX,
+                        point.fractionY,
+                        bitmap,
+                        imageViewport,
+                        scale,
+                        panOffset,
+                    )
+                }
+                if (overlayPoints.isNotEmpty()) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        if (overlayPoints.size == 2) {
+                            drawLine(
+                                color = NeuroChrome.accent,
+                                start = overlayPoints[0],
+                                end = overlayPoints[1],
+                                strokeWidth = 3.dp.toPx(),
+                            )
+                        }
+                        overlayPoints.forEach { point ->
+                            drawCircle(Color.Black, radius = 8.dp.toPx(), center = point)
+                            drawCircle(NeuroChrome.accent, radius = 5.dp.toPx(), center = point)
+                        }
+                    }
+                }
+            }
             if (focusMode) {
                 TextButton(
                     onClick = onFocusToggle,
@@ -1430,6 +1552,54 @@ internal fun MriContent(
                             probeReading ?: "Tap a point on the image to inspect it.",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    }
+                }
+            }
+            if (measurementMode) {
+                val points = measurementPoints.value
+                val measurementStatus = when (points.size) {
+                    0 -> "Tap two points on this slice."
+                    1 -> "First point set · tap the second point."
+                    else -> "Distance: ${String.format(
+                        java.util.Locale.US,
+                        "%.1f mm",
+                        MprProbe.distanceMm(points[0].worldRasMm, points[1].worldRasMm),
+                    )}"
+                }
+                Surface(
+                    modifier = Modifier.align(Alignment.TopStart).padding(10.dp)
+                        .fillMaxWidth(0.94f),
+                    color = NeuroChrome.topBar.copy(alpha = 0.96f),
+                    contentColor = NeuroChrome.ink,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, NeuroChrome.accent.copy(alpha = 0.5f)),
+                    shadowElevation = 8.dp,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                "Measure distance",
+                                color = NeuroChrome.accent,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(measurementStatus, style = MaterialTheme.typography.bodySmall)
+                        }
+                        TextButton(
+                            onClick = { measurementPoints.value = emptyList() },
+                            enabled = points.isNotEmpty(),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        ) { Text("Clear") }
+                        TextButton(
+                            onClick = { setMeasurementMode(false) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        ) { Text("Done") }
                     }
                 }
             }
@@ -1540,6 +1710,7 @@ internal fun MriContent(
                 FilterChip(
                     selected = zoomMode,
                     onClick = {
+                        if (measurementMode) setMeasurementMode(false)
                         zoomMode = !zoomMode
                         if (probeCrosshairEnabled) onProbeCrosshairChange(false)
                         onReferenceWorldChange(null)
@@ -1549,7 +1720,11 @@ internal fun MriContent(
                     label = { Text(if (zoomMode) "Zoom" else "Scroll") },
                     modifier = Modifier.heightIn(min = 48.dp).semantics {
                         contentDescription = "Gesture mode"
-                        stateDescription = if (zoomMode) "Zoom and pan" else "Scroll through slices"
+                        stateDescription = when {
+                            measurementMode -> "Measure distance"
+                            zoomMode -> "Zoom and pan"
+                            else -> "Scroll through slices"
+                        }
                     },
                 )
                 TextButton(
@@ -1587,6 +1762,13 @@ internal fun MriContent(
                     onDismissRequest = { showMoreActions = false },
                 ) {
                     DropdownMenuItem(
+                        text = { Text(if (measurementMode) "Stop measuring" else "Measure distance") },
+                        onClick = {
+                            showMoreActions = false
+                            setMeasurementMode(!measurementMode)
+                        },
+                    )
+                    DropdownMenuItem(
                         text = { Text("Focus mode") },
                         onClick = {
                             showMoreActions = false
@@ -1618,6 +1800,22 @@ internal fun MriContent(
             )
         }
         } // Hide position and adjustment controls in Focus mode
+    }
+
+    if (showUnknownSpatialUnitsDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnknownSpatialUnitsDialog = false },
+            title = { Text("Distance measurement unavailable") },
+            text = {
+                Text(
+                    "This NIfTI file does not specify spatial units, so NeuroView cannot " +
+                        "verify a calibrated distance in millimetres.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showUnknownSpatialUnitsDialog = false }) { Text("OK") }
+            },
+        )
     }
 
     if (showAdjustments) {

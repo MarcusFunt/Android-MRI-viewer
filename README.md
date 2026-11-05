@@ -6,8 +6,8 @@
 
 ## Project status and Android builds
 
-- **Current source version:** `1.5.1` (Android version code `21`, from `app/build.gradle.kts`). This patch makes converted NIfTI files easier to locate by showing the saved filename and folder and using unique `.nii.gz` names.
-- **Latest GitHub release:** [v1.5.1](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.5.1). Download the [debug-signed APK](https://github.com/MarcusFunt/Android-MRI-viewer/releases/download/v1.5.1/NeuroView-v1.5.1-debug.apk) and its [SHA-256 checksum](https://github.com/MarcusFunt/Android-MRI-viewer/releases/download/v1.5.1/NeuroView-v1.5.1-debug.apk.sha256). This is experimental research software, not for clinical use. Earlier [v1.5.0](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.5.0), [v1.4.0 research preview](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.4.0), and [v0.7.0 debug prerelease](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v0.7.0) remain available for historical use.
+- **Current source version:** `1.6 Alpha` (Android version code `22`, from `app/build.gradle.kts`). This release adds offline two-point distance measurement, fixes Home brain compositing and first-frame visibility, and prevents zoomed MRI slices from covering Viewer controls.
+- **Latest GitHub release:** [v1.6 Alpha](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.6-alpha). Download the [debug-signed APK](https://github.com/MarcusFunt/Android-MRI-viewer/releases/download/v1.6-alpha/NeuroView-v1.6-alpha-debug.apk) and its [SHA-256 checksum](https://github.com/MarcusFunt/Android-MRI-viewer/releases/download/v1.6-alpha/NeuroView-v1.6-alpha-debug.apk.sha256). This is experimental research software, not for clinical use. Earlier [v1.5.1](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.5.1), [v1.5.0](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.5.0), [v1.4.0 research preview](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.4.0), and [v0.7.0 debug prerelease](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v0.7.0) remain available for historical use.
 - **Build the current source**, or open the [Android CI workflow](https://github.com/MarcusFunt/Android-MRI-viewer/actions/workflows/android.yml) and download the `neuroview-debug` artifact from a successful run for the desired commit. GitHub Actions artifacts are ZIP archives containing `app-debug.apk`; a successful build is not a clinical validation.
 - This GitHub release contains a **debug-signed development APK**, not a production-signed app-store build. Only install APKs from sources you trust. A CI artifact and the older tagged APK may not have matching signing keys; do not uninstall an existing installation without considering the loss of its app-private library catalog.
 
@@ -15,7 +15,7 @@
 
 - **MRI library:** import multiple `.nii`/`.nii.gz` files through Android's document picker; browse previews, collections, searchable local labels, sorting, and 3D/4D filters; resume the last opened scan.
 - **Three-plane viewer:** switch between axial, coronal, and sagittal views; navigate slices with swipes, a slider, and step controls. World-space resampling uses the scan's NIfTI spatial affine when available.
-- **Display and inspection:** brightness/contrast (window/level), window presets, per-scan display preferences, zoom and pan, focus mode, and a voxel-intensity probe with a temporary reference crosshair shared between planes.
+- **Display and inspection:** brightness/contrast (window/level), window presets, per-scan display preferences, zoom and pan, focus mode, a voxel-intensity probe, and an offline two-point lesion distance measurement reported in millimetres.
 - **Local conversions:** import a supported uncompressed single-frame DICOM MR series from a folder or selected files and save a `.nii.gz`; export a NIfTI as a ZIP of newly generated **derived Secondary Capture DICOM**, not reconstructed original scanner DICOM.
 - **Optional computer-based BrainSuite:** send an explicitly approved T1-weighted scan to your own HTTPS-connected BrainSuite bridge; run cortical surface extraction (CSE) or CSE plus atlas registration (SVReg), then save the result ZIP. No BrainSuite engine runs on Android.
 
@@ -26,7 +26,7 @@ The rotating Home brain is a **bundled, decorative model**, not an anatomical an
 1. Install a development APK or build and run the app using Android Studio. Minimum supported Android version: **8.0 (API 26)**.
 2. From **Home**, tap **Import MRI** and select one or more NIfTI files. You can also open **Browse scans** to reach the Library and import there.
 3. In the **MRI Library**, select a scan to open the viewer. Collections organize imported references locally; they do **not** establish patient or clinical study identity.
-4. In the viewer, choose **Axial**, **Coronal**, or **Sagittal**. Swipe vertically or use the slice controls to move through the volume. Use **Zoom**, **Probe**, **Adjust**, and **Focus** as needed.
+4. In the viewer, choose **Axial**, **Coronal**, or **Sagittal**. Swipe vertically or use the slice controls to move through the volume. Use **Zoom**, **Probe**, **Measure distance**, **Adjust**, and **Focus** as needed. Distance measurement uses two taps on the current slice and the NIfTI affine to report millimetres.
 5. For format conversion, open **Library → Conversion tools**. For optional remote processing, open a T1w scan and use **Viewer → Process**; see the [BrainSuite setup guide](docs/BRAINSUITE_INTEGRATION.md).
 
 **Removing a scan from the Library does not delete its original file.** Imported documents remain with the Android document provider; NeuroView stores their read-only references and local metadata.
@@ -39,6 +39,7 @@ The rotating Home brain is a **bundled, decorative model**, not an anatomical an
 - The DICOM importer accepts a constrained subset of **uncompressed DICOM Part 10, single-frame, monochrome 8/16-bit** series with consistent geometry. Compressed transfer syntaxes, Enhanced multiframe, color and scanner-specific variants are not supported.
 - NIfTI-to-DICOM outputs are newly derived Secondary Capture objects. Original acquisition metadata, identity, and scanner settings cannot be recovered. Header identifier replacement is **not certified de-identification**: identifiable anatomy can remain in image pixels.
 - Larger NIfTI volumes may stream through private disk-backed caches instead of RAM; available storage, memory, device performance, and data-provider behavior still impose practical limits.
+- Lesion measurement is limited to the distance between two points on one displayed slice. 3D segmentation, lesion volume, ROI area, and clinical validation are not included.
 - **Not yet implemented:** simultaneous tri-planar display, two-scan comparison/registration, true 4D navigation, direct BrainSuite DFS mesh viewing or ZIP-derivative ingestion, and diagnostic validation.
 
 ## Build from source
@@ -68,5 +69,6 @@ The app declares internet permission for the **optional BrainSuite workflow only
 - [BrainSuite integration](docs/BRAINSUITE_INTEGRATION.md) — companion setup, security, supported stages, and results.
 - [Development log](docs/DEVELOPMENT_LOG.md) — historical phases, version changes, and implementation notes formerly embedded in the README.
 - [v1.4 UX rework notes](docs/UX_REWORK_1_4.md) — historical design-change details and release checklist.
+- [Future lesion-measurement workspace design](docs/superpowers/specs/2026-11-05-lesion-measurements-design.md) — a proposal for later ROI and 3D segmentation work; those capabilities are not part of v1.6 Alpha.
 
 **Contributors:** keep this README focused on how the *current* app works. Add historical implementations and completed milestones to the development log, update architecture/usage documentation with relevant changes, and avoid presenting planned features as already available. Do not commit private patient data, sensitive scans, export files, access tokens, or processing job folders.

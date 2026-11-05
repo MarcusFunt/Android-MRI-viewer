@@ -9,6 +9,7 @@ import java.nio.ByteOrder
 import java.util.concurrent.CancellationException
 import java.util.zip.GZIPOutputStream
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -77,6 +78,7 @@ class NiftiReaderTest {
         sform: Boolean = true,
         qform: Boolean = false,
         qfac: Float = 1f,
+        spatialUnits: Int = 2,
     ): ByteArray {
         val voxelCount = nx * ny * nz
         val header = ByteBuffer.allocate(352).order(order)
@@ -99,6 +101,7 @@ class NiftiReaderTest {
         header.putFloat(108, 352f)
         header.putFloat(112, slope)
         header.putFloat(116, intercept)
+        header.put(123, spatialUnits.toByte())
         header.putShort(252, if (qform) 1 else 0)
         header.putShort(254, if (sform) 1 else 0)
         if (sform) {
@@ -183,6 +186,16 @@ class NiftiReaderTest {
             ByteArrayInputStream(synthetic(sform = false, qform = false)),
         )
         assertTrue(volume.transformSource.startsWith("NO ORIENTATION"))
+    }
+
+    @Test fun unknownNiftiSpatialUnitsRemainMarkedUncalibrated() {
+        val unknown = NiftiReader.read(ByteArrayInputStream(synthetic(spatialUnits = 0)))
+        assertFalse(unknown.hasKnownSpatialUnits)
+        // Existing display geometry remains usable, but callers must not label it as mm.
+        assertEquals(1.0, unknown.affine.axisSpacing(0), 0.000001)
+
+        val millimetres = NiftiReader.read(ByteArrayInputStream(synthetic(spatialUnits = 2)))
+        assertTrue(millimetres.hasKnownSpatialUnits)
     }
 
     @Test fun diskBackedMatchesInMemoryForBigEndianGzipAndCleansCache() {
