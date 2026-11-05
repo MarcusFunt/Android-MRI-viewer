@@ -26,9 +26,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -125,18 +124,22 @@ import com.marcusfunt.neuroview.ui.theme.MotionToken
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.marcusfunt.neuroview.BuildConfig
+import com.marcusfunt.neuroview.ui.DrawOrderDiagnostics
 import com.marcusfunt.neuroview.ui.traceComposeFirstDraw
 import com.marcusfunt.neuroview.mri.MprRenderSession
 import com.marcusfunt.neuroview.mri.MprRenderer
@@ -160,6 +163,9 @@ import com.marcusfunt.neuroview.ui.operations.OperationId
 import com.marcusfunt.neuroview.ui.operations.OperationSnapshot
 import com.marcusfunt.neuroview.ui.operations.OperationStatus
 import com.marcusfunt.neuroview.ui.operations.SystemMonotonicClock
+import com.marcusfunt.neuroview.ui.viewer.ViewerGestureController
+import com.marcusfunt.neuroview.ui.viewer.ViewerGestureState
+import com.marcusfunt.neuroview.ui.viewer.ViewportTransform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -174,13 +180,15 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-private const val DEFAULT_MRI_IMAGE_SCALE = 1.35f
+private const val DEFAULT_MRI_IMAGE_SCALE = 1f
 
 private data class MprMeasurementPoint(
     val fractionX: Double,
     val fractionY: Double,
     val worldRasMm: DoubleArray,
 )
+
+private data class PendingViewerTap(val position: Offset, val upTimeMillis: Long)
 
 private fun imageFractionsFromTap(
     tap: Offset,
@@ -189,21 +197,11 @@ private fun imageFractionsFromTap(
     scale: Float,
     panOffset: Offset,
 ): Pair<Double, Double>? {
-    if (image == null || viewport.width <= 0 || viewport.height <= 0 || scale <= 0f) return null
-    val fit = minOf(
-        viewport.width.toFloat() / image.width,
-        viewport.height.toFloat() / image.height,
-    )
-    val imageWidth = image.width * fit
-    val imageHeight = image.height * fit
-    val centerX = viewport.width / 2f
-    val centerY = viewport.height / 2f
-    val imageX = (tap.x - centerX - panOffset.x) / scale + centerX
-    val imageY = (tap.y - centerY - panOffset.y) / scale + centerY
-    val fractionX = (imageX - (viewport.width - imageWidth) / 2f) / imageWidth
-    val fractionY = (imageY - (viewport.height - imageHeight) / 2f) / imageHeight
-    if (!fractionX.isFinite() || !fractionY.isFinite()) return null
-    return fractionX.toDouble() to fractionY.toDouble()
+    if (image == null) return null
+    val fractions = ViewportTransform(
+        viewport.width, viewport.height, image.width, image.height, scale, panOffset,
+    ).imageFractionForScreenPoint(tap) ?: return null
+    return fractions.x.toDouble() to fractions.y.toDouble()
 }
 
 private fun viewportPointForImageFraction(
@@ -214,20 +212,9 @@ private fun viewportPointForImageFraction(
     scale: Float,
     panOffset: Offset,
 ): Offset? {
-    if (viewport.width <= 0 || viewport.height <= 0 || scale <= 0f) return null
-    val fit = minOf(
-        viewport.width.toFloat() / image.width,
-        viewport.height.toFloat() / image.height,
-    )
-    val imageWidth = image.width * fit
-    val imageHeight = image.height * fit
-    val centerX = viewport.width / 2f
-    val centerY = viewport.height / 2f
-    val x = ((viewport.width - imageWidth) / 2f + fractionX.toFloat() * imageWidth - centerX) *
-        scale + centerX + panOffset.x
-    val y = ((viewport.height - imageHeight) / 2f + fractionY.toFloat() * imageHeight - centerY) *
-        scale + centerY + panOffset.y
-    return Offset(x, y).takeIf { it.x.isFinite() && it.y.isFinite() }
+    return ViewportTransform(
+        viewport.width, viewport.height, image.width, image.height, scale, panOffset,
+    ).screenPointForImageFraction(Offset(fractionX.toFloat(), fractionY.toFloat()))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1106,12 +1093,14 @@ internal fun MriContent(
     onSaveNote: (MriPlane, Int, Int, Boolean, String) -> Unit = { _, _, _, _, _ -> },
 ) {
     val motionDuration = MotionToken.QUICK.durationMs(LocalNeuroViewMotion.current)
+    val density = LocalDensity.current
     // Gesture coroutines persist across recompositions; always read the latest slice.
     val currentSlice by rememberUpdatedState(selectedSlice)
     val currentOnSliceChange by rememberUpdatedState(onSliceChange)
     val currentBitmap by rememberUpdatedState(bitmap)
     val currentInertialScrolling by rememberUpdatedState(inertialScrolling)
     val currentReferenceWorldChange by rememberUpdatedState(onReferenceWorldChange)
+    val currentScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
     var showAdjustments by rememberSaveable { mutableStateOf(false) }
     var showProcessing by rememberSaveable { mutableStateOf(false) }
     var showMoreActions by rememberSaveable { mutableStateOf(false) }
@@ -1120,20 +1109,24 @@ internal fun MriContent(
     var noteSaved by rememberSaveable { mutableStateOf(false) }
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
-    var zoomMode by rememberSaveable(volume) { mutableStateOf(false) }
     var measurementMode by rememberSaveable(volume) { mutableStateOf(false) }
-    var resumeZoomModeAfterMeasurement by rememberSaveable(volume) { mutableStateOf(false) }
     var showUnknownSpatialUnitsDialog by remember(volume) { mutableStateOf(false) }
     val measurementPoints = remember(volume, plane, selectedSlice) {
         mutableStateOf<List<MprMeasurementPoint>>(emptyList())
     }
     val currentMeasurementPoints by rememberUpdatedState(measurementPoints)
+    val currentMeasurementMode by rememberUpdatedState(measurementMode)
+    val currentProbeMode by rememberUpdatedState(probeCrosshairEnabled)
     var probeReading by remember(volume) { mutableStateOf<String?>(null) }
-    var scale by rememberSaveable(volume, plane) { mutableFloatStateOf(DEFAULT_MRI_IMAGE_SCALE) }
-    var panOffset by rememberSaveable(volume, plane, stateSaver = androidx.compose.runtime.saveable.Saver<Offset, List<Float>>(
+    var scale by rememberSaveable(volume) { mutableFloatStateOf(DEFAULT_MRI_IMAGE_SCALE) }
+    var panOffset by rememberSaveable(volume, stateSaver = androidx.compose.runtime.saveable.Saver<Offset, List<Float>>(
         save = { listOf(it.x, it.y) }, restore = { Offset(it[0], it[1]) },
     )) { mutableStateOf(Offset.Zero) }
     var imageViewport by remember { mutableStateOf(IntSize.Zero) }
+    var pendingTap by remember(volume, plane) { mutableStateOf<PendingViewerTap?>(null) }
+    var pendingTapJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
+    val flingScope = rememberCoroutineScope()
+    var flingJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
 
     fun setMeasurementMode(enabled: Boolean) {
         if (enabled && !volume.hasKnownSpatialUnits) {
@@ -1142,16 +1135,114 @@ internal fun MriContent(
         }
         measurementPoints.value = emptyList()
         if (enabled) {
-            resumeZoomModeAfterMeasurement = zoomMode
             measurementMode = true
             if (probeCrosshairEnabled) onProbeCrosshairChange(false)
-            zoomMode = false
             onReferenceWorldChange(null)
         } else {
             measurementMode = false
-            zoomMode = resumeZoomModeAfterMeasurement
-            resumeZoomModeAfterMeasurement = false
         }
+    }
+
+    fun viewportTransform(image: Bitmap? = currentBitmap): ViewportTransform? {
+        if (image == null || imageViewport.width <= 0 || imageViewport.height <= 0) return null
+        return ViewportTransform(
+            imageViewport.width, imageViewport.height, image.width, image.height, scale, panOffset,
+        )
+    }
+
+    fun handleToolTap(tap: Offset) {
+        val fractions = imageFractionsFromTap(tap, currentBitmap, imageViewport, scale, panOffset)
+            ?: return
+        val sampled = MprProbe.sample(
+            volume, plane, currentSlice, fractions.first, fractions.second,
+        )
+        if (currentMeasurementMode) {
+            if (sampled != null) {
+                val point = MprMeasurementPoint(fractions.first, fractions.second, sampled.worldRasMm)
+                val points = currentMeasurementPoints.value
+                currentMeasurementPoints.value = if (points.size < 2) points + point else listOf(point)
+            }
+        } else if (currentProbeMode) {
+            if (sampled != null) {
+                currentReferenceWorldChange(sampled.worldRasMm)
+                probeReading = "Voxel ${sampled.voxelIJK.joinToString(", ") {
+                    it.roundToInt().toString()
+                }} · intensity ${String.format(java.util.Locale.US, "%.2f", sampled.intensity)}"
+            } else {
+                currentReferenceWorldChange(null)
+                probeReading = "No measured voxel at that position."
+            }
+        }
+    }
+
+    fun measurementHandleAt(tap: Offset): Int? {
+        if (!currentMeasurementMode || currentMeasurementPoints.value.isEmpty()) return null
+        val transform = viewportTransform() ?: return null
+        val hitRadius = with(density) { 48.dp.toPx() }
+        return currentMeasurementPoints.value.indices
+            .mapNotNull { index ->
+                val point = currentMeasurementPoints.value[index]
+                val screen = transform.screenPointForImageFraction(
+                    Offset(point.fractionX.toFloat(), point.fractionY.toFloat()),
+                ) ?: return@mapNotNull null
+                val dx = screen.x - tap.x
+                val dy = screen.y - tap.y
+                val distance = sqrt(dx * dx + dy * dy)
+                index to distance
+            }
+            .filter { it.second <= hitRadius }
+            .minByOrNull { it.second }
+            ?.first
+    }
+
+    fun moveMeasurementHandle(index: Int, position: Offset) {
+        val image = currentBitmap ?: return
+        val fraction = viewportTransform(image)?.imageFractionForScreenPoint(position) ?: return
+        val sample = MprProbe.sample(
+            volume, plane, currentSlice, fraction.x.toDouble(), fraction.y.toDouble(),
+        ) ?: return
+        val points = currentMeasurementPoints.value.toMutableList()
+        if (index !in points.indices) return
+        points[index] = MprMeasurementPoint(fraction.x.toDouble(), fraction.y.toDouble(), sample.worldRasMm)
+        currentMeasurementPoints.value = points
+    }
+
+    fun applyDoubleTap(tap: Offset) {
+        val transform = viewportTransform() ?: return
+        val next = if (scale > 1.01f) transform.fit() else transform.zoomAt(tap, 2f)
+        scale = next.scale
+        panOffset = next.panOffset
+    }
+
+    fun commitPendingTap() {
+        val tap = pendingTap
+        pendingTapJob?.cancel()
+        pendingTapJob = null
+        pendingTap = null
+        if (tap != null) handleToolTap(tap.position)
+    }
+
+    LaunchedEffect(imageViewport.width, imageViewport.height, bitmap?.width, bitmap?.height) {
+        val transform = viewportTransform(bitmap) ?: return@LaunchedEffect
+        val bounded = transform.clamped()
+        scale = bounded.scale
+        panOffset = bounded.panOffset
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                flingJob?.cancel()
+                flingJob = null
+                pendingTapJob?.cancel()
+                pendingTapJob = null
+                pendingTap = null
+                currentScrubbingChanged(false)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(probeCrosshairEnabled, volume) {
@@ -1159,9 +1250,6 @@ internal fun MriContent(
         currentReferenceWorldChange(null)
         if (probeCrosshairEnabled) {
             setMeasurementMode(false)
-            zoomMode = false
-            scale = DEFAULT_MRI_IMAGE_SCALE
-            panOffset = Offset.Zero
         }
     }
     val orientationUnknown = volume.transformSource.startsWith("NO ORIENTATION")
@@ -1222,7 +1310,7 @@ internal fun MriContent(
                         }
                     }
                 }
-                if (BuildConfig.DEBUG) {
+                if (DrawOrderDiagnostics.isEnabled()) {
                     Box(
                         modifier = Modifier.align(Alignment.Center).offset(x = 140.dp).size(12.dp)
                             .zIndex(10f).background(Color.Magenta)
@@ -1231,12 +1319,11 @@ internal fun MriContent(
                 }
             }
         }
-        val flingScope = rememberCoroutineScope()
-        var flingJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
-        val currentScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
-        DisposableEffect(volume, plane, zoomMode, probeCrosshairEnabled, measurementMode) {
+        DisposableEffect(volume, plane, probeCrosshairEnabled, measurementMode) {
             onDispose {
                 flingJob?.cancel()
+                pendingTapJob?.cancel()
+                pendingTap = null
                 currentScrubbingChanged(false)
             }
         }
@@ -1249,150 +1336,231 @@ internal fun MriContent(
                     imageViewport = it
                     onImageViewportSizeChanged(it)
                 }
-                .pointerInput(volume, plane, zoomMode) {
-                    if (zoomMode) detectTapGestures(onDoubleTap = {
-                        scale = DEFAULT_MRI_IMAGE_SCALE
-                        panOffset = Offset.Zero
-                    })
-                }
-                .pointerInput(
-                    volume, plane, totalSlices, zoomMode, probeCrosshairEnabled, measurementMode,
-                ) {
-                    traceViewerGesture("pointer.start", currentSlice)
-                    try {
-                    if (measurementMode) {
-                        detectTapGestures(onTap = { tap ->
-                            val fractions = imageFractionsFromTap(
-                                tap, currentBitmap, imageViewport, scale, panOffset,
-                            )
-                            if (fractions != null) {
-                                val sampled = MprProbe.sample(
-                                    volume, plane, currentSlice, fractions.first, fractions.second,
-                                )
-                                if (sampled != null) {
-                                    val point = MprMeasurementPoint(
-                                        fractionX = fractions.first,
-                                        fractionY = fractions.second,
-                                        worldRasMm = sampled.worldRasMm,
-                                    )
-                                    val points = currentMeasurementPoints.value
-                                    currentMeasurementPoints.value = if (points.size < 2) {
-                                        points + point
+                .pointerInput(volume, plane, totalSlices) {
+                    awaitEachGesture {
+                        val firstDown = awaitFirstDown(requireUnconsumed = false)
+                        flingJob?.cancel()
+                        flingJob = null
+                        if (firstDown.isConsumed) return@awaitEachGesture
+                        traceViewerGesture("pointer.start", currentSlice)
+                        currentScrubbingChanged(false)
+
+                        val doubleTapSlop = viewConfiguration.touchSlop * 2.5f
+                        val doubleTapTimeout = viewConfiguration.doubleTapTimeoutMillis
+                        val previousTap = pendingTap
+                        val canBeDoubleTap = previousTap != null &&
+                            firstDown.uptimeMillis - previousTap.upTimeMillis in 0..doubleTapTimeout &&
+                            (firstDown.position - previousTap.position).getDistance() <= doubleTapSlop
+                        if (previousTap != null && !canBeDoubleTap) commitPendingTap()
+
+                        val controller = ViewerGestureController()
+                        val handleAtDown = measurementHandleAt(firstDown.position)
+                        val pixelsPerSlice = 18.dp.toPx()
+                        val dragAccumulator = SliceDragAccumulator(
+                            currentSlice.toFloat(), pixelsPerSlice, totalSlices - 1,
+                        )
+                        val tracker = VelocityTracker()
+                        var horizontalDrag = 0f
+                        var verticalDrag = 0f
+                        var previousPosition = firstDown.position
+                        var previousPointerCount = 1
+                        var previousCentroid = firstDown.position
+                        var previousSpan = 0f
+                        var scrollLocked = false
+                        var maximumTravel = 0f
+                        var completedNormally = false
+
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (controller.state == ViewerGestureState.TAP_CANDIDATE &&
+                                    event.changes.any { it.isConsumed }
+                                ) {
+                                    completedNormally = true
+                                    break
+                                }
+                                val pressed = event.changes.filter { it.pressed }
+                                if (pressed.size > 1) {
+                                    controller.onPointerCount(pressed.size)
+                                    if (previousTap != null && canBeDoubleTap) commitPendingTap()
+                                    var centerX = 0f
+                                    var centerY = 0f
+                                    pressed.forEach {
+                                        centerX += it.position.x / pressed.size
+                                        centerY += it.position.y / pressed.size
+                                    }
+                                    val centroid = Offset(centerX, centerY)
+                                    var radiusSum = 0f
+                                    pressed.forEach {
+                                        val dx = it.position.x - centerX
+                                        val dy = it.position.y - centerY
+                                        radiusSum += sqrt(dx * dx + dy * dy)
+                                    }
+                                    val span = radiusSum * 2f / pressed.size
+                                    if (previousPointerCount != pressed.size || previousSpan <= 0f) {
+                                        previousCentroid = centroid
+                                        previousSpan = span
+                                        previousPointerCount = pressed.size
                                     } else {
-                                        listOf(point)
-                                    }
-                                }
-                            }
-                        })
-                    } else if (probeCrosshairEnabled) {
-                        detectTapGestures(onTap = { tap ->
-                            val fractions = imageFractionsFromTap(
-                                tap, currentBitmap, imageViewport, scale, panOffset,
-                            )
-                            if (fractions != null) {
-                                val sampled = MprProbe.sample(
-                                    volume, plane, currentSlice,
-                                    fractions.first, fractions.second,
-                                )
-                                if (sampled != null) {
-                                    currentReferenceWorldChange(sampled.worldRasMm)
-                                    probeReading = "Voxel ${sampled.voxelIJK.joinToString(", ") {
-                                        it.roundToInt().toString()
-                                    }} · intensity ${String.format(java.util.Locale.US, "%.2f", sampled.intensity)}"
-                                } else {
-                                    currentReferenceWorldChange(null)
-                                    probeReading = "No measured voxel at that position."
-                                }
-                            }
-                        })
-                    } else if (zoomMode) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            val newScale = (scale * zoom).coerceIn(1f, 6f)
-                            scale = newScale
-                            if (newScale <= 1f) {
-                                panOffset = Offset.Zero
-                            } else {
-                                val limitX = imageViewport.width * (newScale - 1f) / 2f
-                                val limitY = imageViewport.height * (newScale - 1f) / 2f
-                                panOffset = Offset(
-                                    (panOffset.x + pan.x).coerceIn(-limitX, limitX),
-                                    (panOffset.y + pan.y).coerceIn(-limitY, limitY),
-                                )
-                            }
-                        }
-                    } else {
-                    val pixelsPerSlice = 18.dp.toPx()
-                    var horizontalDrag = 0f
-                    var verticalDrag = 0f
-                    var dragAccumulator = SliceDragAccumulator(currentSlice.toFloat(), pixelsPerSlice, totalSlices - 1)
-                    var scrollLocked = false
-                    var tracker = VelocityTracker()
-                    detectDragGestures(
-                        onDragStart = {
-                            traceViewerGesture("drag.start", currentSlice)
-                            flingJob?.cancel()
-                            flingJob = null
-                            dragAccumulator = SliceDragAccumulator(currentSlice.toFloat(), pixelsPerSlice, totalSlices - 1)
-                            horizontalDrag = 0f
-                            verticalDrag = 0f
-                            scrollLocked = false
-                            tracker = VelocityTracker()
-                            currentScrubbingChanged(true)
-                        },
-                        onDrag = { change, drag ->
-                            change.consume()
-                            horizontalDrag += drag.x
-                            verticalDrag += drag.y
-                            tracker.addPosition(change.uptimeMillis, change.position)
-                            val previouslyLocked = scrollLocked
-                            if (!scrollLocked && abs(verticalDrag) + abs(horizontalDrag) > 12.dp.toPx()) {
-                                scrollLocked = abs(verticalDrag) > abs(horizontalDrag)
-                            }
-                            if (scrollLocked) {
-                                // The gesture owns a fractional coordinate, independently of
-                                // frame commits and the timing of selected-slice recomposition.
-                                val nextSlice = dragAccumulator.move(if (previouslyLocked) drag.y else verticalDrag)
-                                traceViewerGesture("drag.move", nextSlice)
-                                currentOnSliceChange(nextSlice)
-                            }
-                        },
-                        onDragEnd = {
-                            traceViewerGesture("drag.end", currentSlice)
-                            val pixelsPerSecond = tracker.calculateVelocity().y
-                            if (allowsSliceInertia(currentInertialScrolling, !ValueAnimator.areAnimatorsEnabled()) &&
-                                scrollLocked && abs(pixelsPerSecond) > 380f
-                            ) {
-                                val initialSlice = dragAccumulator.position
-                                flingJob = flingScope.launch {
-                                    try {
-                                        Animatable(initialSlice).animateDecay(
-                                            initialVelocity = (-pixelsPerSecond / pixelsPerSlice)
-                                                .coerceIn(-90f, 90f),
-                                            animationSpec = exponentialDecay(frictionMultiplier = 3.0f),
-                                        ) {
-                                            if (allowsSliceInertia(currentInertialScrolling, !ValueAnimator.areAnimatorsEnabled())) {
-                                                currentOnSliceChange(value.roundToInt().coerceIn(0, totalSlices - 1))
-                                            } else {
-                                                currentScrubbingChanged(false)
-                                                throw kotlinx.coroutines.CancellationException("Slice inertia disabled")
-                                            }
-                                            // Clamp out-of-bounds values; decay naturally stops.
+                                        val transform = viewportTransform()
+                                        if (transform != null && span > 0f) {
+                                            val updated = transform.transformed(
+                                                centroid = centroid,
+                                                panDelta = centroid - previousCentroid,
+                                                zoomFactor = span / previousSpan,
+                                            )
+                                            scale = updated.scale
+                                            panOffset = updated.panOffset
                                         }
-                                    } finally {
-                                        if (currentCoroutineContext().isActive) currentScrubbingChanged(false)
+                                        previousCentroid = centroid
+                                        previousSpan = span
                                     }
+                                    previousPointerCount = pressed.size
+                                    currentScrubbingChanged(false)
+                                    if (controller.state != ViewerGestureState.TAP_CANDIDATE) {
+                                        event.changes.forEach { it.consume() }
+                                    }
+                                    continue
                                 }
-                            } else {
-                                currentScrubbingChanged(false)
+
+                                if (pressed.size == 1) {
+                                    val change = pressed.single()
+                                    val delta = change.position - previousPosition
+                                    val fromStart = change.position - firstDown.position
+                                    maximumTravel = maxOf(maximumTravel, fromStart.getDistance())
+                                    if (controller.state == ViewerGestureState.TAP_CANDIDATE &&
+                                        maximumTravel > viewConfiguration.touchSlop
+                                    ) {
+                                        if (previousTap != null && canBeDoubleTap) commitPendingTap()
+                                        controller.onDragStarted(
+                                            isToolMode = currentMeasurementMode || currentProbeMode,
+                                            measurementHandleIndex = handleAtDown,
+                                        )
+                                        if (controller.state == ViewerGestureState.SLICE_DRAG) {
+                                            traceViewerGesture("drag.start", currentSlice)
+                                        }
+                                    }
+
+                                    when (controller.state) {
+                                        ViewerGestureState.SLICE_DRAG -> {
+                                            horizontalDrag += delta.x
+                                            verticalDrag += delta.y
+                                            tracker.addPosition(change.uptimeMillis, change.position)
+                                            val wasLocked = scrollLocked
+                                            if (!scrollLocked &&
+                                                abs(verticalDrag) + abs(horizontalDrag) > 12.dp.toPx()
+                                            ) {
+                                                scrollLocked = abs(verticalDrag) > abs(horizontalDrag)
+                                            }
+                                            if (scrollLocked) {
+                                                if (!wasLocked) currentScrubbingChanged(true)
+                                                val nextSlice = dragAccumulator.move(
+                                                    if (wasLocked) delta.y else verticalDrag,
+                                                )
+                                                traceViewerGesture("drag.move", nextSlice)
+                                                currentOnSliceChange(nextSlice)
+                                            }
+                                        }
+                                        ViewerGestureState.HANDLE_DRAG -> {
+                                            val handle = requireNotNull(handleAtDown)
+                                            moveMeasurementHandle(handle, change.position)
+                                        }
+                                        ViewerGestureState.TAP_CANDIDATE,
+                                        ViewerGestureState.PINCH_PAN,
+                                        ViewerGestureState.TOOL_DRAG -> Unit
+                                    }
+                                    previousPosition = change.position
+                                    previousPointerCount = 1
+                                    if (controller.state != ViewerGestureState.TAP_CANDIDATE) {
+                                        event.changes.forEach { it.consume() }
+                                    }
+                                    continue
+                                }
+
+                                val released = event.changes.firstOrNull { it.changedToUp() }
+                                val upTime = released?.uptimeMillis ?: firstDown.uptimeMillis
+                                if (controller.state == ViewerGestureState.TAP_CANDIDATE &&
+                                    maximumTravel <= viewConfiguration.touchSlop
+                                ) {
+                                    val tapPosition = released?.position ?: firstDown.position
+                                    if (currentMeasurementMode || currentProbeMode) {
+                                        if (handleAtDown == null) handleToolTap(tapPosition)
+                                    } else {
+                                        val prior = pendingTap
+                                        val tapGap = prior?.let { upTime - it.upTimeMillis } ?: Long.MAX_VALUE
+                                        val isDoubleTap = prior != null &&
+                                            tapGap in viewConfiguration.doubleTapMinTimeMillis..doubleTapTimeout &&
+                                            (tapPosition - prior.position).getDistance() <= doubleTapSlop
+                                        if (isDoubleTap) {
+                                            pendingTapJob?.cancel()
+                                            pendingTapJob = null
+                                            pendingTap = null
+                                            applyDoubleTap(tapPosition)
+                                        } else {
+                                            if (prior != null) commitPendingTap()
+                                            val candidate = PendingViewerTap(tapPosition, upTime)
+                                            pendingTap = candidate
+                                            pendingTapJob = flingScope.launch {
+                                                delay(doubleTapTimeout)
+                                                if (pendingTap == candidate) {
+                                                    pendingTap = null
+                                                    pendingTapJob = null
+                                                    handleToolTap(candidate.position)
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if (controller.state == ViewerGestureState.SLICE_DRAG) {
+                                    traceViewerGesture("drag.end", currentSlice)
+                                    val velocityY = tracker.calculateVelocity().y
+                                    if (scrollLocked &&
+                                        allowsSliceInertia(
+                                            currentInertialScrolling,
+                                            !ValueAnimator.areAnimatorsEnabled(),
+                                        ) && abs(velocityY) > 380f
+                                    ) {
+                                        val startSlice = dragAccumulator.position
+                                        currentScrubbingChanged(true)
+                                        flingJob = flingScope.launch {
+                                            try {
+                                                Animatable(startSlice).animateDecay(
+                                                    initialVelocity = (-velocityY / pixelsPerSlice)
+                                                        .coerceIn(-90f, 90f),
+                                                    animationSpec = exponentialDecay(frictionMultiplier = 3.0f),
+                                                ) {
+                                                    if (allowsSliceInertia(
+                                                            currentInertialScrolling,
+                                                            !ValueAnimator.areAnimatorsEnabled(),
+                                                        )
+                                                    ) {
+                                                        currentOnSliceChange(
+                                                            value.roundToInt().coerceIn(0, totalSlices - 1),
+                                                        )
+                                                    } else {
+                                                        throw kotlinx.coroutines.CancellationException(
+                                                            "Slice inertia disabled",
+                                                        )
+                                                    }
+                                                }
+                                            } finally {
+                                                currentScrubbingChanged(false)
+                                            }
+                                        }
+                                    } else {
+                                        currentScrubbingChanged(false)
+                                    }
+                                } else {
+                                    currentScrubbingChanged(false)
+                                }
+                                event.changes.forEach { it.consume() }
+                                completedNormally = true
+                                break
                             }
-                        },
-                        onDragCancel = {
-                            traceViewerGesture("drag.cancel", currentSlice)
-                            currentScrubbingChanged(false)
-                        },
-                    )
+                        } finally {
+                            if (!completedNormally) currentScrubbingChanged(false)
+                            traceViewerGesture("pointer.stop", currentSlice)
+                        }
                     }
-                    } finally { traceViewerGesture("pointer.stop", currentSlice) }
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -1440,15 +1608,21 @@ internal fun MriContent(
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
-            if (zoomMode && scale > 1f) {
+            if (scale > 1.01f) {
                 TextButton(
-                    onClick = { scale = 1f; panOffset = Offset.Zero },
-                    modifier = Modifier.align(Alignment.TopStart),
-                ) { Text("Reset zoom", color = NeuroChrome.accent) }
+                    onClick = {
+                        val fit = viewportTransform()?.fit() ?: return@TextButton
+                        scale = fit.scale
+                        panOffset = fit.panOffset
+                    },
+                    modifier = Modifier.align(Alignment.TopStart).semantics {
+                        contentDescription = "Fit image"
+                    },
+                ) { Text("Fit", color = NeuroChrome.accent) }
             }
-            if (zoomMode) {
+            if (scale > 1.01f) {
                 Text(
-                    "${(scale * 100).roundToInt()}% · drag to pan · pinch to zoom",
+                    "${(scale * 100).roundToInt()}% · pinch to zoom",
                     modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = NeuroChrome.muted,
@@ -1463,30 +1637,23 @@ internal fun MriContent(
                     (count - 1).coerceAtLeast(1)
                 if (abs(reference[plane.firstAxis] - position) <= spacing * 0.55) {
                     val (fx, fy) = MprProbe.fractionsForWorld(volume, plane, reference)
-                    val fit = minOf(imageViewport.width.toFloat() / bitmap.width,
-                        imageViewport.height.toFloat() / bitmap.height)
-                    val imageWidth = bitmap.width * fit
-                    val imageHeight = bitmap.height * fit
-                    val centerX = imageViewport.width / 2f
-                    val centerY = imageViewport.height / 2f
-                    val x = ((imageViewport.width - imageWidth) / 2f + fx.toFloat() * imageWidth -
-                        centerX) * scale + centerX + panOffset.x
-                    val y = ((imageViewport.height - imageHeight) / 2f + fy.toFloat() * imageHeight -
-                        centerY) * scale + centerY + panOffset.y
-                    if (x in 0f..imageViewport.width.toFloat() &&
-                        y in 0f..imageViewport.height.toFloat()) {
+                    val position = viewportTransform(bitmap)?.screenPointForImageFraction(
+                        Offset(fx.toFloat(), fy.toFloat()),
+                    )
+                    if (position != null && position.x in 0f..imageViewport.width.toFloat() &&
+                        position.y in 0f..imageViewport.height.toFloat()) {
                         Canvas(Modifier.fillMaxSize()) {
                             val lineColor = NeuroChrome.accent.copy(alpha = 0.65f)
                             drawLine(
                                 lineColor,
-                                Offset(x, 0f),
-                                Offset(x, size.height),
+                                Offset(position.x, 0f),
+                                Offset(position.x, size.height),
                                 crosshairThicknessDp.dp.toPx(),
                             )
                             drawLine(
                                 lineColor,
-                                Offset(0f, y),
-                                Offset(size.width, y),
+                                Offset(0f, position.y),
+                                Offset(size.width, position.y),
                                 crosshairThicknessDp.dp.toPx(),
                             )
                         }
@@ -1707,26 +1874,6 @@ internal fun MriContent(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                FilterChip(
-                    selected = zoomMode,
-                    onClick = {
-                        if (measurementMode) setMeasurementMode(false)
-                        zoomMode = !zoomMode
-                        if (probeCrosshairEnabled) onProbeCrosshairChange(false)
-                        onReferenceWorldChange(null)
-                        scale = DEFAULT_MRI_IMAGE_SCALE
-                        panOffset = Offset.Zero
-                    },
-                    label = { Text(if (zoomMode) "Zoom" else "Scroll") },
-                    modifier = Modifier.heightIn(min = 48.dp).semantics {
-                        contentDescription = "Gesture mode"
-                        stateDescription = when {
-                            measurementMode -> "Measure distance"
-                            zoomMode -> "Zoom and pan"
-                            else -> "Scroll through slices"
-                        }
-                    },
-                )
                 TextButton(
                     onClick = { showAdjustments = true },
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
