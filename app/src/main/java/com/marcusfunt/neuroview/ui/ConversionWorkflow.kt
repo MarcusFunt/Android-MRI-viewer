@@ -3,6 +3,7 @@ package com.marcusfunt.neuroview.ui
 import android.net.Uri
 import android.os.CancellationSignal
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -57,6 +58,53 @@ data class ConversionControls(
     val exportNiftiAsDicom: (ScanRecord) -> Unit,
     val cancel: () -> Unit,
 )
+
+private data class SavedNiftiDocument(
+    val fileName: String?,
+    val folderPath: String?,
+)
+
+private data class SavedNiftiResult(
+    val sliceCount: Int,
+    val document: SavedNiftiDocument,
+)
+
+private fun savedNiftiDocument(context: android.content.Context, uri: Uri): SavedNiftiDocument {
+    val resolver = context.contentResolver
+    fun displayName(documentUri: Uri): String? = runCatching {
+        resolver.query(
+            documentUri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+        }
+    }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+
+    val fileName = displayName(uri)
+    val providerFolderPath = runCatching {
+        val authority = requireNotNull(uri.authority)
+        val documentIds = DocumentsContract.findDocumentPath(resolver, uri)?.path.orEmpty()
+        if (documentIds.size < 3) return@runCatching null
+        documentIds.subList(1, documentIds.lastIndex)
+            .mapNotNull { id ->
+                displayName(DocumentsContract.buildDocumentUri(authority, id))
+            }
+            .takeIf { it.isNotEmpty() }
+            ?.joinToString("/")
+    }.getOrNull()
+    val folderPath = providerFolderPath ?: if (
+        uri.authority == "com.android.externalstorage.documents"
+    ) {
+        runCatching {
+            externalStorageFolderPath(DocumentsContract.getDocumentId(uri))
+        }.getOrNull()
+    } else null
+    return SavedNiftiDocument(fileName, folderPath)
+}
 
 @Composable
 fun rememberConversionControls(): ConversionControls {
@@ -166,7 +214,7 @@ fun rememberConversionControls(): ConversionControls {
             val skippedFolderFiles = ignoredFolderFiles
             beginWork(OperationStage.READING_DICOM_HEADERS, output) { id, signal ->
                 val workerContext = currentCoroutineContext()
-                val count = withContext(Dispatchers.IO) {
+                val result = withContext(Dispatchers.IO) {
                     val checkCanceled = {
                         workerContext.ensureActive()
                         if (signal.isCanceled) throw CancellationException("Conversion canceled")
@@ -220,16 +268,21 @@ fun rememberConversionControls(): ConversionControls {
                             cancellationCheck = checkCanceled,
                         )
                     } ?: throw IllegalArgumentException("Cannot write NIfTI destination")
-                    series.nz
+                    SavedNiftiResult(series.nz, savedNiftiDocument(context, output))
                 }
-                context.resources.catalogQuantityText(CatalogQuantity.DICOM_SLICES_SAVED, count) +
-                    (if (skippedFolderFiles > 0) {
+                savedNiftiFeedback(
+                    sliceSummary = context.resources.catalogQuantityText(
+                        CatalogQuantity.DICOM_SLICES_SAVED,
+                        result.sliceCount,
+                    ) + (if (skippedFolderFiles > 0) {
                         " " + context.resources.catalogQuantityText(
                             CatalogQuantity.NON_DICOM_FILES_SKIPPED,
                             skippedFolderFiles,
                         )
-                    } else "") +
-                    " Use Import NIfTI to add the result to your library."
+                    } else ""),
+                    fileName = result.document.fileName,
+                    folderPath = result.document.folderPath,
+                )
             }
             // The work captured these values and now owns the conversion lifetime.
             dicomSource = emptyList()
@@ -246,7 +299,7 @@ fun rememberConversionControls(): ConversionControls {
             } else {
                 dicomSource = chosen
                 ignoredFolderFiles = 0
-                createNifti.launch("NeuroView_DICOM_derived.nii.gz")
+                createNifti.launch(suggestedNiftiFileName(System.currentTimeMillis().toString()))
             }
         }
     }
@@ -283,7 +336,7 @@ fun rememberConversionControls(): ConversionControls {
                     CatalogQuantity.DICOM_SLICES_FOUND,
                     selection.documents.size,
                 )
-                createNifti.launch("NeuroView_DICOM_derived.nii.gz")
+                createNifti.launch(suggestedNiftiFileName(System.currentTimeMillis().toString()))
                 context.resources.catalogQuantityText(
                     CatalogQuantity.DICOM_SLICES_FOUND,
                     selection.documents.size,
