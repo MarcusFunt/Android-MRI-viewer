@@ -1,5 +1,7 @@
 package com.marcusfunt.neuroview
 
+import android.graphics.Bitmap
+import android.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -11,6 +13,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.platform.ComposeView
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertTrue
 import com.marcusfunt.neuroview.mri.MriPlane
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.mri.SpatialAffine
@@ -40,6 +43,47 @@ class NeuroViewNavigationSmokeTest {
             compose.onAllNodesWithTag(marker).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag(marker).assertExists()
+    }
+
+    @Test
+    fun firstBrainFrameIsVisibleInTheWindowWithoutTouch() {
+        val marker = "brain-preview-first-frame-drawn"
+        compose.onNodeWithText("Browse scans").assertIsDisplayed()
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithTag(marker).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val screenshot = androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation().uiAutomation.takeScreenshot()
+        assertTrue(
+            "The brain submitted a GL frame, but no brain-colored pixels were visible on screen",
+            countVisibleBrainPixels(screenshot) >= 1_000,
+        )
+    }
+
+    @Test
+    fun homeCompositorDiagnosticsAreActuallyPaintedOnScreen() {
+        val marker = "brain-preview-first-frame-drawn"
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithTag(marker).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("home-preview-overlay-diagnostic").assertExists()
+        compose.onNodeWithTag("home-preview-behind-diagnostic").assertExists()
+
+        val screenshot = androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation().uiAutomation.takeScreenshot()
+        assertTrue(
+            "The Compose overlay above the brain was not painted into the screen",
+            countDiagnosticPixels(screenshot) { red, green, blue ->
+                red > 200 && green < 80 && blue > 200
+            } >= 100,
+        )
+        assertTrue(
+            "The Compose rectangle behind the brain was not painted into the screen",
+            countDiagnosticPixels(screenshot) { red, green, blue ->
+                red < 80 && green > 150 && blue > 150
+            } >= 100,
+        )
     }
 
     @Test
@@ -180,5 +224,39 @@ class NeuroViewNavigationSmokeTest {
         compose.onNodeWithText("Compatibility and export help").performClick()
 
         compose.onNodeWithText("Your library is empty").assertIsDisplayed()
+    }
+
+    private fun countVisibleBrainPixels(bitmap: Bitmap): Int {
+        val left = bitmap.width * 25 / 100
+        val right = bitmap.width * 75 / 100
+        val top = bitmap.height * 15 / 100
+        val bottom = bitmap.height * 65 / 100
+        var count = 0
+        for (y in top until bottom step 2) {
+            for (x in left until right step 2) {
+                val pixel = bitmap.getPixel(x, y)
+                val red = Color.red(pixel)
+                if (red > Color.green(pixel) + 35 && red > Color.blue(pixel) + 45 && red > 75) {
+                    count++
+                }
+            }
+        }
+        return count
+    }
+
+    private fun countDiagnosticPixels(
+        bitmap: Bitmap,
+        isDiagnosticColor: (red: Int, green: Int, blue: Int) -> Boolean,
+    ): Int {
+        var count = 0
+        for (y in 0 until bitmap.height step 2) {
+            for (x in 0 until bitmap.width step 2) {
+                val pixel = bitmap.getPixel(x, y)
+                if (isDiagnosticColor(Color.red(pixel), Color.green(pixel), Color.blue(pixel))) {
+                    count++
+                }
+            }
+        }
+        return count
     }
 }

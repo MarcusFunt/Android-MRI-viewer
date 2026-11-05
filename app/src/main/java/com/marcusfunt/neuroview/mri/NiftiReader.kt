@@ -25,6 +25,7 @@ class NiftiVolume(
     val transformSource: String,
     val timepoints: Int,
     private val backing: MappedNiftiStore? = null,
+    val hasKnownSpatialUnits: Boolean = true,
 ) : Closeable {
     init {
         val count = nx.toLong() * ny * nz
@@ -233,9 +234,10 @@ object NiftiReader {
             // NIfTI xyzt_units lower 3 bits: metres=1, millimetres=2, microns=3.
             // All in-app world coordinates are millimetres (also for sform offsets).
             val spatialUnits = header.get(123).toInt() and 0x07
+            val hasKnownSpatialUnits = spatialUnits in 1..3
             val millimetres = when (spatialUnits) {
                 1 -> 1000.0
-                2, 0 -> 1.0 // unspecified is commonly interpreted as millimetres
+                2, 0 -> 1.0 // retain viewer compatibility; calibrated measurement checks the flag
                 3 -> 0.001
                 else -> throw IllegalArgumentException("Unsupported NIfTI spatial units")
             }
@@ -383,7 +385,10 @@ object NiftiReader {
             val low = samples[(samples.lastIndex * 0.02).toInt()]
             val high = samples[(samples.lastIndex * 0.98).toInt()]
             val upper = if (high > low) high else low + 1f
-            NiftiVolume(nx, ny, nz, data, affine, low, upper, transformSource, timepoints, backing)
+            NiftiVolume(
+                nx, ny, nz, data, affine, low, upper, transformSource, timepoints, backing,
+                hasKnownSpatialUnits,
+            )
             }
         }
         pendingBacking = null

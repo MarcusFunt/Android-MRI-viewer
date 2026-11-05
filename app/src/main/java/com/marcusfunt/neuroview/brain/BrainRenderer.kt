@@ -5,6 +5,8 @@ import android.util.Log
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
+import android.os.SystemClock
+import com.marcusfunt.neuroview.BuildConfig
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -16,7 +18,7 @@ import javax.microedition.khronos.opengles.GL10
  * GLES2 renderer for the locally bundled, optimized Brainchop demonstration
  * cortex mesh. No network access or GLB runtime needed. The GPU consumes
  * the NVB1 vertex and index buffers natively (under GLES2's 65k vertex cap).
- * Rendering is driven by GLSurfaceView.RENDERMODE_WHEN_DIRTY.
+ * Rendering is driven by the host view's explicit frame requests.
  */
 internal class BrainRenderer(
     private val context: Context,
@@ -46,8 +48,11 @@ internal class BrainRenderer(
     private val mvp = FloatArray(16)
     private var frames = 0
     private var firstFrameSignaled = false
+    @Volatile var firstFrameGlError: Int? = null
+        private set
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        trace("GLRenderer.onSurfaceCreated")
         Log.i("NeuroViewBrain", "GLES2 surface created")
         GLES20.glClearColor(0f, 0f, 0f, 0f)
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
@@ -86,6 +91,7 @@ internal class BrainRenderer(
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+        trace("GLRenderer.onSurfaceChanged width=$width height=$height")
         Log.i("NeuroViewBrain", "GL viewport ${width} x ${height}")
         GLES20.glViewport(0, 0, width, height)
         val safeAspect = width.toFloat() / height.coerceAtLeast(1)
@@ -93,7 +99,10 @@ internal class BrainRenderer(
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        if (frames++ == 0) Log.i("NeuroViewBrain", "First GL draw, program=$program, meshes=${meshes.size}")
+        if (frames++ == 0) {
+            trace("first GL draw program=$program meshes=${meshes.size}")
+            Log.i("NeuroViewBrain", "First GL draw, program=$program, meshes=${meshes.size}")
+        }
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         if (program == 0) return
 
@@ -131,11 +140,20 @@ internal class BrainRenderer(
         GLES20.glDisableVertexAttribArray(normalHandle)
         if (!firstFrameSignaled) {
             val glError = GLES20.glGetError()
+            trace("first GL frame submitted glError=$glError")
             Log.i("NeuroViewBrain", "First GL frame status $glError")
             if (glError == GLES20.GL_NO_ERROR) {
                 firstFrameSignaled = true
                 onFirstFrameDrawn()
+            } else {
+                firstFrameGlError = glError
             }
+        }
+    }
+
+    private fun trace(event: String) {
+        if (BuildConfig.DEBUG) {
+            Log.i("NeuroViewDraw", "t=${SystemClock.uptimeMillis()} BrainRenderer $event")
         }
     }
 

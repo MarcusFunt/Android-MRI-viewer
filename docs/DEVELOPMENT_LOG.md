@@ -4,6 +4,13 @@ This is the **historical implementation and milestone record**, migrated from th
 
 For detailed 1.4 design decisions and its manual release gate, see [UX rework 1.4](UX_REWORK_1_4.md). Past changes are kept here rather than erased or misrepresented as current documentation.
 
+## v1.6 Alpha — offline distance measurement and rendering fixes
+
+- Added a two-point in-plane measurement tool to the native Viewer. It maps taps through the NIfTI spatial affine and reports physical distance in millimetres; it does not perform 3D segmentation or calculate lesion volume.
+- Replaced the topmost Home `SurfaceView` with a transparent `TextureView` GLES renderer so Compose content remains visible above and behind the brain. The first-frame indicator follows a successful buffer swap.
+- Clipped the zoomed MRI image to its viewport so it cannot draw over plane tabs and other Viewer controls.
+- Verification on the API 35 emulator: 153 JVM tests and 44 instrumentation tests passed; debug and Android-test APKs built, lint and the release APK build passed. The 4-test BrainSuite bridge suite and independent synthetic NIfTI/DICOM validation with nibabel/pydicom passed. Physical-device validation remains pending.
+
 ## v0.7.0 — historical published debug prerelease
 
 The only tagged APK release as of 2026-10-18 is [v0.7.0](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v0.7.0), published 2026-10-16. It was built from CI run 38892440182 for the Phase 7 source. The actively developed Android application now declares v1.4.0; **v0.7.0 is not a current-feature APK**.

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -133,6 +134,73 @@ class ViewerTouchNavigationTest {
         compose.onNodeWithText("MRI processing").assertExists()
     }
 
+    @Test fun measureToolReportsDistanceAfterTwoTapsAndCanBeCleared() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(panPattern())
+        compose.setContent { Harness(slice, bitmap) }
+
+        compose.onNodeWithText("Scroll").performClick()
+        compose.onNodeWithText("135% · drag to pan · pinch to zoom").assertIsDisplayed()
+        val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
+        image.performTouchInput {
+            down(0, Offset(centerX - 40f, centerY))
+            down(1, Offset(centerX + 40f, centerY))
+            updatePointerTo(0, Offset(centerX - 80f, centerY))
+            updatePointerTo(1, Offset(centerX + 80f, centerY))
+            move()
+            up(1)
+            up(0)
+        }
+        compose.onNodeWithText("270% · drag to pan · pinch to zoom").assertIsDisplayed()
+        val imageAtCenter = image.captureToImage().asAndroidBitmap()
+        image.performTouchInput {
+            down(center)
+            moveBy(Offset(40f, 0f), delayMillis = 100)
+            up()
+        }
+        val imageAfterPan = image.captureToImage().asAndroidBitmap()
+        assertTrue("The pan gesture must visibly move the test image.",
+            differingPixels(imageAtCenter, imageAfterPan) > 0)
+        compose.onNodeWithContentDescription("More viewer actions").performClick()
+        compose.onNodeWithText("Measure distance").performClick()
+        compose.onNodeWithText("Tap two points on this slice.").assertIsDisplayed()
+
+        image.performTouchInput { click(Offset(width * 0.3f, height * 0.5f)) }
+        compose.onNodeWithText("First point set · tap the second point.").assertIsDisplayed()
+        image.performTouchInput { click(Offset(width * 0.7f, height * 0.5f)) }
+        compose.onNodeWithText("Distance:", substring = true).assertIsDisplayed()
+
+        compose.onNodeWithText("Clear").performClick()
+        compose.onNodeWithText("Tap two points on this slice.").assertIsDisplayed()
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("270% · drag to pan · pinch to zoom").assertIsDisplayed()
+        val imageAfterMeasurement = image.captureToImage().asAndroidBitmap()
+        assertEquals("Measurement must preserve the panned image position.",
+            0, differingPixels(imageAfterPan, imageAfterMeasurement))
+        compose.onNodeWithText("Measure distance").assertDoesNotExist()
+    }
+
+    @Test fun measurementIsUnavailableWhenNiftiSpatialUnitsAreUnknown() {
+        val unknownUnits = NiftiVolume(
+            16, 16, 256,
+            FloatArray(16 * 16 * 256) { (it % 256).toFloat() },
+            SpatialAffine.axisAligned(1.0, 1.0, 1.0),
+            0f, 255f, "sform (synthetic RAS+)", 1,
+            hasKnownSpatialUnits = false,
+        )
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(frame(0))
+        compose.setContent { Harness(slice, bitmap, volumeForTest = unknownUnits) }
+
+        compose.onNodeWithContentDescription("More viewer actions").performClick()
+        compose.onNodeWithText("Measure distance").performClick()
+        compose.onNodeWithText("Distance measurement unavailable").assertIsDisplayed()
+        compose.onNodeWithText("cannot verify a calibrated distance in millimetres", substring = true)
+            .assertIsDisplayed()
+        compose.onNodeWithText("OK").performClick()
+        compose.onNodeWithText("Tap two points on this slice.").assertDoesNotExist()
+    }
+
     @Test fun viewerSettingsOpenAtViewerControlsWithoutManualScrolling() {
         compose.setContent {
             NeuroViewTheme {
@@ -205,11 +273,12 @@ class ViewerTouchNavigationTest {
         focus: MutableState<Boolean> = remember { mutableStateOf(false) },
         scrubbing: MutableState<Boolean> = remember { mutableStateOf(false) },
         onSliceChange: ((Int) -> Unit)? = null,
+        volumeForTest: NiftiVolume = volume,
     ) {
         NeuroViewTheme {
             CompositionLocalProvider(LocalNeuroViewMotion provides motion) {
                     MriContent(Modifier.fillMaxSize(), focus.value, false, false, { focus.value = !focus.value },
-                        false, false, {}, 3f, volume, MriPlane.AXIAL, bitmap.value, false, {},
+                        false, false, {}, 3f, volumeForTest, MriPlane.AXIAL, bitmap.value, false, {},
                         slice.intValue, 256, onSliceChange ?: { slice.intValue = it }, { scrubbing.value = it }, {},
                         null, "synthetic", null, {}, 0.4f, {}, 0.8f, {})
             }
@@ -218,4 +287,20 @@ class ViewerTouchNavigationTest {
 
     private fun frame(value: Int): Bitmap = Bitmap.createBitmap(
         intArrayOf(0xff000000.toInt() or (value.coerceIn(0, 255) * 0x010101)), 1, 1, Bitmap.Config.ARGB_8888)
+
+    private fun panPattern(): Bitmap = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888).apply {
+        for (y in 0 until height) for (x in 0 until width) {
+            setPixel(x, y, if (x < width / 2) 0xffff3030.toInt() else 0xff3060ff.toInt())
+        }
+    }
+
+    private fun differingPixels(first: Bitmap, second: Bitmap): Int {
+        assertEquals(first.width, second.width)
+        assertEquals(first.height, second.height)
+        var differing = 0
+        for (y in 0 until first.height) for (x in 0 until first.width) {
+            if (first.getPixel(x, y) != second.getPixel(x, y)) differing++
+        }
+        return differing
+    }
 }

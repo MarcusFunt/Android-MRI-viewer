@@ -70,4 +70,15 @@ class ViewerReferenceTest {
         assertEquals(-50f, volume.nearest(0, 0, 0), 0f)
         assertEquals(72.5f, volume.nearest(6, 5, 4), 0f)
     }
+
+    @Test fun measurementDistanceUsesPhysicalRasMillimetresAcrossAllAxes() {
+        assertEquals(
+            13.0,
+            MprProbe.distanceMm(
+                doubleArrayOf(2.0, 1.0, -1.0),
+                doubleArrayOf(5.0, 5.0, 11.0),
+            ),
+            0.000001,
+        )
+    }
 }

@@ -1,6 +1,7 @@
 package com.marcusfunt.neuroview.mri
 
 import kotlin.math.roundToInt
+import kotlin.math.hypot
 
 /** Reversible geometry between a radiological MPR image and its RAS+ world coordinates. */
 object MprProbe {
@@ -9,6 +10,16 @@ object MprProbe {
         val voxelIJK: DoubleArray,
         val intensity: Float,
     )
+
+    /** Euclidean distance between two points in NIfTI RAS+ millimetres. */
+    fun distanceMm(firstWorldRasMm: DoubleArray, secondWorldRasMm: DoubleArray): Double {
+        require(firstWorldRasMm.size == 3 && secondWorldRasMm.size == 3)
+        require(firstWorldRasMm.all { it.isFinite() } && secondWorldRasMm.all { it.isFinite() })
+        return hypot(
+            hypot(firstWorldRasMm[0] - secondWorldRasMm[0], firstWorldRasMm[1] - secondWorldRasMm[1]),
+            firstWorldRasMm[2] - secondWorldRasMm[2],
+        )
+    }
 
     /**
      * Horizontal and vertical fractions are measured from the top-left of the
