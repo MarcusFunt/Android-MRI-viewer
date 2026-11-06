@@ -52,6 +52,9 @@ internal class BrainRenderer(
         private set
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        firstFrameSignaled = false
+        firstFrameGlError = null
+        frames = 0
         trace("GLRenderer.onSurfaceCreated")
         Log.i("NeuroViewBrain", "GLES2 surface created")
         GLES20.glClearColor(0f, 0f, 0f, 0f)
