@@ -24,6 +24,7 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
     private val renderLock = Object()
     private val frameSubmitted = AtomicBoolean(false)
     private val firstTextureUpdateLogged = AtomicBoolean(false)
+    private val firstVisibleFrameNotified = AtomicBoolean(false)
     private val brainRenderer = BrainRenderer(context.applicationContext) {
         frameSubmitted.set(true)
     }
@@ -42,6 +43,9 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
         isOpaque = false
         surfaceTextureListener = object : SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                firstVisibleFrameNotified.set(false)
+                firstTextureUpdateLogged.set(false)
+                frameSubmitted.set(false)
                 trace("SurfaceTexture available ${width}x$height")
                 updateSurface(surface, width, height)
             }
@@ -65,6 +69,13 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
                 if (firstTextureUpdateLogged.compareAndSet(false, true)) {
                     trace("first SurfaceTexture frame updated")
+                }
+                // A completed GL swap is not yet a frame displayed by the TextureView.
+                // Wait for the view's compositor update before marking Home as ready.
+                if (frameSubmitted.get() && firstVisibleFrameNotified.compareAndSet(false, true)) {
+                    frameSubmitted.set(false)
+                    trace("first compositor-updated brain frame is ready")
+                    onFirstFrameDrawn()
                 }
             }
         }
@@ -236,10 +247,7 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
                     return
                 }
                 presentedFrameCountForTests += 1L
-                if (frameSubmitted.get()) {
-                    post { onFirstFrameDrawn() }
-                    frameSubmitted.set(false)
-                }
+                // Readiness is delivered by onSurfaceTextureUpdated on the UI thread.
                 brainRenderer.firstFrameGlError?.let { error ->
                     fail("GLES preview failed to draw (error $error)", null)
                     return
