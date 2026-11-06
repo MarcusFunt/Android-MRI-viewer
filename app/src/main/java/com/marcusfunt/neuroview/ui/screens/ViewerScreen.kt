@@ -147,6 +147,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.marcusfunt.neuroview.BuildConfig
 import com.marcusfunt.neuroview.ui.DrawOrderDiagnostics
 import com.marcusfunt.neuroview.ui.traceComposeFirstDraw
 import com.marcusfunt.neuroview.mri.MprRenderSession
@@ -2376,13 +2377,15 @@ internal fun MriContent(
                             noteEditorOpen = true
                         },
                     )
-                    DropdownMenuItem(
-                        text = { Text("Process with BrainSuite") },
-                        onClick = {
-                            showMoreActions = false
-                            showProcessing = true
-                        },
-                    )
+                    if (BuildConfig.BRAIN_SUITE_ENABLED) {
+                        DropdownMenuItem(
+                            text = { Text("Process with BrainSuite") },
+                            onClick = {
+                                showMoreActions = false
+                                showProcessing = true
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -2560,7 +2563,7 @@ internal fun MriContent(
             }
         }
     }
-    if (showProcessing) {
+    if (BuildConfig.BRAIN_SUITE_ENABLED && showProcessing) {
         ModalBottomSheet(
             onDismissRequest = { showProcessing = false },
             containerColor = NeuroChrome.topBar,

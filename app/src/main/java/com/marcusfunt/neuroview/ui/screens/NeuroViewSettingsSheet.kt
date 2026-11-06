@@ -54,6 +54,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.marcusfunt.neuroview.BuildConfig
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import com.marcusfunt.neuroview.mri.RenderQualityMode
@@ -447,7 +448,12 @@ internal fun NeuroViewSettingsSheet(
             HorizontalDivider(color = SettingsSecondary.copy(alpha = 0.28f))
             Text("Privacy & storage", style = MaterialTheme.typography.titleMedium, color = SettingsForeground)
             Text(
-                "Scanning, viewing and format conversion run locally. Optional BrainSuite processing only uploads after your explicit consent.",
+                if (BuildConfig.BRAIN_SUITE_ENABLED) {
+                    "Scanning, viewing and format conversion run locally. " +
+                        "Optional BrainSuite processing only uploads after your explicit consent."
+                } else {
+                    "Scanning, viewing and format conversion run locally on this device."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = SettingsSecondary,
             )
