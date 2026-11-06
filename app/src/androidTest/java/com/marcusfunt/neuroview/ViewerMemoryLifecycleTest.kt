@@ -62,9 +62,7 @@ class ViewerMemoryLifecycleTest {
                 compose.onAllNodesWithContentDescription("Real Axial MRI slice")
                     .fetchSemanticsNodes().isNotEmpty()
             }
-            InstrumentationRegistry.getInstrumentation().uiAutomation
-                .executeShellCommand("am send-trim-memory com.marcusfunt.neuroview RUNNING_CRITICAL")
-                .use { }
+            sendRunningCriticalTrim()
 
             compose.onNodeWithContentDescription("Viewer settings").performClick()
             compose.onNodeWithText("Rendering priority").performScrollTo()
@@ -90,7 +88,60 @@ class ViewerMemoryLifecycleTest {
         }
     }
 
-    private fun showViewer(volume: NiftiVolume, displayName: String) {
+    @Test
+    fun repeatedCriticalTrimRendersSmallScansAgainAtTheSameQualityCap() {
+        showViewer(volume(32, 32, 8), "small memory pressure scan")
+        compose.waitUntil(15_000L) {
+            compose.onAllNodesWithContentDescription("Real Axial MRI slice")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        repeat(2) {
+            sendRunningCriticalTrim()
+            compose.waitUntil(15_000L) {
+                compose.onAllNodesWithContentDescription("Real Axial MRI slice")
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+    }
+
+    @Test
+    fun memoryCallbacksAfterPlaneChangeRestartTheCurrentDescriptorRender() {
+        showViewer(volume(64, 64, 12), "plane memory pressure scan")
+        compose.waitUntil(15_000L) {
+            compose.onAllNodesWithContentDescription("Real Axial MRI slice")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        sendRunningCriticalTrim()
+        compose.waitUntil(15_000L) {
+            compose.onAllNodesWithContentDescription("Real Axial MRI slice")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        compose.onNodeWithText("Coronal").performClick()
+        compose.waitUntil(15_000L) {
+            compose.onAllNodesWithContentDescription("Real Coronal MRI slice")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        sendRunningCriticalTrim()
+
+        compose.waitUntil(15_000L) {
+            compose.onAllNodesWithContentDescription("Real Coronal MRI slice")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun sendRunningCriticalTrim() {
+        compose.activityRule.scenario.onActivity { activity ->
+            @Suppress("DEPRECATION")
+            activity.application.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL)
+        }
+    }
+
+    private fun showViewer(
+        volume: NiftiVolume,
+        displayName: String,
+    ) {
         compose.activityRule.scenario.onActivity { activity ->
             val content = activity.findViewById<ViewGroup>(android.R.id.content)
                 .getChildAt(0) as ComposeView

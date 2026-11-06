@@ -17,11 +17,12 @@ data class ScanNote(
     val createdAtMillis: Long,
     val body: String,
     val orientationVerified: Boolean = false,
+    val nativeStackAxis: Int? = null,
 )
 
 /** Versioned line codec that safely handles delimiters, Unicode and multiline notes. */
 object ScanNoteCodec {
-    private const val VERSION = "v2"
+    private const val VERSION = "v3"
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
 
@@ -37,6 +38,7 @@ object ScanNoteCodec {
             note.sliceCount.toString(),
             note.createdAtMillis.toString(),
             note.orientationVerified.toString(),
+            note.nativeStackAxis?.toString() ?: "-",
             encodeText(note.body),
         ).joinToString("|")
     }
@@ -49,13 +51,18 @@ object ScanNoteCodec {
 
     private fun decodeLine(line: String): ScanNote? = runCatching {
         val fields = line.split('|')
-        val hasOrientationState = when (fields.firstOrNull()) {
+        val version = fields.firstOrNull()
+        val hasOrientationState = when (version) {
             "v1" -> {
                 require(fields.size == 10)
                 false
             }
-            VERSION -> {
+            "v2" -> {
                 require(fields.size == 11)
+                true
+            }
+            VERSION -> {
+                require(fields.size == 12)
                 true
             }
             else -> error("Unsupported note record")
@@ -72,9 +79,13 @@ object ScanNoteCodec {
             sliceIndex = sliceIndex,
             sliceCount = sliceCount,
             createdAtMillis = fields[8].toLong(),
-            body = decodeText(fields[if (hasOrientationState) 10 else 9]),
+            body = decodeText(fields[if (version == VERSION) 11 else if (hasOrientationState) 10 else 9]),
             orientationVerified = hasOrientationState && fields[9].toBooleanStrict(),
-        ).also { require(it.id.isNotBlank() && it.scanId.isNotBlank() && it.body.isNotBlank()) }
+            nativeStackAxis = if (version == VERSION) fields[10].takeIf { it != "-" }?.toInt() else null,
+        ).also {
+            require(it.id.isNotBlank() && it.scanId.isNotBlank() && it.body.isNotBlank())
+            require(it.nativeStackAxis == null || it.nativeStackAxis in 0..2)
+        }
     }.getOrNull()
 
     private fun encodeText(value: String): String = encoder.encodeToString(

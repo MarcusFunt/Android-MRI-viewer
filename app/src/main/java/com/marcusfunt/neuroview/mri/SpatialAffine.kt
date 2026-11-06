@@ -71,6 +71,15 @@ class SpatialAffine private constructor(
     fun worldAxisSamplingStep(axis: Int): Double =
         1.0 / worldAxisSamplingDensity(axis).coerceAtLeast(1e-12)
 
+    /** Sampling step along an arbitrary unit direction in world space. */
+    fun worldDirectionSamplingStep(direction: DoubleArray): Double {
+        require(direction.size == 3 && direction.all(Double::isFinite))
+        val i = inverse[0] * direction[0] + inverse[1] * direction[1] + inverse[2] * direction[2]
+        val j = inverse[4] * direction[0] + inverse[5] * direction[1] + inverse[6] * direction[2]
+        val k = inverse[8] * direction[0] + inverse[9] * direction[1] + inverse[10] * direction[2]
+        return 1.0 / sqrt(i * i + j * j + k * k).coerceAtLeast(1e-12)
+    }
+
     /** Perpendicular world distance between slices on adjacent fixed-index planes. */
     fun voxelPlaneSpacing(axis: Int): Double {
         require(axis in 0..2)

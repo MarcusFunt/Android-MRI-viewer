@@ -1093,6 +1093,7 @@ fun NeuroViewApp() {
                         initialNoteId = note?.id,
                         initialNotePlane = note?.planeName,
                         initialNoteSlice = note?.sliceIndex,
+                        initialNoteNativeStackAxis = note?.nativeStackAxis,
                         displayNameOverride = snapshot.scans.firstOrNull {
                             it.id == destination.seriesId
                         }?.label,
@@ -1142,7 +1143,7 @@ fun NeuroViewApp() {
                         onImport = chooseDocuments,
                         onNavigate = navigate,
                         onClearCache = { catalog.clearThumbnailCache() },
-                        onSaveNote = { plane, slice, count, orientationVerified, body ->
+                        onSaveNote = { plane, slice, count, nativeStackAxis, orientationVerified, body ->
                             if (scan != null && body.isNotBlank()) {
                                 val collection = snapshot.collections.firstOrNull {
                                     it.id == scan.collectionId
@@ -1159,6 +1160,7 @@ fun NeuroViewApp() {
                                         createdAtMillis = System.currentTimeMillis(),
                                         body = body.trim(),
                                         orientationVerified = orientationVerified,
+                                        nativeStackAxis = nativeStackAxis,
                                     ),
                                 )
                                 notes = noteStore.load()

@@ -239,7 +239,8 @@ fun ViewerScreen(
     initialNoteId: String? = null,
     initialNotePlane: String? = null,
     initialNoteSlice: Int? = null,
-    onSaveNote: (MriPlane, Int, Int, Boolean, String) -> Unit = { _, _, _, _, _ -> },
+    initialNoteNativeStackAxis: Int? = null,
+    onSaveNote: (MriPlane, Int, Int, Int?, Boolean, String) -> Unit = { _, _, _, _, _, _ -> },
     pendingProviderCleanup: Boolean = false,
     onFirstSliceBitmapReady: (OperationId) -> Unit,
     onFirstSliceDisplayed: (OperationId) -> Unit,
@@ -259,7 +260,10 @@ fun ViewerScreen(
         )
     }
     var nativeGridSelected by rememberSaveable(selectedDocumentUri, initialNoteId) {
-        mutableStateOf(false)
+        mutableStateOf(initialNoteNativeStackAxis != null)
+    }
+    var nativeStackAxis by rememberSaveable(selectedDocumentUri, initialNoteId) {
+        mutableStateOf(initialNoteNativeStackAxis)
     }
     var focusMode by rememberSaveable { mutableStateOf(false) }
     var sliceIndex by rememberSaveable(selectedDocumentUri, initialNoteId, initialNotePlane) {
@@ -387,10 +391,10 @@ fun ViewerScreen(
     val loading = volumeState as? VolumeLoadState.Loading
     val volume = ready?.volume ?: firstSlice?.volume ?: loading?.decodedVolume
     val contentDisplayName = ready?.displayName ?: firstSlice?.displayName
-    val activeDescriptor = remember(volume, plane, nativeGridSelected) {
+    val activeDescriptor = remember(volume, plane, nativeGridSelected, nativeStackAxis) {
         if (volume != null && nativeGridSelected) {
             val assessment = NativeGridOrientation.analyze(volume)
-            ViewPlaneDescriptor.nativeGrid(volume, assessment.preferredStackAxis)
+            ViewPlaneDescriptor.nativeGrid(volume, nativeStackAxis ?: assessment.preferredStackAxis)
         } else {
             ViewPlaneDescriptor.worldAligned(plane)
         }
@@ -406,11 +410,11 @@ fun ViewerScreen(
         displayedBitmapBytes = 0L
     }
     val viewKey = if (activeDescriptor.isNativeGrid) "NATIVE_${activeDescriptor.stackAxis}" else plane.name
-    LaunchedEffect(volume, scanKey, initialNoteId, initialNotePlane) {
+    LaunchedEffect(volume, scanKey, initialNoteId, initialNotePlane, initialNoteNativeStackAxis) {
         val loadedVolume = volume ?: return@LaunchedEffect
         val savedStartup = scanKey?.let { displayPrefs.getString("${it}_startup_view", null) }
         val shouldUseNative = when {
-            initialNoteId != null -> false
+            initialNoteId != null -> initialNoteNativeStackAxis != null
             savedStartup == "NATIVE" -> true
             savedStartup != null -> false
             else -> displayPrefs.getBoolean(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY, true)
@@ -426,15 +430,23 @@ fun ViewerScreen(
             else -> NativeGridOrientation.initialDescriptor(loadedVolume, shouldUseNative)
                 .nearestAnatomicalPlane ?: MriPlane.AXIAL
         }
+        if (shouldUseNative) {
+            nativeStackAxis = initialNoteNativeStackAxis
+                ?: NativeGridOrientation.analyze(loadedVolume).preferredStackAxis
+        }
         plane = startupPlane
-        nativeGridSelected = shouldUseNative && initialNoteId == null &&
-            (savedStartup == "NATIVE" || NativeGridOrientation.analyze(loadedVolume).useNativeForStartup)
+        nativeGridSelected = if (initialNoteId != null) {
+            initialNoteNativeStackAxis != null
+        } else {
+            shouldUseNative &&
+                (savedStartup == "NATIVE" || NativeGridOrientation.analyze(loadedVolume).useNativeForStartup)
+        }
     }
     val powerManager = remember(context.applicationContext) {
         context.getSystemService(Context.POWER_SERVICE) as? PowerManager
     }
     var environmentRevision by remember { mutableIntStateOf(0) }
-    DisposableEffect(viewerLifecycleOwner, volume) {
+    DisposableEffect(viewerLifecycleOwner, volume, activeDescriptor) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
@@ -479,7 +491,7 @@ fun ViewerScreen(
             }
         }
     }
-    DisposableEffect(context.applicationContext, volume) {
+    DisposableEffect(context.applicationContext, volume, activeDescriptor) {
         val appContext = context.applicationContext
         val callbacks = object : ComponentCallbacks2 {
             override fun onConfigurationChanged(newConfig: android.content.res.Configuration) = Unit
@@ -494,19 +506,16 @@ fun ViewerScreen(
 
             override fun onTrimMemory(level: Int) {
                 trimMemoryLevel = level
-                if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
-                    // Drop scalar caches on UI-hidden/background pressure after render cancellation.
+                val memoryPressure = level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+                    level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+                    level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+                if (memoryPressure) lowMemorySignal = true
+                if (memoryPressure || level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+                    // Cancel the active renderer before dropping its displayed frame so
+                    // a repeated warning always schedules a replacement frame.
                     sessionInvalidationRevision++
                     releaseDisplayedFrame()
                 }
-                if (level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
-                    level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
-                    level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
-                ) lowMemorySignal = true
-                if (level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
-                    level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
-                    level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
-                ) releaseDisplayedFrame()
                 environmentRevision++
             }
         }
@@ -647,7 +656,7 @@ fun ViewerScreen(
     val sliceCount = if (volume != null) MprRenderer.sliceCount(volume, activeDescriptor) else 1
     val selectedSlice = sliceIndex.coerceIn(0, sliceCount - 1)
 
-    LaunchedEffect(volume, plane, nativeGridSelected, initialNoteId) {
+    LaunchedEffect(volume, plane, nativeGridSelected, nativeStackAxis, initialNoteId) {
         if (volume == null) {
             sliceIndex = 0
             return@LaunchedEffect
@@ -1039,6 +1048,7 @@ fun ViewerScreen(
                                     requireNotNull(volume),
                                     NativeGridOrientation.analyze(requireNotNull(volume)).preferredStackAxis,
                                 )
+                                nativeStackAxis = native.stackAxis
                                 plane = native.nearestAnatomicalPlane ?: MriPlane.AXIAL
                                 nativeGridSelected = true
                                 sliceIndex = if (referenceWorld != null) {
@@ -1054,6 +1064,7 @@ fun ViewerScreen(
                                         requireNotNull(volume),
                                         NativeGridOrientation.analyze(requireNotNull(volume)).preferredStackAxis,
                                     )
+                                    nativeStackAxis = native.stackAxis
                                     plane = native.nearestAnatomicalPlane ?: MriPlane.AXIAL
                                     nativeGridSelected = true
                                     sliceIndex = MprRenderer.sliceCount(requireNotNull(volume), native) / 2
@@ -1354,7 +1365,7 @@ internal fun MriContent(
     onWindowCenter: (Float) -> Unit,
     windowWidth: Float,
     onWindowWidth: (Float) -> Unit,
-    onSaveNote: (MriPlane, Int, Int, Boolean, String) -> Unit = { _, _, _, _, _ -> },
+    onSaveNote: (MriPlane, Int, Int, Int?, Boolean, String) -> Unit = { _, _, _, _, _, _ -> },
 ) {
     val motionDuration = MotionToken.QUICK.durationMs(LocalNeuroViewMotion.current)
     val density = LocalDensity.current
@@ -1498,7 +1509,7 @@ internal fun MriContent(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, volume, descriptor) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
                 flingJob?.cancel()
@@ -2545,7 +2556,11 @@ internal fun MriContent(
                 if (noteSaved) Text("Note saved on this device.", color = NeuroChrome.accent)
                 Button(
                     onClick = {
-                        onSaveNote(plane, selectedSlice, totalSlices, !orientationUnknown, noteText)
+                        onSaveNote(
+                            plane, selectedSlice, totalSlices,
+                            descriptor.stackAxis.takeIf { descriptor.isNativeGrid },
+                            !orientationUnknown, noteText,
+                        )
                         noteSaved = true
                     },
                     enabled = noteText.isNotBlank() && !noteSaved,
