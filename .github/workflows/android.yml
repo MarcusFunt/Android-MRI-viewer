@@ -86,7 +86,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          emulator-options: -no-window -gpu swangle -no-snapshot -noaudio -no-boot-anim
           script: |
             ./gradlew --no-daemon :app:assembleDebug
             mkdir -p app/build/emulator-qa
