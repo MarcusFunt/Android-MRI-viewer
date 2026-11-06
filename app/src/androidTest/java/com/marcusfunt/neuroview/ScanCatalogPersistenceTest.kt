@@ -28,6 +28,7 @@ class ScanCatalogPersistenceTest {
             .put("dataType", "uint8")
             .put("orientation", "sform")
             .put("description", "")
+            .put("transformHeaderFingerprint", "sha256:" + "a".repeat(64))
         val series = JSONObject()
             .put("id", "demo-scan")
             .put("collectionId", "demo-collection")
@@ -48,6 +49,7 @@ class ScanCatalogPersistenceTest {
             val reloaded = ScanCatalog(context).load().scans.single()
             assertEquals(expectedLabel, reloaded.label)
             assertNull("Legacy raw pixdim cannot be assumed to be millimeters.", reloaded.metadata.spacingMm)
+            assertEquals("sha256:" + "a".repeat(64), reloaded.metadata.transformHeaderFingerprint)
         } finally {
             preferences.edit().clear().commit()
         }

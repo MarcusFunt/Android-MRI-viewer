@@ -4,6 +4,17 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+val releaseKeystorePath = providers.environmentVariable("NEUROVIEW_RELEASE_KEYSTORE_PATH").orNull
+val releaseStorePassword = providers.environmentVariable("NEUROVIEW_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("NEUROVIEW_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("NEUROVIEW_RELEASE_KEY_PASSWORD").orNull
+val releaseSigningConfigured = listOf(
+    releaseKeystorePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.marcusfunt.neuroview"
     compileSdk = 37
@@ -12,14 +23,26 @@ android {
         applicationId = "com.marcusfunt.neuroview"
         minSdk = 26
         targetSdk = 36
-        versionCode = 24
-        versionName = "1.6 Alpha 3"
+        versionCode = 25
+        versionName = "1.6.0-alpha.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    if (releaseSigningConfigured) {
+        signingConfigs {
+            create("neuroViewRelease") {
+                storeFile = file(requireNotNull(releaseKeystorePath))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("neuroViewRelease")
         }
     }
 
@@ -51,6 +74,7 @@ dependencies {
     implementation(libs.androidx.navigation3.runtime)
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.kotlinx.serialization.core)
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

@@ -5,6 +5,7 @@ import java.io.DataInputStream
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.security.MessageDigest
 import java.util.zip.GZIPInputStream
 
 /**
@@ -22,6 +23,8 @@ data class NiftiSeriesMetadata(
     val spatialUnits: NiftiSpatialUnits = NiftiSpatialUnits.UNKNOWN,
     val qformCode: Int = 0,
     val sformCode: Int = 0,
+    /** Digest of the active transform's raw header fields; null when the header has no transform. */
+    val transformHeaderFingerprint: String? = null,
 ) {
     /** Null means millimetres cannot be stated from the NIfTI header. */
     val spacingMm: List<Double>?
@@ -129,6 +132,11 @@ object NiftiSeriesInspector {
                 qformCode > 0 -> "qform"
                 else -> "unknown"
             }
+            val transformHeaderFingerprint = transformHeaderFingerprint(
+                bytes = bytes,
+                sformCode = sformCode,
+                qformCode = qformCode,
+            )
             val spatialUnits = NiftiSpatialUnits.fromNiftiCode(buffer.get(123).toInt())
             // NIfTI's descriptive text is free-form; store locally, never send to logs/server.
             val description = bytes.copyOfRange(148, 228)
@@ -147,7 +155,22 @@ object NiftiSeriesInspector {
                 spatialUnits = spatialUnits,
                 qformCode = qformCode,
                 sformCode = sformCode,
+                transformHeaderFingerprint = transformHeaderFingerprint,
             )
         }
+    }
+
+    private fun transformHeaderFingerprint(
+        bytes: ByteArray,
+        sformCode: Int,
+        qformCode: Int,
+    ): String? {
+        val activeFields = when {
+            sformCode > 0 -> bytes.copyOfRange(254, 256) + bytes.copyOfRange(280, 328)
+            qformCode > 0 -> bytes.copyOfRange(76, 92) + bytes.copyOfRange(252, 280)
+            else -> return null
+        }
+        val digest = MessageDigest.getInstance("SHA-256").digest(activeFields)
+        return "sha256:" + digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 }

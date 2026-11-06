@@ -4,6 +4,15 @@ This is the **historical implementation and milestone record**, migrated from th
 
 For detailed 1.4 design decisions and its manual release gate, see [UX rework 1.4](UX_REWORK_1_4.md). Past changes are kept here rather than erased or misrepresented as current documentation.
 
+## v1.6.0-alpha.4 candidate work — 2026-11-06
+
+- Added versioned JSON notes export/import through the Android file picker. Import validates the bounded UTF-8 archive before merging, preserves existing notes and ID conflicts, skips duplicates, and retains source metadata for a user-confirmed relink. Backups do not include MRI images or provider URIs and are not encrypted.
+- Added NIfTI header-transform fingerprint persistence and legacy note codec v1-v3 compatibility while writing v4 records. A fingerprint is only a relinking hint; automatic matching requires both the original catalog ID and a saved raw active transform fingerprint. Legacy catalog/note records without one require manual confirmation.
+- Advanced Android versionName to `1.6.0-alpha.4` and versionCode to `25`. Replaced the historical hard-coded publish workflows with a tag-bound prerelease workflow that checks the exact source, executes automated QA on a secret-free runner, signs the checksummed APK on a separate runner with protected stable-key secrets, and publishes APK SHA-256 plus signing-certificate/source provenance.
+- A stable distribution keystore is intentionally not present in this checkout. The signed APK, upgrade-preservation demonstration, external release metadata correction, physical-device benchmark and independent reference-viewer gate remain pending. See [release setup](RELEASE.md) and [testing status](TESTING.md).
+- Local verification: 208 JVM tests, 78 API 35 emulator instrumentation tests, debug and instrumentation APK builds, `lintDebug`, and the unsigned release build passed. Four mocked BrainSuite bridge tests passed, and the independent nibabel/pydicom checks passed. Gradle built the Alpha 4 release variant as `app-release-unsigned.apk`; `apksigner` correctly rejected it because no stable release key is configured here. The unsigned APK metadata reports versionName `1.6.0-alpha.4` / versionCode `25`.
+- No physical Android device or independent Slicer/ITK-SNAP reference session was available for this candidate. The accepted phone screenshots from the earlier E/F review do not replace the broader H verification matrix. These results do not establish clinical safety or diagnostic performance.
+
 ## v1.6 Alpha — offline distance measurement and rendering fixes
 
 - Added a two-point in-plane measurement tool to the native Viewer. It maps taps through the NIfTI spatial affine and reports physical distance in millimetres; it does not perform 3D segmentation or calculate lesion volume.

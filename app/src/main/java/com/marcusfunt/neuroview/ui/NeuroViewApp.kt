@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.CancellationSignal
 import android.os.OperationCanceledException
 import android.provider.OpenableColumns
+import android.provider.DocumentsContract
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -47,6 +48,7 @@ import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.navigation.Destination
 import com.marcusfunt.neuroview.navigation.NavigationActions
 import com.marcusfunt.neuroview.notes.ScanNote
+import com.marcusfunt.neuroview.notes.ScanNoteArchiveCodec
 import com.marcusfunt.neuroview.notes.ScanNoteStore
 import com.marcusfunt.neuroview.ui.screens.HomeScreen
 import com.marcusfunt.neuroview.ui.screens.LibraryScreen
@@ -96,6 +98,7 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.EOFException
 import java.io.InputStream
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -292,6 +295,80 @@ fun NeuroViewApp() {
     }
     val noteStore = remember(applicationContext) { ScanNoteStore(applicationContext) }
     var notes by remember { mutableStateOf(noteStore.load()) }
+    var noteRelinkStatus by rememberSaveable { mutableStateOf<String?>(null) }
+    var noteRelinkStatusForId by rememberSaveable { mutableStateOf<String?>(null) }
+    var noteArchiveBusy by remember { mutableStateOf(false) }
+    var noteArchiveStatus by rememberSaveable { mutableStateOf<String?>(null) }
+    val exportNotesArchiveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { destination ->
+        if (destination == null) {
+            noteArchiveStatus = "Export cancelled. Existing notes were unchanged."
+        } else if (!noteArchiveBusy) {
+            noteArchiveBusy = true
+            noteArchiveStatus = null
+            val scansForArchive = snapshot.scans
+            scope.launch {
+                try {
+                    val (archiveText, exportedCount) = withContext(Dispatchers.IO) {
+                        val currentNotes = noteStore.load()
+                        ScanNoteArchiveCodec.encode(currentNotes, scansForArchive) to currentNotes.size
+                    }
+                    withContext(Dispatchers.IO) {
+                        val output = applicationContext.contentResolver.openOutputStream(destination, "wt")
+                            ?: throw IOException("The selected destination could not be opened.")
+                        output.use {
+                            it.write(archiveText.toByteArray(StandardCharsets.UTF_8))
+                            it.flush()
+                        }
+                    }
+                    noteArchiveStatus = "Exported $exportedCount notes. Store the backup securely."
+                } catch (cancelled: CancellationException) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        runCatching {
+                            DocumentsContract.deleteDocument(applicationContext.contentResolver, destination)
+                        }
+                    }
+                    throw cancelled
+                } catch (error: Exception) {
+                    runCatching { DocumentsContract.deleteDocument(applicationContext.contentResolver, destination) }
+                    noteArchiveStatus = "Could not export notes: ${error.message ?: "destination error"}. Existing notes were unchanged."
+                } finally {
+                    noteArchiveBusy = false
+                }
+            }
+        }
+    }
+    val importNotesArchiveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { source ->
+        if (source == null) {
+            noteArchiveStatus = "Import cancelled. Existing notes were unchanged."
+        } else if (!noteArchiveBusy) {
+            noteArchiveBusy = true
+            noteArchiveStatus = null
+            val scansForRelinking = snapshot.scans
+            scope.launch {
+                try {
+                    val imported = withContext(Dispatchers.IO) {
+                        val input = applicationContext.contentResolver.openInputStream(source)
+                            ?: throw FileNotFoundException("The selected backup is unavailable.")
+                        val archive = ScanNoteArchiveCodec.decode(input)
+                        noteStore.mergeArchive(archive, scansForRelinking)
+                    }
+                    notes = noteStore.load()
+                    noteArchiveStatus = "Imported ${imported.imported}; skipped ${imported.duplicatesSkipped} duplicates; " +
+                        "preserved ${imported.conflictsPreserved} conflicts; ${imported.awaitingRelink} need manual relinking."
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    noteArchiveStatus = "Could not import notes: ${error.message ?: "invalid backup"}. Existing notes were unchanged."
+                } finally {
+                    noteArchiveBusy = false
+                }
+            }
+        }
+    }
     val viewerSettings = remember(applicationContext) {
         applicationContext.getSharedPreferences("neuroview_viewer_settings_v1", Context.MODE_PRIVATE)
     }
@@ -947,6 +1024,14 @@ fun NeuroViewApp() {
                         },
                         onResetOrientation = { resetOrientationRequest++ },
                         onClearCache = { catalog.clearThumbnailCache() },
+                        onExportNotesBackup = {
+                            exportNotesArchiveLauncher.launch("NeuroView-notes-v1.json")
+                        },
+                        onImportNotesBackup = {
+                            importNotesArchiveLauncher.launch(arrayOf("application/json"))
+                        },
+                        noteArchiveBusy = noteArchiveBusy,
+                        noteArchiveStatus = noteArchiveStatus,
                         onBack = { NavigationActions.back(backStack) },
                     )
                 }
@@ -966,6 +1051,29 @@ fun NeuroViewApp() {
                         NoteDetailScreen(
                             note = note,
                             available = scan != null,
+                            availableScans = snapshot.scans,
+                            relinkStatus = noteRelinkStatus.takeIf { noteRelinkStatusForId == note.id },
+                            onRelink = { selectedScan ->
+                                noteRelinkStatus = null
+                                noteRelinkStatusForId = note.id
+                                scope.launch {
+                                    try {
+                                        val updated = withContext(Dispatchers.IO) {
+                                            noteStore.relink(note.id, selectedScan)
+                                        }
+                                        if (updated) {
+                                            notes = noteStore.load()
+                                            noteRelinkStatus = "Note relinked. Recheck the saved slice against the scan."
+                                        } else {
+                                            noteRelinkStatus = "This note is no longer available to relink."
+                                        }
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (error: Exception) {
+                                        noteRelinkStatus = "Could not relink note: ${error.message ?: "storage error"}."
+                                    }
+                                }
+                            },
                             onBack = { NavigationActions.back(backStack) },
                             onOpenSavedSlice = {
                                 if (scan != null) {
@@ -1161,6 +1269,8 @@ fun NeuroViewApp() {
                                         body = body.trim(),
                                         spatialTransformPresent = spatialTransformPresent,
                                         nativeStackAxis = nativeStackAxis,
+                                        sourceFingerprint = ScanNoteArchiveCodec.fingerprint(scan),
+                                        sourceDisplayName = scan.displayName,
                                     ),
                                 )
                                 notes = noteStore.load()

@@ -7,6 +7,7 @@ import java.nio.ByteOrder
 import java.util.concurrent.CancellationException
 import java.util.zip.GZIPOutputStream
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -101,6 +102,36 @@ class NiftiSeriesInspectorTest {
         )
 
         assertNull("Unknown header units must not be presented as millimeters.", data.spacingMm)
+    }
+
+    @Test
+    fun transformFingerprintChangesWhenSformGeometryChanges() {
+        val firstHeader = niftiHeader().also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putFloat(280, 1f) }
+        val shiftedHeader = niftiHeader().also {
+            ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putFloat(280, 1f).putFloat(292, 12f)
+        }
+
+        val first = NiftiSeriesInspector.inspect(ByteArrayInputStream(firstHeader))
+        val shifted = NiftiSeriesInspector.inspect(ByteArrayInputStream(shiftedHeader))
+
+        assertNotEquals("Geometry fingerprints must include sform coordinates.",
+            first.transformHeaderFingerprint, shifted.transformHeaderFingerprint)
+    }
+
+    @Test
+    fun transformFingerprintSupportsQformAndIsAbsentWithoutTransformCodes() {
+        val qformHeader = niftiHeader(orientation = 0).also {
+            ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putShort(252, 1)
+                .putFloat(256, 0.1f).putFloat(260, 0.2f).putFloat(264, 0.3f)
+                .putFloat(268, 4f).putFloat(272, 5f).putFloat(276, 6f)
+        }
+        val missing = NiftiSeriesInspector.inspect(
+            ByteArrayInputStream(niftiHeader(orientation = 0)),
+        )
+
+        assertTrue(NiftiSeriesInspector.inspect(ByteArrayInputStream(qformHeader))
+            .transformHeaderFingerprint?.matches(Regex("sha256:[0-9a-f]{64}")) == true)
+        assertNull(missing.transformHeaderFingerprint)
     }
 
     @Test

@@ -160,6 +160,8 @@ class ScanCatalog(private val context: Context) {
                             ),
                             qformCode = m.optInt("qformCode", 0),
                             sformCode = m.optInt("sformCode", 0),
+                            transformHeaderFingerprint = m.optString("transformHeaderFingerprint")
+                                .takeIf { it.isNotBlank() },
                         ),
                     )
                 }.getOrNull()
@@ -543,6 +545,7 @@ class ScanCatalog(private val context: Context) {
                 .put("spatialUnits", m.spatialUnits.name)
                 .put("qformCode", m.qformCode)
                 .put("sformCode", m.sformCode)
+                .putOpt("transformHeaderFingerprint", m.transformHeaderFingerprint)
                 .put("frames", m.timepoints)
                 .put("dataType", m.dataType)
                 .put("orientation", m.orientation)
