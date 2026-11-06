@@ -1,4 +1,4 @@
-name: Publish NeuroView v1.6 Alpha 2
+name: Publish NeuroView v1.6 Alpha 3
 
 # Releases the APK built by the exact successful Android CI run on main.
 # One version-specific workflow avoids publishing untested PR artifacts.
@@ -13,7 +13,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: neuroview-v1.6-alpha2-release
+  group: neuroview-v1.6-alpha3-release
   cancel-in-progress: false
 
 jobs:
@@ -36,11 +36,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TESTED_SHA"
-          grep -Fq 'versionCode = 23' app/build.gradle.kts
-          grep -Fq 'versionName = "1.6 Alpha 2"' app/build.gradle.kts
-          if gh release view "v1.6-alpha.2" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          grep -Fq 'versionCode = 24' app/build.gradle.kts
+          grep -Fq 'versionName = "1.6 Alpha 3"' app/build.gradle.kts
+          if gh release view "v1.6-alpha.3" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
-            echo "v1.6-alpha.2 is already published; refusing to overwrite."
+            echo "v1.6-alpha.3 is already published; refusing to overwrite."
           else
             echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
@@ -63,26 +63,25 @@ jobs:
         run: |
           set -euo pipefail
           test -s release/app-debug.apk
-          cp release/app-debug.apk release/NeuroView-v1.6-alpha2-debug.apk
-          (cd release && sha256sum NeuroView-v1.6-alpha2-debug.apk > NeuroView-v1.6-alpha2-debug.apk.sha256)
+          cp release/app-debug.apk release/NeuroView-v1.6-alpha3-debug.apk
+          (cd release && sha256sum NeuroView-v1.6-alpha3-debug.apk > NeuroView-v1.6-alpha3-debug.apk.sha256)
           cat > release/notes.md <<EOF
-          # NeuroView v1.6 Alpha 2
+          # NeuroView v1.6 Alpha 3
 
           **Experimental research and educational software only; not for medical diagnosis, clinical interpretation, treatment, or patient care.**
 
-          This update merges the v1.6 unified gesture controls and native-voxel-grid/MPR image-quality work from PR #42.
+          This update builds on v1.6 Alpha 2 with the rendering-quality work and follow-up fixes in PR #44.
 
           ## Highlights
-          - One-finger slice navigation combined with two-finger pinch-to-zoom and pan.
-          - Native-grid startup for likely 2D-like scans, with an unobtrusive native/oblique indicator.
-          - Improved resampling and higher settled-image quality with reference tests.
-          - Additional Android UI, geometry, memory-safety and GL lifecycle tests.
-          - Visible magenta/cyan draw-order debug markers hidden in normal app use.
+          - Adaptive image-rendering quality during gestures and memory pressure, with viewer controls.
+          - More robust render-session lifecycle and memory-pressure test coverage.
+          - Corrections to physical MPR geometry and reference-image validation.
+          - Follow-up navigation and scan-note persistence fixes, with tests.
 
           ## Build provenance
           - Exact tested source SHA: $TESTED_SHA
           - [Successful Android CI run](https://github.com/$GITHUB_REPOSITORY/actions/runs/$CI_RUN)
-          - Android versionName: 1.6 Alpha 2; versionCode: 23.
+          - Android versionName: 1.6 Alpha 3; versionCode: 24.
           - The attached APK is **debug-signed**, not production-signed. Signature mismatch with a previous debug APK may prevent in-place updating. Uninstalling NeuroView deletes its app-private notes and catalog data. Back up important data before switching signing keys.
           - The APK and its SHA-256 checksum are attached.
 
@@ -96,11 +95,11 @@ jobs:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          gh release create "v1.6-alpha.2" \
-            "release/NeuroView-v1.6-alpha2-debug.apk" \
-            "release/NeuroView-v1.6-alpha2-debug.apk.sha256" \
+          gh release create "v1.6-alpha.3" \
+            "release/NeuroView-v1.6-alpha3-debug.apk" \
+            "release/NeuroView-v1.6-alpha3-debug.apk.sha256" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$TESTED_SHA" \
-            --title "NeuroView v1.6 Alpha 2" \
+            --title "NeuroView v1.6 Alpha 3" \
             --notes-file "release/notes.md" \
             --prerelease
