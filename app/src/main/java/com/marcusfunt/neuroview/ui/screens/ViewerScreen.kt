@@ -1,11 +1,14 @@
 package com.marcusfunt.neuroview.ui.screens
 
 import android.graphics.Bitmap
+import android.app.ActivityManager
 import android.content.Context
+import android.content.ComponentCallbacks2
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.os.Debug
 import android.os.PowerManager
 import android.os.SystemClock
 import android.os.Trace
@@ -153,11 +156,13 @@ import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.mri.AdaptiveQualityLevel
 import com.marcusfunt.neuroview.mri.AdaptiveRenderQualityController
 import com.marcusfunt.neuroview.mri.RenderEnvironment
+import com.marcusfunt.neuroview.mri.RenderEnvironmentSnapshot
 import com.marcusfunt.neuroview.mri.RenderPerformanceMonitor
 import com.marcusfunt.neuroview.mri.RenderPerformanceSnapshot
 import com.marcusfunt.neuroview.mri.RenderQualityPolicy
 import com.marcusfunt.neuroview.mri.RenderQualitySettings
 import com.marcusfunt.neuroview.mri.RenderRequestGate
+import com.marcusfunt.neuroview.mri.RenderResourceQualityController
 import com.marcusfunt.neuroview.mri.ThermalStatus
 import com.marcusfunt.neuroview.navigation.Destination
 import com.marcusfunt.neuroview.ui.VolumeLoadState
@@ -172,6 +177,7 @@ import com.marcusfunt.neuroview.ui.viewer.ViewerGestureState
 import com.marcusfunt.neuroview.ui.viewer.ViewportTransform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -185,6 +191,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 private const val DEFAULT_MRI_IMAGE_SCALE = 1f
+private const val RENDER_ENVIRONMENT_SAMPLE_INTERVAL_MS = 3_000L
 
 private data class MprMeasurementPoint(
     val fractionX: Double,
@@ -262,6 +269,10 @@ fun ViewerScreen(
     var windowCenter by rememberSaveable { mutableFloatStateOf(0.5f) }
     var windowWidth by rememberSaveable { mutableFloatStateOf(1.0f) }
     val context = LocalContext.current
+    val viewerLifecycleOwner = LocalLifecycleOwner.current
+    var viewerResumed by remember(viewerLifecycleOwner) {
+        mutableStateOf(viewerLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
     val motionPreference = LocalNeuroViewMotion.current
     val motionDuration = MotionToken.QUICK.durationMs(motionPreference)
     val displayPrefs = remember(context.applicationContext) {
@@ -384,6 +395,16 @@ fun ViewerScreen(
             ViewPlaneDescriptor.worldAligned(plane)
         }
     }
+    var bitmap by remember(volume, activeDescriptor) { mutableStateOf<Bitmap?>(null) }
+    var displayedBitmapBytes by remember(volume, activeDescriptor) { mutableLongStateOf(0L) }
+    var renderSessionCacheBytes by remember(volume) { mutableLongStateOf(0L) }
+    var sessionInvalidationRevision by remember(volume) { mutableIntStateOf(0) }
+    var lowMemorySignal by remember(volume) { mutableStateOf(false) }
+    var trimMemoryLevel by remember(volume) { mutableIntStateOf(0) }
+    fun releaseDisplayedFrame() {
+        bitmap = null
+        displayedBitmapBytes = 0L
+    }
     val viewKey = if (activeDescriptor.isNativeGrid) "NATIVE_${activeDescriptor.stackAxis}" else plane.name
     LaunchedEffect(volume, scanKey, initialNoteId, initialNotePlane) {
         val loadedVolume = volume ?: return@LaunchedEffect
@@ -413,6 +434,28 @@ fun ViewerScreen(
         context.getSystemService(Context.POWER_SERVICE) as? PowerManager
     }
     var environmentRevision by remember { mutableIntStateOf(0) }
+    DisposableEffect(viewerLifecycleOwner, volume) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    viewerResumed = true
+                    environmentRevision++
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    viewerResumed = false
+                    sessionInvalidationRevision++
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    viewerResumed = false
+                    sessionInvalidationRevision++
+                    releaseDisplayedFrame()
+                }
+                else -> Unit
+            }
+        }
+        viewerLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { viewerLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     DisposableEffect(context.applicationContext, powerManager) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -436,6 +479,40 @@ fun ViewerScreen(
             }
         }
     }
+    DisposableEffect(context.applicationContext, volume) {
+        val appContext = context.applicationContext
+        val callbacks = object : ComponentCallbacks2 {
+            override fun onConfigurationChanged(newConfig: android.content.res.Configuration) = Unit
+            @Suppress("DEPRECATION")
+            override fun onLowMemory() {
+                lowMemorySignal = true
+                trimMemoryLevel = ComponentCallbacks2.TRIM_MEMORY_COMPLETE
+                sessionInvalidationRevision++
+                environmentRevision++
+                releaseDisplayedFrame()
+            }
+
+            override fun onTrimMemory(level: Int) {
+                trimMemoryLevel = level
+                if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+                    // Drop scalar caches on UI-hidden/background pressure after render cancellation.
+                    sessionInvalidationRevision++
+                    releaseDisplayedFrame()
+                }
+                if (level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+                    level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+                    level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+                ) lowMemorySignal = true
+                if (level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+                    level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+                    level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+                ) releaseDisplayedFrame()
+                environmentRevision++
+            }
+        }
+        appContext.registerComponentCallbacks(callbacks)
+        onDispose { appContext.unregisterComponentCallbacks(callbacks) }
+    }
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     val deviceViewportMaxSidePx = with(density) {
@@ -458,28 +535,78 @@ fun ViewerScreen(
     val powerSave = powerManager?.isPowerSaveMode == true
     val thermalStatus = if (Build.VERSION.SDK_INT >= 29) {
         when (powerManager?.currentThermalStatus) {
-            PowerManager.THERMAL_STATUS_MODERATE,
+            PowerManager.THERMAL_STATUS_MODERATE -> ThermalStatus.MODERATE
             PowerManager.THERMAL_STATUS_SEVERE,
             PowerManager.THERMAL_STATUS_CRITICAL,
             PowerManager.THERMAL_STATUS_EMERGENCY,
-            PowerManager.THERMAL_STATUS_SHUTDOWN -> ThermalStatus.MODERATE
+            PowerManager.THERMAL_STATUS_SHUTDOWN -> ThermalStatus.SEVERE
             else -> ThermalStatus.NOMINAL
         }
     } else ThermalStatus.NOMINAL
-    val renderEnvironment = remember(
-        runtimeMaxHeap, volume, viewportMaxSidePx, powerSave, thermalStatus, environmentRevision,
-        renderQualitySettings, renderZoomScale,
-    ) {
-        RenderEnvironment(
-            maxHeapBytes = runtimeMaxHeap,
-            availableHeapBytes = runtimeAvailableHeap,
+    val resourceQualityController = remember(volume) { RenderResourceQualityController() }
+    var renderEnvironmentSnapshot by remember(volume) {
+        mutableStateOf<RenderEnvironmentSnapshot?>(null)
+    }
+    val refreshRenderEnvironment by rememberUpdatedState(newValue = {
+        val runtimeNow = Runtime.getRuntime()
+        val maxHeap = runtimeNow.maxMemory()
+        val usedHeap = (runtimeNow.totalMemory() - runtimeNow.freeMemory()).coerceAtLeast(0L)
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val systemInfo = ActivityManager.MemoryInfo()
+        activityManager?.getMemoryInfo(systemInfo)
+        val debugMemoryInfo = Debug.MemoryInfo()
+        Debug.getMemoryInfo(debugMemoryInfo)
+        val raw = RenderEnvironmentSnapshot(
+            maxHeapBytes = maxHeap,
+            availableHeapBytes = (maxHeap - usedHeap).coerceAtLeast(0L),
+            usedHeapBytes = usedHeap,
+            nativeHeapAllocatedBytes = Debug.getNativeHeapAllocatedSize().coerceAtLeast(0L),
+            processPssBytes = debugMemoryInfo.totalPss.coerceAtLeast(0).toLong() * 1024L,
+            bitmapBytes = displayedBitmapBytes,
+            cachedRenderBytes = renderSessionCacheBytes,
+            systemAvailableBytes = if (activityManager != null) systemInfo.availMem.coerceAtLeast(0L)
+                else Long.MAX_VALUE,
+            lowMemory = lowMemorySignal || systemInfo.lowMemory,
+            trimMemoryLevel = trimMemoryLevel,
             viewportMaxSidePx = viewportMaxSidePx,
-            powerSave = powerSave,
+            powerSave = powerManager?.isPowerSaveMode == true,
             thermalStatus = thermalStatus,
             zoomScale = renderZoomScale,
-            sourceMaxSide = volume?.let { maxOf(it.nx, it.ny, it.nz) } ?: RenderQualitySettings.MAX_STILL_SIDE,
+            sourceMaxSide = volume?.let { maxOf(it.nx, it.ny, it.nz) }
+                ?: RenderQualitySettings.MAX_STILL_SIDE,
         )
+        val decision = resourceQualityController.update(raw, SystemClock.elapsedRealtime())
+        renderEnvironmentSnapshot = raw.copy(memorySafetyCapOverride = decision.maximumSide)
+        lowMemorySignal = false
+    })
+    LaunchedEffect(
+        viewerLifecycleOwner,
+        volume,
+        environmentRevision,
+        viewerResumed,
+        viewportMaxSidePx,
+        renderZoomScale,
+        renderQualitySettings,
+        powerSave,
+        thermalStatus,
+    ) {
+        if (volume == null || !viewerResumed) return@LaunchedEffect
+        refreshRenderEnvironment()
+        while (true) {
+            delay(RENDER_ENVIRONMENT_SAMPLE_INTERVAL_MS)
+            refreshRenderEnvironment()
+        }
     }
+    val renderEnvironment = renderEnvironmentSnapshot ?: RenderEnvironment(
+        maxHeapBytes = runtimeMaxHeap,
+        availableHeapBytes = runtimeAvailableHeap,
+        viewportMaxSidePx = viewportMaxSidePx,
+        powerSave = powerSave,
+        thermalStatus = thermalStatus,
+        zoomScale = renderZoomScale,
+        sourceMaxSide = volume?.let { maxOf(it.nx, it.ny, it.nz) }
+            ?: RenderQualitySettings.MAX_STILL_SIDE,
+    )
     var adaptiveQualityLevel by remember(volume) {
         mutableStateOf(AdaptiveQualityLevel.STANDARD)
     }
@@ -560,7 +687,6 @@ fun ViewerScreen(
     // During interaction render a smaller preview, then refine at full resolution
     // once the gesture/slider settles. Cached scalar slices avoid costly rereads
     // when changing window levels or moving backwards through the stack.
-    var bitmap by remember(volume, activeDescriptor) { mutableStateOf<Bitmap?>(null) }
     var committedRenderGeneration by remember(volume, activeDescriptor) { mutableLongStateOf(0L) }
     var committedInputStartedAtNs by remember(volume, activeDescriptor) { mutableLongStateOf(0L) }
     var lastMeasuredDisplayGeneration by remember(volume, activeDescriptor) { mutableLongStateOf(0L) }
@@ -598,24 +724,42 @@ fun ViewerScreen(
         }
     }
     val renderRequestGate = remember(volume, activeDescriptor) { RenderRequestGate() }
-    LaunchedEffect(volume, activeDescriptor, renderQualityProfile) {
-        if (volume == null) return@LaunchedEffect
+    val currentRefineDelayMs by rememberUpdatedState(renderQualityProfile.refineDelayMs)
+    LaunchedEffect(
+        volume,
+        activeDescriptor,
+        renderQualityProfile.previewMaxSide,
+        renderQualityProfile.stillMaxSide,
+        sessionInvalidationRevision,
+        viewerResumed,
+    ) {
+        if (volume == null || !viewerResumed) return@LaunchedEffect
         val operationId = loading?.operation?.id
         val renderJob = currentCoroutineContext()[Job]
+        var previewSession: MprRenderSession? = null
+        var stillSession: MprRenderSession? = null
         if (operationId != null && renderJob != null) {
             onFirstSliceRenderStarted(operationId, volume, renderJob)
         }
         try {
             val preview = withContext(Dispatchers.Default) {
-                MprRenderSession(volume, activeDescriptor, renderQualityProfile.previewMaxSide)
+                MprRenderSession(
+                    volume, activeDescriptor, renderQualityProfile.previewMaxSide,
+                    cacheBudgetBytes = MprRenderSession.PREVIEW_CACHE_BUDGET_BYTES,
+                )
             }
+            previewSession = preview
             val full = if (renderQualityProfile.stillMaxSide == renderQualityProfile.previewMaxSide) {
                 preview
             } else {
                 withContext(Dispatchers.Default) {
-                    MprRenderSession(volume, activeDescriptor, renderQualityProfile.stillMaxSide)
+                    MprRenderSession(
+                        volume, activeDescriptor, renderQualityProfile.stillMaxSide,
+                        cacheBudgetBytes = MprRenderSession.STILL_CACHE_BUDGET_BYTES,
+                    )
                 }
             }
+            stillSession = full
             // Observe the mutable sliceIndex directly. The composable's selectedSlice
             // is a recomposition-local value and would be captured at initial launch,
             // leaving the image frozen even when the slice counter changes.
@@ -643,21 +787,31 @@ fun ViewerScreen(
                                 )
                             }
                         }
+                    } catch (_: OutOfMemoryError) {
+                        lowMemorySignal = true
+                        sessionInvalidationRevision++
+                        environmentRevision++
+                        refreshRenderEnvironment()
+                        return@collectLatest
                     } finally {
                         workerRenderDurationMs += (SystemClock.elapsedRealtimeNanos() - previewStartedAt)
                             .coerceAtLeast(0L) / 1_000_000L
                     }
                     if (renderRequestGate.isCurrent(request.generation) && latestSliceInput() == input) {
                         bitmap = quick
+                        displayedBitmapBytes = quick.allocationByteCount.toLong()
                         traceViewerCommit(quick, request.generation, input.slice, "preview")
                         committedRenderGeneration = request.generation
                         committedInputStartedAtNs = request.inputStartedAtNs
                         committed = true
+                        renderSessionCacheBytes = preview.cachedBytes +
+                            if (full === preview) 0L else full.cachedBytes
+                        refreshRenderEnvironment()
                     }
                     if (!input.scrubbing && renderRequestGate.isCurrent(request.generation) &&
                         latestSliceInput() == input
                     ) {
-                        delay(renderQualityProfile.refineDelayMs)
+                        delay(currentRefineDelayMs)
                         if (!renderRequestGate.isCurrent(request.generation) || latestSliceInput() != input) {
                             return@collectLatest
                         }
@@ -673,18 +827,32 @@ fun ViewerScreen(
                                     )
                                 }
                             }
+                        } catch (_: OutOfMemoryError) {
+                            // Keep the already rendered preview visible; the pressure snapshot
+                            // cancels this session and retries at the controller's safe cap.
+                            lowMemorySignal = true
+                            sessionInvalidationRevision++
+                            environmentRevision++
+                            bitmap = quick
+                            displayedBitmapBytes = quick.allocationByteCount.toLong()
+                            refreshRenderEnvironment()
+                            null
                         } finally {
                             settledRenderDurationMs = (SystemClock.elapsedRealtimeNanos() - stillStartedAt)
                                 .coerceAtLeast(0L) / 1_000_000L
                             workerRenderDurationMs += requireNotNull(settledRenderDurationMs)
                         }
-                        if (renderRequestGate.isCurrent(request.generation) && latestSliceInput() == input) {
+                        if (refined != null && renderRequestGate.isCurrent(request.generation) && latestSliceInput() == input) {
                             bitmap = refined
+                            displayedBitmapBytes = refined.allocationByteCount.toLong()
                             traceViewerCommit(refined, request.generation, input.slice, "still")
                             committedRenderGeneration = request.generation
                             committedInputStartedAtNs = request.inputStartedAtNs
                             committed = true
                             settledFrameCommitted = true
+                            renderSessionCacheBytes = preview.cachedBytes +
+                                if (full === preview) 0L else full.cachedBytes
+                            refreshRenderEnvironment()
                         }
                     }
                 } finally {
@@ -693,6 +861,11 @@ fun ViewerScreen(
                         durationMs = workerRenderDurationMs,
                         committed = committed,
                         heapUsedBytes = (runtime.totalMemory() - runtime.freeMemory()).coerceAtLeast(0L),
+                        nativeHeapBytes = Debug.getNativeHeapAllocatedSize().coerceAtLeast(0L),
+                        processPssBytes = Debug.MemoryInfo().also(Debug::getMemoryInfo).totalPss
+                            .coerceAtLeast(0).toLong() * 1024L,
+                        bitmapBytes = displayedBitmapBytes,
+                        canceled = !currentCoroutineContext().isActive,
                     )
                     if (settledFrameCommitted) {
                         adaptiveQualityLevel = adaptiveQualityController.recordRenderDuration(
@@ -702,6 +875,12 @@ fun ViewerScreen(
                 }
             }
         } finally {
+            withContext(NonCancellable + Dispatchers.Default) {
+                previewSession?.clearCache()
+                if (stillSession !== previewSession) stillSession?.clearCache()
+            }
+            renderSessionCacheBytes = 0L
+            refreshRenderEnvironment()
             if (operationId != null && renderJob != null) {
                 onFirstSliceRenderFinished(operationId, volume, renderJob)
             }
@@ -928,10 +1107,13 @@ fun ViewerScreen(
             onClearCache = onClearCache,
             scrollToViewerSettings = true,
             renderPerformance = renderPerformance,
-            memorySafeMaximumSidePx = RenderQualityPolicy.memorySafeMaximumSide(
-                renderEnvironment.maxHeapBytes,
-                renderEnvironment.availableHeapBytes,
-            ),
+            memorySafeMaximumSidePx = renderEnvironment.memorySafetyCapOverride
+                ?: RenderQualityPolicy.memorySafeMaximumSide(
+                    renderEnvironment.maxHeapBytes,
+                    renderEnvironment.effectiveAvailableHeapBytes,
+                ),
+            renderQualityProfile = renderQualityProfile,
+            renderEnvironmentSnapshot = renderEnvironmentSnapshot,
             onDismiss = { settingsOpen = false },
         )
     }

@@ -80,6 +80,21 @@ class MprRenderSessionTest {
         assertTrue(render.sample(3) !== render.sample(3))
     }
 
+    @Test fun cacheByteCountStaysWithinBudgetAndClearReleasesEveryEntry() {
+        val render = MprRenderSession(
+            volume(), MriPlane.AXIAL, 160,
+            cacheEntries = 8,
+            cacheBudgetBytes = 64L * 1024,
+        )
+
+        repeat(6) { render.sample(it) }
+
+        assertTrue(render.cachedBytes in 1L..64L * 1024)
+        render.clearCache()
+        assertEquals(0L, render.cachedBytes)
+        assertTrue(render.sample(0).values.isNotEmpty())
+    }
+
     @Test fun cancellationHappensAtRowBoundaries() {
         val render = MprRenderSession(volume(), MriPlane.CORONAL, 80)
         var rows = 0

@@ -58,6 +58,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import com.marcusfunt.neuroview.mri.RenderQualityMode
 import com.marcusfunt.neuroview.mri.RenderQualityPolicy
+import com.marcusfunt.neuroview.mri.RenderQualityProfile
+import com.marcusfunt.neuroview.mri.RenderEnvironmentSnapshot
 import com.marcusfunt.neuroview.mri.RenderQualitySettings
 import com.marcusfunt.neuroview.mri.RenderPerformanceSnapshot
 import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
@@ -124,6 +126,8 @@ internal fun NeuroViewSettingsSheet(
     onDismiss: () -> Unit,
     renderPerformance: RenderPerformanceSnapshot? = null,
     memorySafeMaximumSidePx: Int = RenderQualityPolicy.memorySafeMaximumSide(Runtime.getRuntime().maxMemory()),
+    renderQualityProfile: RenderQualityProfile? = null,
+    renderEnvironmentSnapshot: RenderEnvironmentSnapshot? = null,
 ) {
     val context = LocalContext.current
     val showRenderDiagnostics = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
@@ -329,7 +333,14 @@ internal fun NeuroViewSettingsSheet(
                 )
             }
             Text(
-                "Selected sizes are maximum image sides. The current memory guard allows still frames up to $memorySafeMaximumSidePx px.",
+                buildString {
+                    append("Requested still side: ")
+                    append(renderQualityProfile?.requestedStillMaxSide ?: renderQualitySettings.stillMaxSide)
+                    append(" px · effective side: ")
+                    append(renderQualityProfile?.stillMaxSide ?: renderQualitySettings.stillMaxSide)
+                    append(" px · memory guard: up to $memorySafeMaximumSidePx px.")
+                    renderQualityProfile?.constraintReason?.let { append(" Automatic adjustment: $it.") }
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = SettingsSecondary,
             )
@@ -403,7 +414,31 @@ internal fun NeuroViewSettingsSheet(
                         "${renderPerformance.supersededPercent}% superseded · " +
                         "peak heap ${renderPerformance.peakHeapUsedBytes / (1024L * 1024L)} MiB · " +
                         "max observed heap increase " +
-                        "${renderPerformance.maxObservedHeapIncreaseBytes / (1024L * 1024L)} MiB",
+                        "${renderPerformance.maxObservedHeapIncreaseBytes / (1024L * 1024L)} MiB · " +
+                        "canceled ${renderPerformance.canceledFrameCount} · native peak " +
+                        "${renderPerformance.peakNativeHeapBytes / (1024L * 1024L)} MiB · process PSS peak " +
+                        "${renderPerformance.peakProcessPssBytes / (1024L * 1024L)} MiB · bitmap peak " +
+                        "${renderPerformance.peakBitmapBytes / (1024L * 1024L)} MiB",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SettingsSecondary,
+                )
+                renderEnvironmentSnapshot?.let { snapshot ->
+                    Text(
+                        "Current memory · Java ${(snapshot.usedHeapBytes / (1024L * 1024L))}/" +
+                            "${snapshot.maxHeapBytes / (1024L * 1024L)} MiB used/maximum · native " +
+                            "${snapshot.nativeHeapAllocatedBytes / (1024L * 1024L)} MiB · process PSS " +
+                            "${snapshot.processPssBytes / (1024L * 1024L)} MiB · bitmaps/cache " +
+                            "${(snapshot.bitmapBytes / (1024L * 1024L))}/" +
+                            "${(snapshot.cachedRenderBytes / (1024L * 1024L))} MiB · " +
+                            "system available ${snapshot.systemAvailableBytes / (1024L * 1024L)} MiB · " +
+                            "${if (snapshot.powerSave) "battery saver" else "normal power"} · " +
+                            "thermal ${snapshot.thermalStatus.name.lowercase()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SettingsSecondary,
+                    )
+                }
+                Text(
+                    "Android does not expose exact GPU texture bytes; bitmap bytes and process PSS are the measurable indicators.",
                     style = MaterialTheme.typography.bodySmall,
                     color = SettingsSecondary,
                 )
