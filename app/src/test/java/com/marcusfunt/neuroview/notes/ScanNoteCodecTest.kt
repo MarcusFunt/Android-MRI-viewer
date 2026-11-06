@@ -35,7 +35,7 @@ class ScanNoteCodecTest {
 
         val restored = ScanNoteCodec.decode(v1).single()
         assertEquals("Older observation", restored.body)
-        assertFalse(restored.orientationVerified)
+        assertFalse(restored.spatialTransformPresent)
     }
 
     @Test
@@ -50,7 +50,7 @@ class ScanNoteCodecTest {
         val restored = ScanNoteCodec.decode(v2).single()
         assertEquals("Older observation", restored.body)
         assertEquals(null, restored.nativeStackAxis)
-        assertEquals(true, restored.orientationVerified)
+        assertEquals(true, restored.spatialTransformPresent)
     }
 
     @Test

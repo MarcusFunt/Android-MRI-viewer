@@ -195,6 +195,18 @@ class PlaneGeometry private constructor(
         )
     }
 
+    /** Quantizes normalized image coordinates to this geometry's fixed output sample grid. */
+    fun snapFractionsToOutputGrid(horizontal: Double, vertical: Double): PlaneFractions {
+        require(horizontal.isFinite() && vertical.isFinite())
+        require(horizontal in 0.0..1.0 && vertical in 0.0..1.0)
+        fun snap(fraction: Double, sampleCount: Int): Double {
+            val intervals = (sampleCount - 1).coerceAtLeast(1)
+            val index = (fraction * intervals).roundToInt().coerceIn(0, intervals)
+            return index.toDouble() / intervals
+        }
+        return PlaneFractions(snap(horizontal, width), snap(vertical, height))
+    }
+
     fun sample(volume: NiftiVolume, slice: Int, horizontal: Double, vertical: Double): MprProbe.Sample? {
         if (volume !== this.volume) return null
         if (!horizontal.isFinite() || !vertical.isFinite() || horizontal !in 0.0..1.0 || vertical !in 0.0..1.0) return null

@@ -16,7 +16,8 @@ data class ScanNote(
     val sliceCount: Int,
     val createdAtMillis: Long,
     val body: String,
-    val orientationVerified: Boolean = false,
+    /** A NIfTI spatial transform was present; this does not validate clinical orientation. */
+    val spatialTransformPresent: Boolean = false,
     val nativeStackAxis: Int? = null,
 )
 
@@ -37,7 +38,7 @@ object ScanNoteCodec {
             note.sliceIndex.toString(),
             note.sliceCount.toString(),
             note.createdAtMillis.toString(),
-            note.orientationVerified.toString(),
+            note.spatialTransformPresent.toString(),
             note.nativeStackAxis?.toString() ?: "-",
             encodeText(note.body),
         ).joinToString("|")
@@ -80,7 +81,7 @@ object ScanNoteCodec {
             sliceCount = sliceCount,
             createdAtMillis = fields[8].toLong(),
             body = decodeText(fields[if (version == VERSION) 11 else if (hasOrientationState) 10 else 9]),
-            orientationVerified = hasOrientationState && fields[9].toBooleanStrict(),
+            spatialTransformPresent = hasOrientationState && fields[9].toBooleanStrict(),
             nativeStackAxis = if (version == VERSION) fields[10].takeIf { it != "-" }?.toInt() else null,
         ).also {
             require(it.id.isNotBlank() && it.scanId.isNotBlank() && it.body.isNotBlank())

@@ -63,7 +63,8 @@ class ViewerNativeGridTest {
                 compose.onAllNodesWithContentDescription("Native · oblique MRI slice")
                     .fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithText("Native · oblique · return to Axial").assertIsDisplayed()
+            compose.onNodeWithText("Native · oblique").assertIsDisplayed()
+            compose.onNodeWithText("Return to Axial").assertIsDisplayed()
             compose.onNodeWithText("Coronal").performClick()
             compose.waitUntil(10_000L) {
                 compose.onAllNodesWithContentDescription("Real Coronal MRI slice")
@@ -112,7 +113,8 @@ class ViewerNativeGridTest {
                     .fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithText("Axial").assertIsDisplayed()
-            compose.onNodeWithText("Native grid").assertExists()
+            compose.onNode(isSelectable() and hasText("Native grid", substring = true))
+                .assertExists()
         } finally {
             if (wasPresent) preferences.edit().putBoolean(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY, previous).commit()
             else preferences.edit().remove(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY).commit()

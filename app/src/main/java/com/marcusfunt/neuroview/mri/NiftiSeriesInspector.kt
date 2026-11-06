@@ -13,12 +13,46 @@ import java.util.zip.GZIPInputStream
  */
 data class NiftiSeriesMetadata(
     val dimensions: List<Int>,
-    val spacingMm: List<Double>,
+    /** NIfTI pixdim values before conversion from the header's declared spatial unit. */
+    val spacingHeaderUnits: List<Double>,
     val timepoints: Int,
     val dataType: String,
     val orientation: String,
     val description: String,
-)
+    val spatialUnits: NiftiSpatialUnits = NiftiSpatialUnits.UNKNOWN,
+    val qformCode: Int = 0,
+    val sformCode: Int = 0,
+) {
+    /** Null means millimetres cannot be stated from the NIfTI header. */
+    val spacingMm: List<Double>?
+        get() = spatialUnits.millimetersPerUnit?.let { scale ->
+            spacingHeaderUnits.takeIf { values ->
+                values.size == 3 && values.all { it.isFinite() && it > 0.0 }
+            }?.map { it * scale }
+        }
+}
+
+enum class NiftiSpatialUnits(
+    val label: String,
+    val millimetersPerUnit: Double?,
+) {
+    METER("m", 1000.0),
+    MILLIMETER("mm", 1.0),
+    MICRON("µm", 0.001),
+    UNKNOWN("units unknown", null);
+
+    companion object {
+        fun fromNiftiCode(code: Int): NiftiSpatialUnits = when (code and 0x07) {
+            1 -> METER
+            2 -> MILLIMETER
+            3 -> MICRON
+            else -> UNKNOWN
+        }
+
+        fun fromStoredName(name: String?): NiftiSpatialUnits =
+            entries.firstOrNull { it.name == name } ?: UNKNOWN
+    }
+}
 
 object NiftiSeriesInspector {
     private val dataTypes = mapOf(
@@ -88,11 +122,14 @@ object NiftiSeriesInspector {
             val spacing = (1..3).map { dimension ->
                 buffer.getFloat(76 + dimension * 4).toDouble()
             }
+            val sformCode = buffer.getShort(254).toInt()
+            val qformCode = buffer.getShort(252).toInt()
             val orientation = when {
-                buffer.getShort(254).toInt() > 0 -> "sform"
-                buffer.getShort(252).toInt() > 0 -> "qform"
+                sformCode > 0 -> "sform"
+                qformCode > 0 -> "qform"
                 else -> "unknown"
             }
+            val spatialUnits = NiftiSpatialUnits.fromNiftiCode(buffer.get(123).toInt())
             // NIfTI's descriptive text is free-form; store locally, never send to logs/server.
             val description = bytes.copyOfRange(148, 228)
                 .takeWhile { it != 0.toByte() }
@@ -102,11 +139,14 @@ object NiftiSeriesInspector {
                 .take(80)
             return NiftiSeriesMetadata(
                 dimensions = dims,
-                spacingMm = spacing,
+                spacingHeaderUnits = spacing,
                 timepoints = frames,
                 dataType = spec.first,
                 orientation = orientation,
                 description = description,
+                spatialUnits = spatialUnits,
+                qformCode = qformCode,
+                sformCode = sformCode,
             )
         }
     }

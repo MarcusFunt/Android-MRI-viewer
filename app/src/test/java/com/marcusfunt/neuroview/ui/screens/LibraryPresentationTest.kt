@@ -5,6 +5,7 @@ import com.marcusfunt.neuroview.catalog.ImportResult
 import com.marcusfunt.neuroview.catalog.ScanCatalogSnapshot
 import com.marcusfunt.neuroview.catalog.ScanRecord
 import com.marcusfunt.neuroview.mri.NiftiSeriesMetadata
+import com.marcusfunt.neuroview.mri.NiftiSpatialUnits
 import com.marcusfunt.neuroview.ui.components.toCatalogQuantity
 import com.marcusfunt.neuroview.ui.operations.OperationUnit
 import java.io.File
@@ -13,7 +14,10 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LibraryPresentationTest {
-    private val metadata = NiftiSeriesMetadata(listOf(8, 9, 10), listOf(1.0, 1.0, 1.0), 1, "int16", "sform", "T1")
+    private val metadata = NiftiSeriesMetadata(
+        listOf(8, 9, 10), listOf(1.0, 1.0, 1.0), 1, "int16", "sform", "T1",
+        NiftiSpatialUnits.MILLIMETER,
+    )
     private fun scan(id: Int, frames: Int = 1) = ScanRecord("$id", if (id % 2 == 0) "new" else "old",
         "content://scan/$id", "source-$id.nii.gz", metadata.copy(timepoints = frames), "Alias $id")
 

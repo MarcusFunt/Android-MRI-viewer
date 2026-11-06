@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ScanCatalogPersistenceTest {
@@ -46,6 +47,7 @@ class ScanCatalogPersistenceTest {
 
             val reloaded = ScanCatalog(context).load().scans.single()
             assertEquals(expectedLabel, reloaded.label)
+            assertNull("Legacy raw pixdim cannot be assumed to be millimeters.", reloaded.metadata.spacingMm)
         } finally {
             preferences.edit().clear().commit()
         }

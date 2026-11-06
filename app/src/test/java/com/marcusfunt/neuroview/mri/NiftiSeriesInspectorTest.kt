@@ -8,6 +8,7 @@ import java.util.concurrent.CancellationException
 import java.util.zip.GZIPOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -16,6 +17,7 @@ class NiftiSeriesInspectorTest {
         order: ByteOrder = ByteOrder.LITTLE_ENDIAN,
         dimensions: Triple<Int, Int, Int> = Triple(11, 9, 7),
         orientation: Int = 1,
+        spatialUnits: Int = 2,
         datatype: Int = 16,
         bitpix: Int = 32,
     ): ByteArray {
@@ -32,6 +34,7 @@ class NiftiSeriesInspectorTest {
         header.putFloat(84, 0.8f)
         header.putFloat(88, 1.3f)
         header.putFloat(108, 352f)
+        header.put(123, spatialUnits.toByte())
         header.putShort(254, orientation.toShort())
         "Synthetic only".toByteArray().forEachIndexed { i, b ->
             header.put(148 + i, b)
@@ -47,9 +50,9 @@ class NiftiSeriesInspectorTest {
     fun indexesHeaderWithoutRequiringPixelData() {
         val data = NiftiSeriesInspector.inspect(ByteArrayInputStream(niftiHeader()))
         assertEquals(listOf(11, 9, 7), data.dimensions)
-        assertEquals(0.8, data.spacingMm[0], 0.00001)
-        assertEquals(0.8, data.spacingMm[1], 0.00001)
-        assertEquals(1.3, data.spacingMm[2], 0.00001)
+        assertEquals(0.8, requireNotNull(data.spacingMm)[0], 0.00001)
+        assertEquals(0.8, requireNotNull(data.spacingMm)[1], 0.00001)
+        assertEquals(1.3, requireNotNull(data.spacingMm)[2], 0.00001)
         assertEquals("float32", data.dataType)
         assertEquals("sform", data.orientation)
         assertEquals("Synthetic only", data.description)
@@ -74,6 +77,30 @@ class NiftiSeriesInspectorTest {
             ByteArrayInputStream(niftiHeader(orientation = 0)),
         )
         assertEquals("unknown", data.orientation)
+    }
+
+    @Test
+    fun convertsHeaderMetersAndMicronsToMillimeters() {
+        val meters = NiftiSeriesInspector.inspect(
+            ByteArrayInputStream(niftiHeader(spatialUnits = 1)),
+        )
+        val microns = NiftiSeriesInspector.inspect(
+            ByteArrayInputStream(niftiHeader(spatialUnits = 3)),
+        )
+
+        assertEquals(800.0, requireNotNull(meters.spacingMm)[0], 0.0001)
+        assertEquals(1300.0, requireNotNull(meters.spacingMm)[2], 0.0001)
+        assertEquals(0.0008, requireNotNull(microns.spacingMm)[0], 0.000001)
+        assertEquals(0.0013, requireNotNull(microns.spacingMm)[2], 0.000001)
+    }
+
+    @Test
+    fun doesNotExposeMillimeterSpacingWhenHeaderUnitsAreMissing() {
+        val data = NiftiSeriesInspector.inspect(
+            ByteArrayInputStream(niftiHeader(spatialUnits = 0)),
+        )
+
+        assertNull("Unknown header units must not be presented as millimeters.", data.spacingMm)
     }
 
     @Test

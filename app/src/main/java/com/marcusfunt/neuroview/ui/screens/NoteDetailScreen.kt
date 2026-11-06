@@ -69,7 +69,7 @@ fun NoteDetailScreen(
                     } else {
                         "${note.planeName.lowercase().replaceFirstChar { it.uppercase() }} image plane · slice ${note.sliceIndex + 1}/${note.sliceCount}"
                     },
-                    if (note.orientationVerified) "orientation verified" else "orientation unverified",
+                    if (note.spatialTransformPresent) "spatial transform available" else "spatial transform unknown",
                     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                         .format(Date(note.createdAtMillis)),
                 ).joinToString("  ·  "),

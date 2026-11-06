@@ -138,9 +138,9 @@ private fun NoteRow(note: ScanNote, available: Boolean, onClick: () -> Unit) {
                 color = NeuroChrome.muted,
             )
         }
-        if (!note.orientationVerified) {
+        if (!note.spatialTransformPresent) {
             Text(
-                "Orientation unverified",
+                "Spatial transform unknown",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.error,
             )

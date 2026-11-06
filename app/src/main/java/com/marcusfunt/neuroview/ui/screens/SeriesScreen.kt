@@ -324,11 +324,10 @@ private fun ScanSeriesCard(scan: ScanRecord, catalog: ScanCatalog, onClick: () -
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    scan.metadata.spacingMm.joinToString(" × ") {
-                        String.format(Locale.US, "%.2f", it)
-                    } + " mm",
+                    scanSpacingSummary(scan.metadata),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (scan.metadata.spacingMm == null) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                     scan.metadata.dataType + "  •  " + scan.metadata.orientation +

@@ -27,6 +27,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -46,6 +47,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -108,7 +110,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.graphics.Color
@@ -152,6 +157,7 @@ import com.marcusfunt.neuroview.mri.MriPlane
 import com.marcusfunt.neuroview.mri.ViewPlaneDescriptor
 import com.marcusfunt.neuroview.mri.NativeGridOrientation
 import com.marcusfunt.neuroview.mri.PlaneGeometry
+import com.marcusfunt.neuroview.mri.PlaneFractions
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.mri.AdaptiveQualityLevel
 import com.marcusfunt.neuroview.mri.AdaptiveRenderQualityController
@@ -175,6 +181,8 @@ import com.marcusfunt.neuroview.ui.operations.SystemMonotonicClock
 import com.marcusfunt.neuroview.ui.viewer.ViewerGestureController
 import com.marcusfunt.neuroview.ui.viewer.ViewerGestureState
 import com.marcusfunt.neuroview.ui.viewer.ViewportTransform
+import com.marcusfunt.neuroview.ui.viewer.MeasurementPoint
+import com.marcusfunt.neuroview.ui.viewer.MeasurementState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -193,12 +201,6 @@ import kotlin.math.sqrt
 private const val DEFAULT_MRI_IMAGE_SCALE = 1f
 private const val RENDER_ENVIRONMENT_SAMPLE_INTERVAL_MS = 3_000L
 
-private data class MprMeasurementPoint(
-    val fractionX: Double,
-    val fractionY: Double,
-    val worldRasMm: DoubleArray,
-)
-
 private data class PendingViewerTap(val position: Offset, val upTimeMillis: Long)
 
 private fun imageFractionsFromTap(
@@ -213,19 +215,6 @@ private fun imageFractionsFromTap(
         viewport.width, viewport.height, image.width, image.height, scale, panOffset,
     ).imageFractionForScreenPoint(tap) ?: return null
     return fractions.x.toDouble() to fractions.y.toDouble()
-}
-
-private fun viewportPointForImageFraction(
-    fractionX: Double,
-    fractionY: Double,
-    image: Bitmap,
-    viewport: IntSize,
-    scale: Float,
-    panOffset: Offset,
-): Offset? {
-    return ViewportTransform(
-        viewport.width, viewport.height, image.width, image.height, scale, panOffset,
-    ).screenPointForImageFraction(Offset(fractionX.toFloat(), fractionY.toFloat()))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1379,6 +1368,7 @@ internal fun MriContent(
     var showAdjustments by rememberSaveable { mutableStateOf(false) }
     var showProcessing by rememberSaveable { mutableStateOf(false) }
     var showMoreActions by rememberSaveable { mutableStateOf(false) }
+    var showInspectMenu by rememberSaveable { mutableStateOf(false) }
     var noteEditorOpen by rememberSaveable { mutableStateOf(false) }
     var noteText by rememberSaveable { mutableStateOf("") }
     var noteSaved by rememberSaveable { mutableStateOf(false) }
@@ -1386,12 +1376,14 @@ internal fun MriContent(
     var orientationDetailsOpen by rememberSaveable(volume) { mutableStateOf(false) }
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
-    var measurementMode by rememberSaveable(volume) { mutableStateOf(false) }
+    var measurementMode by rememberSaveable(volume, descriptor) { mutableStateOf(false) }
+    var endpointSnapEnabled by rememberSaveable(volume) { mutableStateOf(false) }
     var showUnknownSpatialUnitsDialog by remember(volume) { mutableStateOf(false) }
-    val measurementPoints = remember(volume, descriptor, selectedSlice) {
-        mutableStateOf<List<MprMeasurementPoint>>(emptyList())
+    var measurementState by remember(volume, descriptor, selectedSlice) { mutableStateOf(MeasurementState()) }
+    val measurementSamplingGeometry = remember(volume, descriptor) {
+        PlaneGeometry.create(volume, descriptor, MprRenderer.MAX_IMAGE_SIDE)
     }
-    val currentMeasurementPoints by rememberUpdatedState(measurementPoints)
+    val currentMeasurementState by rememberUpdatedState(measurementState)
     val currentMeasurementMode by rememberUpdatedState(measurementMode)
     val currentProbeMode by rememberUpdatedState(probeCrosshairEnabled)
     var probeReading by remember(volume) { mutableStateOf<String?>(null) }
@@ -1410,14 +1402,22 @@ internal fun MriContent(
             showUnknownSpatialUnitsDialog = true
             return
         }
-        measurementPoints.value = emptyList()
         if (enabled) {
+            measurementState = MeasurementState()
             measurementMode = true
             if (probeCrosshairEnabled) onProbeCrosshairChange(false)
             onReferenceWorldChange(null)
         } else {
             measurementMode = false
+            measurementState = MeasurementState()
         }
+    }
+
+    fun setProbeMode(enabled: Boolean) {
+        if (enabled && measurementMode) setMeasurementMode(false)
+        if (enabled != probeCrosshairEnabled) onProbeCrosshairChange(enabled)
+        probeReading = null
+        onReferenceWorldChange(null)
     }
 
     fun viewportTransform(image: Bitmap? = currentBitmap): ViewportTransform? {
@@ -1427,19 +1427,29 @@ internal fun MriContent(
         )
     }
 
+    fun measurementPointAt(horizontal: Double, vertical: Double): MeasurementPoint? {
+        val fractions = if (endpointSnapEnabled) {
+            measurementSamplingGeometry.snapFractionsToOutputGrid(horizontal, vertical)
+        } else {
+            PlaneFractions(horizontal, vertical)
+        }
+        val sample = measurementSamplingGeometry.sample(
+            volume, currentSlice, fractions.horizontal, fractions.vertical,
+        ) ?: return null
+        return MeasurementPoint(fractions.horizontal, fractions.vertical, sample.worldRasMm)
+    }
+
     fun handleToolTap(tap: Offset) {
         val fractions = imageFractionsFromTap(tap, currentBitmap, imageViewport, scale, panOffset)
             ?: return
-        val sampled = MprProbe.sample(
-            volume, descriptor, currentSlice, fractions.first, fractions.second,
-        )
         if (currentMeasurementMode) {
-            if (sampled != null) {
-                val point = MprMeasurementPoint(fractions.first, fractions.second, sampled.worldRasMm)
-                val points = currentMeasurementPoints.value
-                currentMeasurementPoints.value = if (points.size < 2) points + point else listOf(point)
-            }
+            measurementState = currentMeasurementState.add(
+                measurementPointAt(fractions.first, fractions.second),
+            )
         } else if (currentProbeMode) {
+            val sampled = MprProbe.sample(
+                volume, descriptor, currentSlice, fractions.first, fractions.second,
+            )
             if (sampled != null) {
                 currentReferenceWorldChange(sampled.worldRasMm)
                 probeReading = "Voxel ${sampled.voxelIJK.joinToString(", ") {
@@ -1453,12 +1463,12 @@ internal fun MriContent(
     }
 
     fun measurementHandleAt(tap: Offset): Int? {
-        if (!currentMeasurementMode || currentMeasurementPoints.value.isEmpty()) return null
+        if (!currentMeasurementMode || currentMeasurementState.points.isEmpty()) return null
         val transform = viewportTransform() ?: return null
         val hitRadius = with(density) { 48.dp.toPx() }
-        return currentMeasurementPoints.value.indices
+        return currentMeasurementState.points.indices
             .mapNotNull { index ->
-                val point = currentMeasurementPoints.value[index]
+                val point = currentMeasurementState.points[index]
                 val screen = transform.screenPointForImageFraction(
                     Offset(point.fractionX.toFloat(), point.fractionY.toFloat()),
                 ) ?: return@mapNotNull null
@@ -1475,13 +1485,26 @@ internal fun MriContent(
     fun moveMeasurementHandle(index: Int, position: Offset) {
         val image = currentBitmap ?: return
         val fraction = viewportTransform(image)?.imageFractionForScreenPoint(position) ?: return
-        val sample = MprProbe.sample(
-            volume, descriptor, currentSlice, fraction.x.toDouble(), fraction.y.toDouble(),
-        ) ?: return
-        val points = currentMeasurementPoints.value.toMutableList()
-        if (index !in points.indices) return
-        points[index] = MprMeasurementPoint(fraction.x.toDouble(), fraction.y.toDouble(), sample.worldRasMm)
-        currentMeasurementPoints.value = points
+        val point = measurementPointAt(fraction.x.toDouble(), fraction.y.toDouble()) ?: return
+        measurementState = currentMeasurementState.move(
+            index,
+            point,
+        )
+    }
+
+    fun nudgeMeasurementPoint(index: Int, horizontalDelta: Double, verticalDelta: Double) {
+        val point = currentMeasurementState.points.getOrNull(index) ?: return
+        val nextX = (point.fractionX + horizontalDelta).coerceIn(0.0, 1.0)
+        val nextY = (point.fractionY + verticalDelta).coerceIn(0.0, 1.0)
+        measurementState = currentMeasurementState.move(index, measurementPointAt(nextX, nextY))
+    }
+
+    fun finishMeasurement() {
+        val finished = currentMeasurementState.finish()
+        if (finished.isFinished) {
+            measurementState = finished
+            measurementMode = false
+        }
     }
 
     fun applyDoubleTap(tap: Offset) {
@@ -1490,6 +1513,35 @@ internal fun MriContent(
         scale = next.scale
         onZoomScaleChanged(next.scale)
         panOffset = next.panOffset
+    }
+
+    fun adjustZoom(factor: Float) {
+        val transform = viewportTransform() ?: return
+        val next = transform.zoomAt(
+            Offset(imageViewport.width / 2f, imageViewport.height / 2f),
+            factor,
+        )
+        scale = next.scale
+        onZoomScaleChanged(next.scale)
+        panOffset = next.panOffset
+    }
+
+    fun fitImage() {
+        val fit = viewportTransform()?.fit() ?: return
+        scale = fit.scale
+        onZoomScaleChanged(fit.scale)
+        panOffset = fit.panOffset
+    }
+
+    fun panImage(horizontalDirection: Int, verticalDirection: Int) {
+        val transform = viewportTransform() ?: return
+        val moved = transform.copy(
+            panOffset = transform.panOffset + Offset(
+                imageViewport.width * horizontalDirection * -0.25f,
+                imageViewport.height * verticalDirection * -0.25f,
+            ),
+        ).clamped()
+        panOffset = moved.panOffset
     }
 
     fun commitPendingTap() {
@@ -1524,7 +1576,7 @@ internal fun MriContent(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(probeCrosshairEnabled, volume) {
+    LaunchedEffect(probeCrosshairEnabled, volume, descriptor) {
         probeReading = null
         currentReferenceWorldChange(null)
         if (probeCrosshairEnabled) {
@@ -1602,7 +1654,7 @@ internal fun MriContent(
             Column(modifier = Modifier.fillMaxWidth().traceComposeFirstDraw("viewer.plane-tabs")) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
-                        .offset(y = (-4).dp).selectableGroup(),
+                        .offset(y = (-4).dp).horizontalScroll(rememberScrollState()).selectableGroup(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     MriPlane.entries.forEach { option ->
@@ -1612,7 +1664,7 @@ internal fun MriContent(
                             animationSpec = tween(motionDuration), label = "Plane selection",
                         )
                         Box(
-                            modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                            modifier = Modifier.widthIn(min = 88.dp).heightIn(min = 48.dp)
                                 .selectable(
                                     selected = selected,
                                     role = Role.Tab,
@@ -1626,11 +1678,15 @@ internal fun MriContent(
                                     style = MaterialTheme.typography.labelLarge.copy(fontSize = 16.sp),
                                     fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                                     color = tabColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 if (selected && descriptor.isNativeGrid && !descriptor.isObliqueNative) {
                                     Text(if (nativeAssessment.orientationKnown) "Native grid" else "Native*",
                                         color = NeuroChrome.accent.copy(alpha = 0.82f),
-                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                        maxLines = 1,
+                                    )
                                 }
                             }
                             if (selected) {
@@ -1647,33 +1703,49 @@ internal fun MriContent(
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(
-                        onClick = if (descriptor.isNativeGrid) {
-                            { onPlaneSelect(descriptor.nearestAnatomicalPlane ?: MriPlane.AXIAL) }
-                        } else onNativeGridSelect,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            if (descriptor.isNativeGrid && descriptor.isObliqueNative) {
-                                "Native · oblique · return to ${descriptor.nearestAnatomicalPlane?.label ?: "Axial"}"
-                            } else if (descriptor.isNativeGrid) {
-                                "Return to ${descriptor.nearestAnatomicalPlane?.label ?: "Axial"}"
-                            } else if (!nativeAssessment.orientationKnown) {
-                                "Native grid · assumed"
-                            } else if (nativeAssessment.obliquityDegrees > NativeGridOrientation.ALIGNED_TOLERANCE_DEGREES) {
-                                "Native · oblique"
-                            } else "Native grid",
-                            color = NeuroChrome.accent,
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+                        if (descriptor.isNativeGrid) {
+                            Text(
+                                descriptor.label,
+                                modifier = Modifier.weight(1f),
+                                color = NeuroChrome.accent,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TextButton(
+                            onClick = if (descriptor.isNativeGrid) {
+                                { onPlaneSelect(descriptor.nearestAnatomicalPlane ?: MriPlane.AXIAL) }
+                            } else onNativeGridSelect,
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) {
+                            Text(
+                                if (descriptor.isNativeGrid) "Return to ${descriptor.nearestAnatomicalPlane?.label ?: "Axial"}"
+                                else if (!nativeAssessment.orientationKnown) "Native grid · assumed"
+                                else if (nativeAssessment.obliquityDegrees > NativeGridOrientation.ALIGNED_TOLERANCE_DEGREES) "Native · oblique"
+                                else "Native grid",
+                                color = NeuroChrome.accent,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                     Box {
                         TextButton(
                             onClick = { orientationMenuExpanded = true },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                                contentDescription = "Startup view settings"
+                            },
                         ) { Text("Startup", color = NeuroChrome.muted, style = MaterialTheme.typography.labelSmall) }
                         DropdownMenu(
                             expanded = orientationMenuExpanded,
@@ -1969,6 +2041,21 @@ internal fun MriContent(
                         scaleY = scale
                         translationX = panOffset.x
                         translationY = panOffset.y
+                    }.semantics {
+                        stateDescription = if (scale > 1.01f) {
+                            "Zoomed to ${(scale * 100).roundToInt()} percent. Use zoom controls or pinch to change zoom."
+                        } else "Image fitted to view. Use Zoom in or pinch to zoom."
+                        customActions = buildList {
+                            add(CustomAccessibilityAction("Zoom in") { adjustZoom(1.25f); true })
+                            if (scale > 1.01f) {
+                                add(CustomAccessibilityAction("Zoom out") { adjustZoom(0.8f); true })
+                                add(CustomAccessibilityAction("Fit image") { fitImage(); true })
+                                add(CustomAccessibilityAction("Move image left") { panImage(-1, 0); true })
+                                add(CustomAccessibilityAction("Move image right") { panImage(1, 0); true })
+                                add(CustomAccessibilityAction("Move image up") { panImage(0, -1); true })
+                                add(CustomAccessibilityAction("Move image down") { panImage(0, 1); true })
+                            }
+                        }
                     },
                     contentScale = ContentScale.Fit,
                 )
@@ -2006,25 +2093,36 @@ internal fun MriContent(
             }
             if (scale > 1.01f) {
                 TextButton(
-                    onClick = {
-                        val fit = viewportTransform()?.fit() ?: return@TextButton
-                        scale = fit.scale
-                        onZoomScaleChanged(fit.scale)
-                        panOffset = fit.panOffset
-                    },
-                    modifier = Modifier.align(Alignment.TopStart).semantics {
+                    onClick = ::fitImage,
+                    modifier = Modifier.align(Alignment.TopStart).heightIn(min = 48.dp).semantics {
                         contentDescription = "Fit image"
                     },
                 ) { Text("Fit", color = NeuroChrome.accent) }
             }
-            if (scale > 1.01f) {
-                Text(
-                    "${(scale * 100).roundToInt()}% · pinch to zoom",
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = NeuroChrome.muted,
-                )
+            Column(
+                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                IconButton(
+                    onClick = { adjustZoom(1.25f) },
+                    modifier = Modifier.size(48.dp).semantics { contentDescription = "Zoom in" },
+                ) { Text("+", color = NeuroChrome.accent, fontSize = 24.sp) }
+                IconButton(
+                    onClick = { adjustZoom(0.8f) },
+                    enabled = scale > 1.01f,
+                    modifier = Modifier.size(48.dp).semantics { contentDescription = "Zoom out" },
+                ) { Text("−", color = NeuroChrome.accent, fontSize = 24.sp) }
             }
+            Text(
+                if (scale > 1.01f) "${(scale * 100).roundToInt()}% · pinch to zoom" else "Fit · pinch to zoom",
+                modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp).semantics {
+                    contentDescription = if (scale > 1.01f) {
+                        "Zoom ${(scale * 100).roundToInt()} percent. Pinch to change zoom."
+                    } else "Image fitted. Pinch to zoom."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = NeuroChrome.muted,
+            )
             val reference = referenceWorld
             if (probeCrosshairEnabled && reference != null && bitmap != null && imageViewport.width > 0) {
                 if (MprProbe.sliceForWorld(volume, descriptor, reference) == currentSlice) {
@@ -2052,35 +2150,7 @@ internal fun MriContent(
                     }
                 }
             }
-            val pointsForSlice = measurementPoints.value
-            if (measurementMode && bitmap != null && pointsForSlice.isNotEmpty()) {
-                val overlayPoints = pointsForSlice.mapNotNull { point ->
-                    viewportPointForImageFraction(
-                        point.fractionX,
-                        point.fractionY,
-                        bitmap,
-                        imageViewport,
-                        scale,
-                        panOffset,
-                    )
-                }
-                if (overlayPoints.isNotEmpty()) {
-                    Canvas(Modifier.fillMaxSize()) {
-                        if (overlayPoints.size == 2) {
-                            drawLine(
-                                color = NeuroChrome.accent,
-                                start = overlayPoints[0],
-                                end = overlayPoints[1],
-                                strokeWidth = 3.dp.toPx(),
-                            )
-                        }
-                        overlayPoints.forEach { point ->
-                            drawCircle(Color.Black, radius = 8.dp.toPx(), center = point)
-                            drawCircle(NeuroChrome.accent, radius = 5.dp.toPx(), center = point)
-                        }
-                    }
-                }
-            }
+            MeasurementOverlay(measurementState, bitmap, imageViewport, scale, panOffset)
             if (focusMode) {
                 TextButton(
                     onClick = onFocusToggle,
@@ -2094,8 +2164,6 @@ internal fun MriContent(
                     color = NeuroChrome.topBar.copy(alpha = 0.94f),
                     contentColor = NeuroChrome.ink,
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, NeuroChrome.accent.copy(alpha = 0.4f)),
-                    shadowElevation = 8.dp,
                 ) {
                     Column(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
@@ -2109,59 +2177,22 @@ internal fun MriContent(
                         )
                         Text(
                             probeReading ?: "Tap a point on the image to inspect it.",
+                            modifier = Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
             }
-            if (measurementMode) {
-                val points = measurementPoints.value
-                val measurementStatus = when (points.size) {
-                    0 -> "Tap two points on this slice."
-                    1 -> "First point set · tap the second point."
-                    else -> "Distance: ${String.format(
-                        java.util.Locale.US,
-                        "%.1f mm",
-                        MprProbe.distanceMm(points[0].worldRasMm, points[1].worldRasMm),
-                    )}"
-                }
-                Surface(
-                    modifier = Modifier.align(Alignment.TopStart).padding(10.dp)
-                        .fillMaxWidth(0.94f),
-                    color = NeuroChrome.topBar.copy(alpha = 0.96f),
-                    contentColor = NeuroChrome.ink,
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, NeuroChrome.accent.copy(alpha = 0.5f)),
-                    shadowElevation = 8.dp,
-                ) {
-                    Row(
-                        modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            Text(
-                                "Measure distance",
-                                color = NeuroChrome.accent,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(measurementStatus, style = MaterialTheme.typography.bodySmall)
-                        }
-                        TextButton(
-                            onClick = { measurementPoints.value = emptyList() },
-                            enabled = points.isNotEmpty(),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        ) { Text("Clear") }
-                        TextButton(
-                            onClick = { setMeasurementMode(false) },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        ) { Text("Done") }
-                    }
-                }
-            }
+            MeasurementStatusOverlay(
+                state = measurementState,
+                active = measurementMode,
+                snapEnabled = endpointSnapEnabled,
+                modifier = Modifier.align(Alignment.TopStart).padding(8.dp).fillMaxWidth(0.98f),
+                onClear = { measurementState = measurementState.clear() },
+                onCancel = { setMeasurementMode(false) },
+                onFinish = ::finishMeasurement,
+                onNudgePoint = ::nudgeMeasurementPoint,
+            )
         }
 
         if (!focusMode) {
@@ -2267,29 +2298,61 @@ internal fun MriContent(
         ) {
             Row(
                 modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    TextButton(
+                        onClick = { showInspectMenu = true },
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics {
+                            contentDescription = "Inspect tools"
+                        },
+    ) { Text("Inspect", style = MaterialTheme.typography.labelLarge, maxLines = 1) }
+                    DropdownMenu(
+                        expanded = showInspectMenu,
+                        onDismissRequest = { showInspectMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(if (measurementMode) "Stop measuring" else "Measure distance") },
+                            onClick = {
+                                showInspectMenu = false
+                                setMeasurementMode(!measurementMode)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (probeCrosshairEnabled) "Stop probe" else "Probe") },
+                            onClick = {
+                                showInspectMenu = false
+                                setProbeMode(!probeCrosshairEnabled)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text("Endpoint snapping: ${if (endpointSnapEnabled) "on" else "off"}")
+                            },
+                            enabled = measurementState.points.isEmpty(),
+                            onClick = {
+                                endpointSnapEnabled = !endpointSnapEnabled
+                                showInspectMenu = false
+                            },
+                        )
+                    }
+                }
                 TextButton(
                     onClick = { showAdjustments = true },
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                    modifier = Modifier.heightIn(min = 48.dp).semantics {
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics {
                         contentDescription = "Display adjustments"
                     },
-                ) {
-                    Text("Adjust", style = MaterialTheme.typography.labelLarge)
-                }
+                ) { Text("Adjust", style = MaterialTheme.typography.labelLarge, maxLines = 1) }
                 TextButton(
-                    onClick = {
-                        noteText = ""
-                        noteSaved = false
-                        noteEditorOpen = true
+                    onClick = onFocusToggle,
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics {
+                        contentDescription = "Focus mode"
                     },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) {
-                    Text("Add note", style = MaterialTheme.typography.labelLarge)
-                }
+                ) { Text("Focus", style = MaterialTheme.typography.labelLarge, maxLines = 1) }
             }
             Box {
                 IconButton(
@@ -2305,17 +2368,12 @@ internal fun MriContent(
                     onDismissRequest = { showMoreActions = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text(if (measurementMode) "Stop measuring" else "Measure distance") },
+                        text = { Text("Add note") },
                         onClick = {
                             showMoreActions = false
-                            setMeasurementMode(!measurementMode)
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Focus mode") },
-                        onClick = {
-                            showMoreActions = false
-                            onFocusToggle()
+                            noteText = ""
+                            noteSaved = false
+                            noteEditorOpen = true
                         },
                     )
                     DropdownMenuItem(
