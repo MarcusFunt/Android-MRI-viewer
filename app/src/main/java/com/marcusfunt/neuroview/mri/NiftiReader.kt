@@ -26,6 +26,10 @@ class NiftiVolume(
     val timepoints: Int,
     private val backing: MappedNiftiStore? = null,
     val hasKnownSpatialUnits: Boolean = true,
+    val sourcePixdimMm: List<Double> = listOf(
+        affine.axisSpacing(0), affine.axisSpacing(1), affine.axisSpacing(2),
+    ),
+    val sourceQfac: Double? = null,
 ) : Closeable {
     init {
         val count = nx.toLong() * ny * nz
@@ -388,6 +392,8 @@ object NiftiReader {
             NiftiVolume(
                 nx, ny, nz, data, affine, low, upper, transformSource, timepoints, backing,
                 hasKnownSpatialUnits,
+                sourcePixdimMm = listOf(dx, dy, dz),
+                sourceQfac = pixdim[0],
             )
             }
         }

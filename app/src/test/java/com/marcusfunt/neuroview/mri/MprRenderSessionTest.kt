@@ -71,6 +71,15 @@ class MprRenderSessionTest {
         assertTrue(render.sample(4) !== original)
     }
 
+    @Test fun scalarCacheEvictsWhenItsByteBudgetIsExceeded() {
+        val render = MprRenderSession(
+            volume(), MriPlane.AXIAL, 80,
+            cacheEntries = 8,
+            cacheBudgetBytes = 1L,
+        )
+        assertTrue(render.sample(3) !== render.sample(3))
+    }
+
     @Test fun cancellationHappensAtRowBoundaries() {
         val render = MprRenderSession(volume(), MriPlane.CORONAL, 80)
         var rows = 0
@@ -88,19 +97,16 @@ class MprRenderSessionTest {
         assertEquals(render.width * render.height, render.sample(3).values.size)
     }
 
-    @Test fun sessionGridConstructionCanBeCanceledBetweenRows() {
+    @Test fun affineIncrementSamplingCanBeCanceledBetweenRows() {
         var checkedRows = 0
-
+        val session = MprRenderSession(volume(), MriPlane.AXIAL, 128)
         assertThrows(CancellationException::class.java) {
-            MprRenderSession(
-                volume(), MriPlane.AXIAL, 128,
-                cancellationCheck = {
-                    checkedRows++
-                    if (checkedRows == 3) throw CancellationException("Cancel stale grid construction")
-                },
-            )
+            session.sample(3) {
+                checkedRows++
+                if (checkedRows == 3) throw CancellationException("Cancel stale row sampling")
+            }
         }
-
         assertEquals(3, checkedRows)
+        assertEquals(session.width * session.height, session.sample(3).values.size)
     }
 }

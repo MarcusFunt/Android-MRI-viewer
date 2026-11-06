@@ -45,7 +45,7 @@ class MprProbeTest {
         }
     }
 
-    @Test fun flippedAffinePreservesRasBasedScreenOrientation() {
+    @Test fun flippedAffineStillShowsPatientRightOnScreenLeft() {
         val data = FloatArray(11 * 11 * 11) { index -> (index % 11).toFloat() }
         val affine = SpatialAffine.fromRows(
             doubleArrayOf(
@@ -55,11 +55,11 @@ class MprProbeTest {
             ),
         )
         val v = NiftiVolume(11, 11, 11, data, affine, 0f, 10f, "sform", 1)
-        val rightSideOfScreen = requireNotNull(MprProbe.sample(v, MriPlane.AXIAL, 5, 0.0, 0.5))
-        val leftSideOfScreen = requireNotNull(MprProbe.sample(v, MriPlane.AXIAL, 5, 1.0, 0.5))
-        assertEquals(0f, rightSideOfScreen.intensity, 0.01f)
-        assertEquals(10f, leftSideOfScreen.intensity, 0.01f)
-        assertTrue(rightSideOfScreen.worldRasMm[0] > leftSideOfScreen.worldRasMm[0])
+        val leftSideOfScreen = requireNotNull(MprProbe.sample(v, MriPlane.AXIAL, 5, 0.0, 0.5))
+        val rightSideOfScreen = requireNotNull(MprProbe.sample(v, MriPlane.AXIAL, 5, 1.0, 0.5))
+        assertEquals(0f, leftSideOfScreen.intensity, 0.01f)
+        assertEquals(10f, rightSideOfScreen.intensity, 0.01f)
+        assertTrue(leftSideOfScreen.worldRasMm[0] > rightSideOfScreen.worldRasMm[0])
     }
 
     @Test fun tappingOutsideImageIsNotSampled() {

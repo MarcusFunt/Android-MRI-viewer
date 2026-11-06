@@ -26,6 +26,67 @@ class SpatialAffine private constructor(
             forward[8 + axis] * forward[8 + axis],
     )
 
+    /** Unit RAS+ direction of one stored voxel axis, preserving its sign. */
+    fun voxelAxisDirectionRas(axis: Int): DoubleArray {
+        require(axis in 0..2)
+        val spacing = axisSpacing(axis)
+        return doubleArrayOf(forward[axis] / spacing, forward[4 + axis] / spacing, forward[8 + axis] / spacing)
+    }
+
+    /** Unit RAS+ normal of a plane with one fixed voxel index. */
+    fun voxelPlaneNormalDirectionRas(axis: Int): DoubleArray {
+        require(axis in 0..2)
+        val offset = axis * 4
+        val length = sqrt(
+            inverse[offset] * inverse[offset] +
+                inverse[offset + 1] * inverse[offset + 1] +
+                inverse[offset + 2] * inverse[offset + 2],
+        )
+        return doubleArrayOf(
+            inverse[offset] / length,
+            inverse[offset + 1] / length,
+            inverse[offset + 2] / length,
+        )
+    }
+
+    /** True when stored voxel axes are not mutually orthogonal (sform shear). */
+    fun hasShear(tolerance: Double = 1e-3): Boolean =
+        (0..2).any { first ->
+            (first + 1..2).any { second ->
+                abs(dot(voxelAxisDirectionRas(first), voxelAxisDirectionRas(second))) > tolerance
+            }
+        }
+
+    /** Voxel coordinates traversed by one millimetre along a RAS+ world axis. */
+    fun worldAxisSamplingDensity(axis: Int): Double {
+        require(axis in 0..2)
+        return sqrt(
+            inverse[axis] * inverse[axis] +
+                inverse[4 + axis] * inverse[4 + axis] +
+                inverse[8 + axis] * inverse[8 + axis],
+        )
+    }
+
+    /** Density-derived output step; this is a sampling heuristic, not scanner resolution. */
+    fun worldAxisSamplingStep(axis: Int): Double =
+        1.0 / worldAxisSamplingDensity(axis).coerceAtLeast(1e-12)
+
+    /** Perpendicular world distance between slices on adjacent fixed-index planes. */
+    fun voxelPlaneSpacing(axis: Int): Double {
+        require(axis in 0..2)
+        val offset = axis * 4
+        val density = sqrt(
+            inverse[offset] * inverse[offset] +
+                inverse[offset + 1] * inverse[offset + 1] +
+                inverse[offset + 2] * inverse[offset + 2],
+        )
+        return 1.0 / density.coerceAtLeast(1e-12)
+    }
+
+    fun rows(): DoubleArray = forward.clone()
+
+    internal fun inverseRows(): DoubleArray = inverse.clone()
+
     fun bounds(nx: Int, ny: Int, nz: Int): Array<DoubleArray> {
         val min = doubleArrayOf(
             Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY,
@@ -125,5 +186,8 @@ class SpatialAffine private constructor(
                 matrix[4]*x + matrix[5]*y + matrix[6]*z + matrix[7],
                 matrix[8]*x + matrix[9]*y + matrix[10]*z + matrix[11],
             )
+
+        private fun dot(first: DoubleArray, second: DoubleArray): Double =
+            first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
     }
 }

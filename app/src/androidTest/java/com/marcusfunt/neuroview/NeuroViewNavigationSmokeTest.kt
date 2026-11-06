@@ -20,6 +20,7 @@ import com.marcusfunt.neuroview.mri.SpatialAffine
 import com.marcusfunt.neuroview.notes.ScanNote
 import com.marcusfunt.neuroview.notes.ScanNoteStore
 import com.marcusfunt.neuroview.ui.VolumeLoadState
+import com.marcusfunt.neuroview.ui.DrawOrderDiagnostics
 import com.marcusfunt.neuroview.ui.screens.ViewerScreen
 import com.marcusfunt.neuroview.ui.theme.NeuroViewTheme
 
@@ -63,6 +64,8 @@ class NeuroViewNavigationSmokeTest {
 
     @Test
     fun homeCompositorDiagnosticsAreActuallyPaintedOnScreen() {
+        DrawOrderDiagnostics.enabledForTests = true
+        try {
         val marker = "brain-preview-first-frame-drawn"
         compose.waitUntil(timeoutMillis = 10_000) {
             compose.onAllNodesWithTag(marker).fetchSemanticsNodes().isNotEmpty()
@@ -84,6 +87,20 @@ class NeuroViewNavigationSmokeTest {
                 red < 80 && green > 150 && blue > 150
             } >= 100,
         )
+        } finally {
+            DrawOrderDiagnostics.enabledForTests = false
+        }
+    }
+
+    @Test
+    fun homeDrawOrderMarkersAreAbsentInAnOrdinaryDebugBuild() {
+        DrawOrderDiagnostics.enabledForTests = false
+        val marker = "brain-preview-first-frame-drawn"
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithTag(marker).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("home-preview-overlay-diagnostic").assertDoesNotExist()
+        compose.onNodeWithTag("home-preview-behind-diagnostic").assertDoesNotExist()
     }
 
     @Test

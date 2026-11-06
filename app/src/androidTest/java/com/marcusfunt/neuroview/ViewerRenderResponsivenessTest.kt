@@ -15,6 +15,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.ui.graphics.asAndroidBitmap
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.mri.SpatialAffine
+import com.marcusfunt.neuroview.ui.DrawOrderDiagnostics
 import com.marcusfunt.neuroview.ui.VolumeLoadState
 import com.marcusfunt.neuroview.ui.screens.ViewerScreen
 import com.marcusfunt.neuroview.ui.theme.NeuroViewTheme
@@ -28,6 +29,7 @@ class ViewerRenderResponsivenessTest {
 
     @Test
     fun planeChangeDropsOldBitmapUntilCorrectlyLabeledReplacementIsReady() {
+        DrawOrderDiagnostics.enabledForTests = true
         val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
         val displayPreferences = targetContext.getSharedPreferences(
             "neuroview_display_v1", android.content.Context.MODE_PRIVATE,
@@ -103,6 +105,7 @@ class ViewerRenderResponsivenessTest {
             }
             compose.onNodeWithContentDescription("Real Axial MRI slice").assertDoesNotExist()
         } finally {
+            DrawOrderDiagnostics.enabledForTests = false
             displayPreferences.edit().clear().commit()
             originalSettings.forEach { (key, value) ->
                 val editor = displayPreferences.edit()
@@ -117,6 +120,47 @@ class ViewerRenderResponsivenessTest {
                 editor.commit()
             }
         }
+    }
+
+    @Test
+    fun diagnosticMarkersAreAbsentFromOrdinaryDebugViewer() {
+        DrawOrderDiagnostics.enabledForTests = false
+        val values = FloatArray(8 * 8 * 8) { index -> (index % 256).toFloat() }
+        val volume = NiftiVolume(
+            nx = 8,
+            ny = 8,
+            nz = 8,
+            values = values,
+            affine = SpatialAffine.axisAligned(1.0, 1.0, 1.0),
+            percentileLow = 0f,
+            percentileHigh = 255f,
+            transformSource = "sform (RAS+)",
+            timepoints = 1,
+        )
+        compose.activityRule.scenario.onActivity { activity ->
+            val content = activity.findViewById<ViewGroup>(android.R.id.content)
+                .getChildAt(0) as ComposeView
+            content.setContent {
+                NeuroViewTheme {
+                    ViewerScreen(
+                        volumeState = VolumeLoadState.Ready("synthetic MRI", volume),
+                        onFirstSliceBitmapReady = {},
+                        onFirstSliceDisplayed = {},
+                        onFirstSliceRenderStarted = { _, _, _ -> },
+                        onFirstSliceRenderFinished = { _, _, _ -> },
+                        onCancelLoad = {},
+                        onRetryLoad = {},
+                        onReturnToLibrary = {},
+                        onImport = {},
+                        onNavigate = {},
+                    )
+                }
+            }
+        }
+        compose.waitUntil(timeoutMillis = 15_000L) {
+            compose.onAllNodesWithContentDescription("Real Axial MRI slice").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("viewer-tabs-overlay-diagnostic").assertDoesNotExist()
     }
 
     private fun countMagentaPixels(bitmap: android.graphics.Bitmap): Int {

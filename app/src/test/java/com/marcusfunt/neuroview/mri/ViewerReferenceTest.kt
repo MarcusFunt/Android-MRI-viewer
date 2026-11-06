@@ -9,8 +9,13 @@ class ViewerReferenceTest {
     private fun resource(name: String) = requireNotNull(javaClass.getResourceAsStream("/viewer-reference/$name"))
     private fun fixture(): NiftiVolume {
         val loaded = resource("asymmetric-oblique-4d.nii").use { NiftiReader.read(it) }
-        return NiftiVolume(loaded.nx, loaded.ny, loaded.nz, loaded.values, loaded.affine,
-            -50f, 72.5f, loaded.transformSource, loaded.timepoints)
+        return NiftiVolume(
+            loaded.nx, loaded.ny, loaded.nz, loaded.values, loaded.affine,
+            -50f, 72.5f, loaded.transformSource, loaded.timepoints,
+            hasKnownSpatialUnits = loaded.hasKnownSpatialUnits,
+            sourcePixdimMm = loaded.sourcePixdimMm,
+            sourceQfac = loaded.sourceQfac,
+        )
     }
 
     @Test fun threePlanesMatchIndependentObliqueFlippedAnisotropicReference() {
@@ -66,6 +71,8 @@ class ViewerReferenceTest {
     @Test fun fourDimensionalFixtureUsesOnlyFirstFrame() {
         val volume = fixture()
         assertEquals(2, volume.timepoints)
+        assertEquals(1.0, volume.sourceQfac ?: Double.NaN, 0.0)
+        assertEquals(3, volume.sourcePixdimMm.size)
         assertEquals(7 * 6 * 5, volume.values.size)
         assertEquals(-50f, volume.nearest(0, 0, 0), 0f)
         assertEquals(72.5f, volume.nearest(6, 5, 4), 0f)

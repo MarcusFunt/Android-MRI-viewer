@@ -19,6 +19,7 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
     @Volatile var onFirstFrameDrawn: () -> Unit = {}
     @Volatile var onRenderFailure: (String) -> Unit = {}
     @Volatile var onTouchDragChanged: (Boolean) -> Unit = {}
+    @Volatile internal var presentedFrameCountForTests: Long = 0L
 
     private val renderLock = Object()
     private val frameSubmitted = AtomicBoolean(false)
@@ -52,10 +53,12 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
 
             override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
                 trace("SurfaceTexture destroyed")
-                stopRenderThread()
                 synchronized(renderLock) {
                     if (activeSurfaceTexture === surface) activeSurfaceTexture = null
+                    shutdownRequested = true
+                    renderLock.notifyAll()
                 }
+                stopRenderThread()
                 return true
             }
 
@@ -77,6 +80,10 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
 
     override fun onDetachedFromWindow() {
         trace("View detached")
+        synchronized(renderLock) {
+            shutdownRequested = true
+            renderLock.notifyAll()
+        }
         stopRenderThread()
         super.onDetachedFromWindow()
     }
@@ -168,7 +175,7 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
     }
 
     private fun startRenderThreadIfReadyLocked() {
-        if (!resumed || activeSurfaceTexture == null || renderThread?.isAlive == true) return
+        if (!isAttachedToWindow || !resumed || activeSurfaceTexture == null || renderThread?.isAlive == true) return
         shutdownRequested = false
         val surface = requireNotNull(activeSurfaceTexture)
         renderThread = Thread({ renderLoop(surface) }, "NeuroViewBrainEgl").apply {
@@ -187,22 +194,21 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
             }
             running
         }
-        if (thread != null && thread !== Thread.currentThread()) {
-            runCatching { thread.join() }
-        }
+        val stopped = stopRenderThreadBounded(thread)
         synchronized(renderLock) {
-            if (renderThread === thread) renderThread = null
-            shutdownRequested = false
+            if (stopped && renderThread === thread) renderThread = null
+            if (stopped && renderThread == null) shutdownRequested = false
         }
     }
 
     private fun renderLoop(surfaceTexture: SurfaceTexture) {
-        val egl = runCatching { EglSession.create(surfaceTexture) }
-            .onFailure { fail("Could not create the GLES preview surface", it) }
-            .getOrNull() ?: return
+        var egl: EglSession? = null
         var lastWidth = 0
         var lastHeight = 0
         try {
+            egl = runCatching { EglSession.create(surfaceTexture) }
+                .onFailure { fail("Could not create the GLES preview surface", it) }
+                .getOrNull() ?: return
             brainRenderer.onSurfaceCreated(null, null)
             while (true) {
                 val size = synchronized(renderLock) {
@@ -225,10 +231,11 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
                     lastHeight = size.second
                 }
                 brainRenderer.onDrawFrame(null)
-                if (!egl.swapBuffers()) {
+                if (egl?.swapBuffers() != true) {
                     fail("Could not present the GLES preview frame", null)
                     return
                 }
+                presentedFrameCountForTests += 1L
                 if (frameSubmitted.get()) {
                     post { onFirstFrameDrawn() }
                     frameSubmitted.set(false)
@@ -241,7 +248,17 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
         } catch (failure: Throwable) {
             fail("GLES preview stopped unexpectedly", failure)
         } finally {
-            egl.release()
+            egl?.release()
+            synchronized(renderLock) {
+                val wasRequestedShutdown = shutdownRequested
+                if (renderThread === Thread.currentThread()) renderThread = null
+                shutdownRequested = false
+                if (wasRequestedShutdown && resumed && isAttachedToWindow && activeSurfaceTexture != null) {
+                    renderRequested = true
+                    startRenderThreadIfReadyLocked()
+                }
+                renderLock.notifyAll()
+            }
             trace("EGL render thread stopped")
         }
     }
@@ -338,4 +355,30 @@ internal class BrainGlTextureView(context: Context) : TextureView(context) {
             }
         }
     }
+}
+
+/** Bounded grace period, followed by interruption and one bounded final wait. */
+internal fun stopRenderThreadBounded(
+    thread: Thread?,
+    gracefulWaitMillis: Long = 250L,
+    interruptWaitMillis: Long = 100L,
+): Boolean {
+    if (thread == null || !thread.isAlive) return true
+    if (thread === Thread.currentThread()) return false
+    try {
+        thread.join(gracefulWaitMillis.coerceAtLeast(1L))
+    } catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+        return false
+    }
+    if (thread.isAlive) {
+        thread.interrupt()
+        try {
+            thread.join(interruptWaitMillis.coerceAtLeast(1L))
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return false
+        }
+    }
+    return !thread.isAlive
 }

@@ -31,7 +31,7 @@ class SettledRenderDetailTest {
         val volume = NiftiVolume(33, 8, 2, values, SpatialAffine.axisAligned(1.0, 1.0, 1.0), 0f, 255f, "synthetic", 1)
         val image = MprRenderSession(volume, MriPlane.AXIAL, 33).render(0, 0.5f, 1f)
         for (intensity in 0..32) {
-            assertEquals(0xff000000.toInt() or (intensity * 0x010101), image.pixels[32 - intensity])
+            assertEquals(0xff000000.toInt() or (intensity * 0x010101), image.pixels[image.width - 1 - intensity])
         }
     }
 

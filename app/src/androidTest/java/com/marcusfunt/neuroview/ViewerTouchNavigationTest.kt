@@ -1,6 +1,7 @@
 package com.marcusfunt.neuroview
 
 import android.graphics.Bitmap
+import android.graphics.Color
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.*
@@ -8,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
@@ -28,6 +30,157 @@ class ViewerTouchNavigationTest {
     @get:Rule val compose = createComposeRule()
     private val volume = NiftiVolume(16, 16, 256, FloatArray(16 * 16 * 256) { (it % 256).toFloat() },
         SpatialAffine.axisAligned(1.0, 1.0, 1.0), 0f, 255f, "sform (synthetic RAS+)", 1)
+
+    @Test fun defaultViewerFitShowsAllFourSourceCorners() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(cornerMarkerFrame())
+        compose.setContent { Harness(slice, bitmap) }
+
+        val displayed = compose.onNodeWithContentDescription("Real Axial MRI slice")
+            .captureToImage().asAndroidBitmap()
+
+        listOf(Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW).forEach { expectedColor ->
+            assertTrue("The default fit cropped source corner #${Integer.toHexString(expectedColor)}",
+                countExactPixels(displayed, expectedColor) > 0)
+        }
+    }
+
+    @Test fun viewerDoesNotRequireZoomOrScrollModeSelection() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(frame(0))
+        compose.setContent { Harness(slice, bitmap) }
+
+        compose.onNodeWithContentDescription("Gesture mode").assertDoesNotExist()
+        compose.onNodeWithText("Scroll").assertDoesNotExist()
+        compose.onNodeWithText("Zoom").assertDoesNotExist()
+    }
+
+    @Test fun twoFingerPinchZoomsInBrowseModeWithoutChangingSlice() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(panPattern())
+        compose.setContent { Harness(slice, bitmap) }
+        val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
+        val beforePinch = image.captureToImage().asAndroidBitmap()
+
+        image.performTouchInput {
+            down(0, Offset(centerX - 40f, centerY))
+            down(1, Offset(centerX + 40f, centerY))
+            updatePointerTo(0, Offset(centerX - 80f, centerY))
+            updatePointerTo(1, Offset(centerX + 80f, centerY))
+            move()
+            up(1)
+            up(0)
+        }
+
+        val afterPinch = image.captureToImage().asAndroidBitmap()
+        assertTrue("A two-finger pinch in browse mode must zoom the MRI image.",
+            differingPixels(beforePinch, afterPinch) > 0)
+        compose.runOnIdle { assertEquals("Pinch must not navigate slices.", 128, slice.intValue) }
+    }
+
+    @Test fun addingAndRemovingPointersDuringPinchNeverFallsBackToSliceScrolling() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(panPattern())
+        compose.setContent { Harness(slice, bitmap) }
+        val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
+        image.performTouchInput {
+            down(0, Offset(centerX - 40f, centerY))
+            down(1, Offset(centerX + 40f, centerY))
+            updatePointerTo(0, Offset(centerX - 80f, centerY))
+            updatePointerTo(1, Offset(centerX + 80f, centerY))
+            move()
+            up(1)
+            moveBy(Offset(0f, 220f))
+            down(1, Offset(centerX + 20f, centerY))
+            down(2, Offset(centerX - 20f, centerY))
+            moveBy(Offset(0f, 80f))
+            up(2)
+            up(1)
+            moveBy(Offset(0f, -180f))
+            up(0)
+        }
+        compose.runOnIdle { assertEquals("A pinch stream must stay owned through pointer changes.", 128, slice.intValue) }
+    }
+
+    @Test fun doubleTapZoomsFromFitAndTheNextDoubleTapReturnsToFit() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(cornerMarkerFrame())
+        compose.setContent { Harness(slice, bitmap) }
+        val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
+        val cornersBefore = image.captureToImage().asAndroidBitmap()
+        assertTrue(listOf(Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW)
+            .all { countExactPixels(cornersBefore, it) > 0 })
+
+        image.performTouchInput { doubleClick(center) }
+        val zoomed = image.captureToImage().asAndroidBitmap()
+        assertTrue("Double tap must zoom the image from Fit.",
+            listOf(Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW)
+                .any { countExactPixels(zoomed, it) == 0 })
+
+        image.performTouchInput { doubleClick(center) }
+        val fitted = image.captureToImage().asAndroidBitmap()
+        assertTrue("The next double tap must restore the full source field of view.",
+            listOf(Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW)
+                .all { countExactPixels(fitted, it) > 0 })
+    }
+
+    @Test fun fitActionRestoresTheEntireSourceFieldOfView() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(cornerMarkerFrame())
+        compose.setContent { Harness(slice, bitmap) }
+        val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
+        pinch(image)
+        compose.onNodeWithText("Fit").performClick()
+        val fitted = image.captureToImage().asAndroidBitmap()
+        assertTrue(listOf(Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW)
+            .all { countExactPixels(fitted, it) > 0 })
+        compose.onNodeWithText("200% · pinch to zoom").assertDoesNotExist()
+    }
+
+    @Test fun sliceScrubbingPreservesZoomAndPan() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(panPattern())
+        compose.setContent { Harness(slice, bitmap) }
+        val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
+        pinch(image)
+        twoFingerPan(image, Offset(40f, 0f))
+        val beforeScroll = image.captureToImage().asAndroidBitmap()
+
+        image.performTouchInput {
+            swipe(Offset(centerX, height * 0.8f), Offset(centerX, height * 0.2f), durationMillis = 600)
+        }
+
+        compose.onNodeWithText("200% · pinch to zoom").assertIsDisplayed()
+        compose.runOnIdle { assertNotEquals("The test drag should scrub slices.", 128, slice.intValue) }
+        assertEquals("Scrubbing must preserve image zoom and pan.", 0,
+            differingPixels(beforeScroll, image.captureToImage().asAndroidBitmap()))
+    }
+
+    @Test fun twoFingerPinchRemainsAvailableWhileMeasuring() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(panPattern())
+        compose.setContent { Harness(slice, bitmap) }
+        compose.onNodeWithContentDescription("More viewer actions").performClick()
+        compose.onNodeWithText("Measure distance").performClick()
+        val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
+        val beforePinch = image.captureToImage().asAndroidBitmap()
+
+        image.performTouchInput {
+            down(0, Offset(centerX - 40f, centerY))
+            down(1, Offset(centerX + 40f, centerY))
+            updatePointerTo(0, Offset(centerX - 80f, centerY))
+            updatePointerTo(1, Offset(centerX + 80f, centerY))
+            move()
+            up(1)
+            up(0)
+        }
+
+        val afterPinch = image.captureToImage().asAndroidBitmap()
+        assertTrue("Measurement mode must keep two-finger zoom enabled.",
+            differingPixels(beforePinch, afterPinch) > 0)
+        compose.onNodeWithText("Tap two points on this slice.").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("Pinch must not navigate slices while measuring.", 128, slice.intValue) }
+    }
 
     @Test fun heldImageDragSurvivesRepeatedBitmapAndMotionChanges() {
         val slice = mutableIntStateOf(128)
@@ -112,12 +265,12 @@ class ViewerTouchNavigationTest {
         val focus = mutableStateOf(false)
         val bitmap = mutableStateOf(frame(0))
         compose.setContent { Harness(slice, bitmap, focus = focus) }
-        compose.onNodeWithText("Scroll").performClick()
-        compose.onNodeWithText("135% · drag to pan · pinch to zoom").assertExists()
+        pinch(compose.onNodeWithContentDescription("Real Axial MRI slice"))
+        compose.onNodeWithText("200% · pinch to zoom").assertExists()
         compose.onNodeWithContentDescription("More viewer actions").performClick()
         compose.onNodeWithText("Focus mode").performClick()
         compose.onNodeWithText("Exit focus").performClick()
-        compose.onNodeWithText("135% · drag to pan · pinch to zoom").assertExists()
+        compose.onNodeWithText("200% · pinch to zoom").assertExists()
         compose.onNodeWithText("138 / 256").assertExists()
         compose.runOnIdle { assertEquals(137, slice.intValue) }
     }
@@ -126,7 +279,7 @@ class ViewerTouchNavigationTest {
         val slice = mutableIntStateOf(128)
         val bitmap = mutableStateOf(frame(0))
         compose.setContent { Harness(slice, bitmap) }
-        compose.onNodeWithContentDescription("Gesture mode").assertExists()
+        compose.onNodeWithContentDescription("Gesture mode").assertDoesNotExist()
         compose.onNodeWithContentDescription("Display adjustments").assertExists()
         compose.onNodeWithContentDescription("More viewer actions").performClick()
         compose.onNodeWithText("Focus mode").assertExists()
@@ -139,25 +292,11 @@ class ViewerTouchNavigationTest {
         val bitmap = mutableStateOf(panPattern())
         compose.setContent { Harness(slice, bitmap) }
 
-        compose.onNodeWithText("Scroll").performClick()
-        compose.onNodeWithText("135% · drag to pan · pinch to zoom").assertIsDisplayed()
         val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
-        image.performTouchInput {
-            down(0, Offset(centerX - 40f, centerY))
-            down(1, Offset(centerX + 40f, centerY))
-            updatePointerTo(0, Offset(centerX - 80f, centerY))
-            updatePointerTo(1, Offset(centerX + 80f, centerY))
-            move()
-            up(1)
-            up(0)
-        }
-        compose.onNodeWithText("270% · drag to pan · pinch to zoom").assertIsDisplayed()
+        pinch(image)
+        compose.onNodeWithText("200% · pinch to zoom").assertIsDisplayed()
         val imageAtCenter = image.captureToImage().asAndroidBitmap()
-        image.performTouchInput {
-            down(center)
-            moveBy(Offset(40f, 0f), delayMillis = 100)
-            up()
-        }
+        twoFingerPan(image, Offset(40f, 0f))
         val imageAfterPan = image.captureToImage().asAndroidBitmap()
         assertTrue("The pan gesture must visibly move the test image.",
             differingPixels(imageAtCenter, imageAfterPan) > 0)
@@ -172,8 +311,9 @@ class ViewerTouchNavigationTest {
 
         compose.onNodeWithText("Clear").performClick()
         compose.onNodeWithText("Tap two points on this slice.").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("Toolbar taps must not leak into slice navigation.", 128, slice.intValue) }
         compose.onNodeWithText("Done").performClick()
-        compose.onNodeWithText("270% · drag to pan · pinch to zoom").assertIsDisplayed()
+        compose.onNodeWithText("200% · pinch to zoom").assertIsDisplayed()
         val imageAfterMeasurement = image.captureToImage().asAndroidBitmap()
         assertEquals("Measurement must preserve the panned image position.",
             0, differingPixels(imageAfterPan, imageAfterMeasurement))
@@ -199,6 +339,34 @@ class ViewerTouchNavigationTest {
             .assertIsDisplayed()
         compose.onNodeWithText("OK").performClick()
         compose.onNodeWithText("Tap two points on this slice.").assertDoesNotExist()
+    }
+
+    @Test fun draggingMeasurementHandleMovesEndpointWithoutChangingSlice() {
+        val slice = mutableIntStateOf(128)
+        val bitmap = mutableStateOf(panPattern())
+        compose.setContent { Harness(slice, bitmap) }
+        compose.onNodeWithContentDescription("More viewer actions").performClick()
+        compose.onNodeWithText("Measure distance").performClick()
+        val image = compose.onNodeWithContentDescription("Real Axial MRI slice")
+        val pointOffset = 0.2f * minOf(image.fetchSemanticsNode().boundsInRoot.width,
+            image.fetchSemanticsNode().boundsInRoot.height)
+        val firstPoint = Offset(image.fetchSemanticsNode().boundsInRoot.width / 2f - pointOffset,
+            image.fetchSemanticsNode().boundsInRoot.height / 2f)
+        val secondPoint = Offset(image.fetchSemanticsNode().boundsInRoot.width / 2f + pointOffset,
+            image.fetchSemanticsNode().boundsInRoot.height / 2f)
+        image.performTouchInput { click(firstPoint) }
+        image.performTouchInput { click(secondPoint) }
+        val beforeDrag = measurementDistanceText()
+
+        image.performTouchInput {
+            down(firstPoint)
+            moveBy(Offset(180f, 90f), delayMillis = 100)
+            up()
+        }
+
+        val afterDrag = measurementDistanceText()
+        assertNotEquals("Dragging a measurement handle must update its distance.", beforeDrag, afterDrag)
+        compose.runOnIdle { assertEquals("Measurement handle drag must not change slices.", 128, slice.intValue) }
     }
 
     @Test fun viewerSettingsOpenAtViewerControlsWithoutManualScrolling() {
@@ -277,16 +445,67 @@ class ViewerTouchNavigationTest {
     ) {
         NeuroViewTheme {
             CompositionLocalProvider(LocalNeuroViewMotion provides motion) {
-                    MriContent(Modifier.fillMaxSize(), focus.value, false, false, { focus.value = !focus.value },
-                        false, false, {}, 3f, volumeForTest, MriPlane.AXIAL, bitmap.value, false, {},
-                        slice.intValue, 256, onSliceChange ?: { slice.intValue = it }, { scrubbing.value = it }, {},
-                        null, "synthetic", null, {}, 0.4f, {}, 0.8f, {})
+                    MriContent(
+                        modifier = Modifier.fillMaxSize(),
+                        focusMode = focus.value,
+                        showSliceButtons = false,
+                        inertialScrolling = false,
+                        onFocusToggle = { focus.value = !focus.value },
+                        showOrientationMarkers = false,
+                        probeCrosshairEnabled = false,
+                        onProbeCrosshairChange = {},
+                        crosshairThicknessDp = 3f,
+                        onZoomScaleChanged = {},
+                        volume = volumeForTest,
+                        plane = MriPlane.AXIAL,
+                        descriptor = ViewPlaneDescriptor.worldAligned(MriPlane.AXIAL),
+                        bitmap = bitmap.value,
+                        renderStatusVisible = false,
+                        onImageViewportSizeChanged = {},
+                        selectedSlice = slice.intValue,
+                        totalSlices = 256,
+                        onSliceChange = onSliceChange ?: { slice.intValue = it },
+                        onScrubbingChanged = { scrubbing.value = it },
+                        onPlaneSelect = {},
+                        onNativeGridSelect = {},
+                        onStartupViewChange = {},
+                        onResetStartupView = {},
+                        selectedDocumentUri = null,
+                        originalDocumentName = "synthetic",
+                        referenceWorld = null,
+                        onReferenceWorldChange = {},
+                        windowCenter = 0.4f,
+                        onWindowCenter = {},
+                        windowWidth = 0.8f,
+                        onWindowWidth = {},
+                    )
             }
         }
     }
 
     private fun frame(value: Int): Bitmap = Bitmap.createBitmap(
         intArrayOf(0xff000000.toInt() or (value.coerceIn(0, 255) * 0x010101)), 1, 1, Bitmap.Config.ARGB_8888)
+
+    private fun cornerMarkerFrame(): Bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888).apply {
+        for (y in 0 until height) for (x in 0 until width) {
+            val color = when {
+                x < 8 && y < 8 -> Color.RED
+                x >= width - 8 && y < 8 -> Color.GREEN
+                x < 8 && y >= height - 8 -> Color.BLUE
+                x >= width - 8 && y >= height - 8 -> Color.YELLOW
+                else -> Color.WHITE
+            }
+            setPixel(x, y, color)
+        }
+    }
+
+    private fun countExactPixels(bitmap: Bitmap, color: Int): Int {
+        var count = 0
+        for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) {
+            if (bitmap.getPixel(x, y) == color) count++
+        }
+        return count
+    }
 
     private fun panPattern(): Bitmap = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888).apply {
         for (y in 0 until height) for (x in 0 until width) {
@@ -303,4 +522,34 @@ class ViewerTouchNavigationTest {
         }
         return differing
     }
+
+    private fun pinch(image: SemanticsNodeInteraction) {
+        image.performTouchInput {
+            down(0, Offset(centerX - 40f, centerY))
+            down(1, Offset(centerX + 40f, centerY))
+            updatePointerTo(0, Offset(centerX - 80f, centerY))
+            updatePointerTo(1, Offset(centerX + 80f, centerY))
+            move()
+            up(1)
+            up(0)
+        }
+    }
+
+    private fun twoFingerPan(image: SemanticsNodeInteraction, delta: Offset) {
+        image.performTouchInput {
+            down(0, Offset(centerX - 40f, centerY))
+            down(1, Offset(centerX + 40f, centerY))
+            updatePointerTo(0, Offset(centerX - 40f + delta.x, centerY + delta.y))
+            updatePointerTo(1, Offset(centerX + 40f + delta.x, centerY + delta.y))
+            move()
+            up(1)
+            up(0)
+        }
+    }
+
+    private fun measurementDistanceText(): String = compose
+        .onNodeWithText("Distance:", substring = true)
+        .fetchSemanticsNode()
+        .config[SemanticsProperties.Text]
+        .joinToString(separator = "") { it.text }
 }

@@ -65,9 +65,9 @@ import androidx.compose.ui.res.painterResource
 import android.content.Context
 import androidx.compose.ui.unit.sp
 import com.marcusfunt.neuroview.ui.BrainPreview
+import com.marcusfunt.neuroview.ui.DrawOrderDiagnostics
 import com.marcusfunt.neuroview.ui.traceComposeFirstDraw
 import com.marcusfunt.neuroview.ui.theme.LocalNeuroViewMotion
-import com.marcusfunt.neuroview.BuildConfig
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -248,7 +248,7 @@ fun HomeScreen(
                         },
                 ) {
                     if (shouldShowHomePreview(previewVisible, resumed)) {
-                        if (BuildConfig.DEBUG) {
+                        if (DrawOrderDiagnostics.isEnabled()) {
                             Box(
                                 modifier = Modifier.align(Alignment.TopStart).padding(8.dp).size(24.dp)
                                     .background(Color.Cyan).testTag("home-preview-behind-diagnostic"),
@@ -259,7 +259,7 @@ fun HomeScreen(
                             autoRotation = autoRotate && motionPreference.allowsDecorativeMotion,
                             resetRequest = resetRequest,
                         )
-                        if (BuildConfig.DEBUG) {
+                        if (DrawOrderDiagnostics.isEnabled()) {
                             Box(
                                 modifier = Modifier.align(Alignment.Center).size(12.dp)
                                     .background(Color.Magenta).testTag("home-preview-overlay-diagnostic"),

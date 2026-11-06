@@ -32,24 +32,17 @@ object MprProbe {
         horizontalFraction: Double,
         verticalFraction: Double,
     ): Sample? {
-        if (!horizontalFraction.isFinite() || !verticalFraction.isFinite() ||
-            horizontalFraction !in 0.0..1.0 || verticalFraction !in 0.0..1.0) return null
-        val bounds = volume.affine.bounds(volume.nx, volume.ny, volume.nz)
-        val world = DoubleArray(3)
-        world[plane.firstAxis] = MprRenderer.slicePosition(volume, plane, slice)
-        for ((axis, fraction) in listOf(
-            plane.horizontalAxis to horizontalFraction,
-            plane.verticalAxis to verticalFraction,
-        )) {
-            world[axis] = bounds[1][axis] - fraction * (bounds[1][axis] - bounds[0][axis])
-        }
-        val voxel = DoubleArray(3)
-        volume.affine.voxelInto(world[0], world[1], world[2], voxel)
-        if (voxel[0] !in 0.0..(volume.nx - 1).toDouble() ||
-            voxel[1] !in 0.0..(volume.ny - 1).toDouble() ||
-            voxel[2] !in 0.0..(volume.nz - 1).toDouble()) return null
-        return Sample(world, voxel, volume.sample(voxel[0], voxel[1], voxel[2]))
+        return sample(volume, ViewPlaneDescriptor.worldAligned(plane), slice, horizontalFraction, verticalFraction)
     }
+
+    fun sample(
+        volume: NiftiVolume,
+        descriptor: ViewPlaneDescriptor,
+        slice: Int,
+        horizontalFraction: Double,
+        verticalFraction: Double,
+    ): Sample? = PlaneGeometry.create(volume, descriptor, maxOf(8, MprRenderer.MAX_IMAGE_SIDE))
+        .sample(volume, slice, horizontalFraction, verticalFraction)
 
     fun sliceForWorld(volume: NiftiVolume, plane: MriPlane, world: DoubleArray): Int {
         require(world.size == 3 && world.all { it.isFinite() })
@@ -61,6 +54,9 @@ object MprProbe {
             .roundToInt().coerceIn(0, MprRenderer.sliceCount(volume, plane) - 1)
     }
 
+    fun sliceForWorld(volume: NiftiVolume, descriptor: ViewPlaneDescriptor, world: DoubleArray): Int =
+        PlaneGeometry.create(volume, descriptor, maxOf(8, MprRenderer.MAX_IMAGE_SIDE)).sliceForWorld(world)
+
     fun fractionsForWorld(volume: NiftiVolume, plane: MriPlane, world: DoubleArray): Pair<Double, Double> {
         require(world.size == 3)
         val bounds = volume.affine.bounds(volume.nx, volume.ny, volume.nz)
@@ -69,5 +65,16 @@ object MprProbe {
             return (bounds[1][axis] - world[axis]) / span
         }
         return fraction(plane.horizontalAxis) to fraction(plane.verticalAxis)
+    }
+
+    fun fractionsForWorld(
+        volume: NiftiVolume,
+        descriptor: ViewPlaneDescriptor,
+        world: DoubleArray,
+    ): Pair<Double, Double> {
+        require(world.size == 3)
+        val fractions = PlaneGeometry.create(volume, descriptor, maxOf(8, MprRenderer.MAX_IMAGE_SIDE))
+            .fractionsForWorld(world, slice = 0)
+        return fractions.horizontal to fractions.vertical
     }
 }

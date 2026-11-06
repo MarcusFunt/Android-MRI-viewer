@@ -26,7 +26,7 @@ data class RenderQualitySettings(
     val mode: RenderQualityMode = RenderQualityMode.AUTO,
     val adaptive: Boolean = true,
     val previewMaxSide: Int = 160,
-    val stillMaxSide: Int = 384,
+    val stillMaxSide: Int = 768,
     val refineDelayMs: Long = 72L,
 ) {
     fun validated(): RenderQualitySettings {
@@ -43,7 +43,7 @@ data class RenderQualitySettings(
         const val MIN_PREVIEW_SIDE = 96
         const val MAX_PREVIEW_SIDE = 320
         const val MIN_STILL_SIDE = 192
-        const val MAX_STILL_SIDE = 768
+        const val MAX_STILL_SIDE = 1536
         const val MIN_REFINE_DELAY_MS = 40L
         const val MAX_REFINE_DELAY_MS = 250L
     }
@@ -55,6 +55,8 @@ data class RenderEnvironment(
     val viewportMaxSidePx: Int,
     val powerSave: Boolean,
     val thermalStatus: ThermalStatus,
+    val zoomScale: Float = 1f,
+    val sourceMaxSide: Int = RenderQualitySettings.MAX_STILL_SIDE,
 )
 
 data class RenderQualityProfile(
@@ -72,9 +74,9 @@ object RenderQualityPolicy {
         val selected = settings.validated()
         val (basePreview, baseStill) = when (selected.mode) {
             RenderQualityMode.AUTO,
-            RenderQualityMode.BALANCED -> 160 to 384
-            RenderQualityMode.SMOOTH -> 112 to 256
-            RenderQualityMode.HIGH_DETAIL -> 224 to 576
+            RenderQualityMode.BALANCED -> 160 to 768
+            RenderQualityMode.SMOOTH -> 112 to 512
+            RenderQualityMode.HIGH_DETAIL -> 224 to 1024
             RenderQualityMode.MANUAL -> selected.previewMaxSide to selected.stillMaxSide
         }
 
@@ -97,10 +99,12 @@ object RenderQualityPolicy {
             environment.maxHeapBytes,
             environment.availableHeapBytes,
         )
-        val viewportCap = environment.viewportMaxSidePx.coerceAtLeast(96)
-        val safeCap = minOf(memoryCap, viewportCap)
-        val safePreview = preview.coerceIn(96, safeCap)
-        val safeStill = still.coerceIn(safePreview, safeCap)
+        val zoomAdjustedViewportCap = (environment.viewportMaxSidePx.coerceAtLeast(1) *
+            environment.zoomScale.coerceIn(1f, 4f)).roundToInt()
+        val sourceCap = environment.sourceMaxSide.coerceIn(8, RenderQualitySettings.MAX_STILL_SIDE)
+        val safeCap = minOf(memoryCap, zoomAdjustedViewportCap, sourceCap)
+        val safePreview = minOf(preview, safeCap).coerceAtLeast(minOf(96, safeCap))
+        val safeStill = minOf(still, safeCap).coerceAtLeast(safePreview)
 
         return RenderQualityProfile(
             previewMaxSide = safePreview,
