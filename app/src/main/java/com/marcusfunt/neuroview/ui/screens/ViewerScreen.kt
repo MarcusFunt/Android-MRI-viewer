@@ -1465,7 +1465,7 @@ internal fun MriContent(
     fun measurementHandleAt(tap: Offset): Int? {
         if (!currentMeasurementMode || currentMeasurementState.points.isEmpty()) return null
         val transform = viewportTransform() ?: return null
-        val hitRadius = with(density) { 48.dp.toPx() }
+        val hitRadius = with(density) { 24.dp.toPx() }
         return currentMeasurementState.points.indices
             .mapNotNull { index ->
                 val point = currentMeasurementState.points[index]
