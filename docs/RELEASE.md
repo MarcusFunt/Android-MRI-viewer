@@ -1,6 +1,6 @@
 # Release signing and prerelease process
 
-NeuroView prereleases are tag-bound Android APKs. The build must come from the exact tag commit, pass automated verification, use the project's stable signing identity, and publish the APK checksum and provenance. The v1.6 candidate source is `1.6.0-alpha.4` / Android versionCode `25`; its tag is `v1.6.0-alpha.4`.
+NeuroView prereleases are tag-bound Android APKs. The build must come from the exact tag commit, pass automated verification, use the project's stable signing identity, and publish the APK checksum and provenance. The v1.6 candidate source is `1.6.0-beta.1` / Android versionCode `26`; its tag is `v1.6.0-beta.1`.
 
 ## Stable signing identity
 
@@ -21,7 +21,7 @@ Set the environment variable `NEUROVIEW_RELEASE_CERT_SHA256` in `neuroview-signi
 
 ## Candidate workflow
 
-`.github/workflows/publish-v1.6-prerelease.yml` triggers only for the `v1.6.0-alpha.4` candidate tag. Future versions require an intentional version and workflow update. It:
+`.github/workflows/publish-v1.6-prerelease.yml` triggers only for the `v1.6.0-beta.1` candidate tag. Future versions require an intentional version and workflow update. It:
 
 1. Checks out the tagged commit and verifies that the tag, source SHA, Gradle versionName, and versionCode agree.
 2. Runs the mocked BrainSuite bridge tests, synthetic NIfTI/DICOM reference checks, Android build/unit tests/lint, and the API 35 Android instrumentation suite with read-only repository permission and no signing secrets. It uploads the resulting unsigned release APK with its checksum.
@@ -30,4 +30,4 @@ Set the environment variable `NEUROVIEW_RELEASE_CERT_SHA256` in `neuroview-signi
 
 Before creating a candidate tag, run the documented local checks in [Testing and validation](TESTING.md), review outstanding physical-device and reference-viewer gates, provision the protected secrets/environment, and confirm the candidate version code is higher than the preceding distributed Android build. The workflow only creates a prerelease when a tag is pushed; no tag is created or pushed as part of preparing this source change.
 
-The current historical release `v1.6-alpha` is marked as a full GitHub release, not a prerelease. The new workflow correctly marks future alpha tags as prereleases. Editing the existing public release metadata is a separate release-owner action and does not rewrite the old tag or APK.
+The historical release `v1.6-alpha` is marked as a full GitHub release, not a prerelease. The workflow marks the Beta 1 tag as a prerelease. Editing the existing public release metadata is a separate release-owner action and does not rewrite the old tag or APK.

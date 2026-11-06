@@ -1,6 +1,6 @@
 # Testing and validation
 
-These are **developer and QA procedures for the current source**, not medical-device validation. The current source candidate is `1.6.0-alpha.4` / versionCode 25; it has not been published. Earlier tagged APKs are older. See [README](../README.md) for installation and [Architecture](ARCHITECTURE.md) for module boundaries.
+These are **developer and QA procedures for the current source**, not medical-device validation. The current source candidate is `1.6.0-beta.1` / versionCode 26; it has not been published. Earlier tagged APKs are older. See [README](../README.md) for installation and [Architecture](ARCHITECTURE.md) for module boundaries.
 
 ## Basic Android checks
 
@@ -73,4 +73,4 @@ For a reproducible QA report, record the Git commit and APK SHA-256; Android mod
 
 ## Signed prerelease candidate
 
-See [Release signing and prerelease process](RELEASE.md) before creating the `v1.6.0-alpha.4` tag. The tag workflow runs JVM, lint, synthetic interoperability, BrainSuite bridge, and API 35 instrumentation checks without signing credentials, then passes the checksummed unsigned APK to a separate runner for signing and certificate verification. A reviewer-gated job attaches the signed APK, SHA-256 checksum, and provenance as a GitHub prerelease. It fails when credentials or the expected version are missing. The current checkout does not contain the stable key, so it cannot produce a distribution-signed candidate locally.
+See [Release signing and prerelease process](RELEASE.md) before creating the `v1.6.0-beta.1` tag. The tag workflow runs JVM, lint, synthetic interoperability, BrainSuite bridge, and API 35 instrumentation checks without signing credentials, then passes the checksummed unsigned APK to a separate runner for signing and certificate verification. A reviewer-gated job attaches the signed APK, SHA-256 checksum, and provenance as a GitHub prerelease. It fails when credentials or the expected version are missing. The current checkout does not contain the stable key, so it cannot produce a distribution-signed candidate locally.

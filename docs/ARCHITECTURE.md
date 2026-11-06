@@ -1,6 +1,6 @@
-# NeuroView architecture (current source candidate: v1.6.0-alpha.4)
+# NeuroView architecture (current source candidate: v1.6.0-beta.1)
 
-This document describes the v1.6.0-alpha.4 source candidate. It is not yet a signed distribution build: the protected stable signing identity has not been provisioned for this checkout. Historical phase-by-phase implementation notes live in the [development log](DEVELOPMENT_LOG.md).
+This document describes the v1.6.0-beta.1 source candidate. It is not yet a signed distribution build: the protected stable signing identity has not been provisioned for this checkout. Historical phase-by-phase implementation notes live in the [development log](DEVELOPMENT_LOG.md).
 
 ## Application structure
 

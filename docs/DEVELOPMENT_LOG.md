@@ -4,6 +4,13 @@ This is the **historical implementation and milestone record**, migrated from th
 
 For detailed 1.4 design decisions and its manual release gate, see [UX rework 1.4](UX_REWORK_1_4.md). Past changes are kept here rather than erased or misrepresented as current documentation.
 
+## v1.6.0-beta.1 candidate work — 2026-11-06
+
+- Prepared Android versionName `1.6.0-beta.1` and versionCode `26`, with the tag-bound prerelease workflow and release documentation aligned to `v1.6.0-beta.1`.
+- Integrated the native-grid and MPR work, measurement/probe refinements, viewer and settings accessibility polish, bounded rendering diagnostics, and versioned scan-note archive export/import with confirmed manual relinking.
+- Human review of the submitted phone screenshots was accepted. CI run [42229586091](https://github.com/MarcusFunt/Android-MRI-viewer/actions/runs/42229586091) passed build, JVM tests, lint, independent NIfTI/DICOM checks, and Android 15 emulator instrumentation after correcting the narrow-screen ruler handle hit area and switching CI to the supported SwANGLE graphics backend.
+- The candidate is not a signed or published release. The repository's protected signing/prerelease environments and stable signing identity are not configured. Physical-device/reference-viewer validation, external SAF-provider restore testing, and same-certificate update evidence remain release gates.
+
 ## v1.6.0-alpha.4 candidate work — 2026-11-06
 
 - Added versioned JSON notes export/import through the Android file picker. Import validates the bounded UTF-8 archive before merging, preserves existing notes and ID conflicts, skips duplicates, and retains source metadata for a user-confirmed relink. Backups do not include MRI images or provider URIs and are not encrypted.

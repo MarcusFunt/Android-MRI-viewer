@@ -6,10 +6,10 @@
 
 ## Project status and Android builds
 
-- **Current source candidate:** `1.6.0-alpha.4` (Android version code `25`, from `app/build.gradle.kts`). It includes the earlier measurement, rendering and accessibility work plus versioned scan-note backup and relinking. This source candidate is not yet a published release.
+- **Current source candidate:** `1.6.0-beta.1` (Android version code `26`, from `app/build.gradle.kts`). It includes native-grid viewing, improved measurement and probe tools, viewer accessibility polish, and versioned scan-note backup and relinking. This source candidate is not yet a published release.
 - **Previously published v1.6 builds:** [v1.6 Alpha](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.6-alpha) and [v1.6 Alpha 3](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.6-alpha.3) are historical debug-signed APKs. Earlier [v1.5.1](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.5.1), [v1.5.0](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.5.0), [v1.4.0 research preview](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v1.4.0), and [v0.7.0 debug prerelease](https://github.com/MarcusFunt/Android-MRI-viewer/releases/tag/v0.7.0) remain available for historical use.
 - **Build the current source**, or open the [Android CI workflow](https://github.com/MarcusFunt/Android-MRI-viewer/actions/workflows/android.yml) and download the `neuroview-debug` artifact from a successful run for the desired commit. GitHub Actions artifacts are ZIP archives containing `app-debug.apk`; a successful build is not a clinical validation. A tag-bound protected workflow is documented in [Release signing and prerelease process](docs/RELEASE.md).
-- Distributed releases require the project's stable signing certificate. It is not provisioned in this checkout, so the Alpha 4 APK has not been built or published. APKs signed by different certificates may not update each other; uninstalling removes app-private catalog and notes. Export notes before changing signing identity or reinstalling destructively.
+- Distributed releases require the project's stable signing certificate. It is not provisioned in this checkout, so the Beta 1 distribution APK has not been produced or published. APKs signed by different certificates may not update each other; uninstalling removes app-private catalog and notes. Export notes before changing signing identity or reinstalling destructively.
 
 ## Features
 
