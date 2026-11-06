@@ -26,6 +26,7 @@ android {
         versionCode = 26
         versionName = "1.6.0-beta.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "BRAIN_SUITE_ENABLED", "true")
     }
 
     if (releaseSigningConfigured) {
@@ -43,6 +44,16 @@ android {
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("neuroViewRelease")
+        }
+        create("serverless") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".serverless"
+            versionNameSuffix = "-serverless"
+            isDebuggable = false
+            isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("boolean", "BRAIN_SUITE_ENABLED", "false")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
         }
     }
 

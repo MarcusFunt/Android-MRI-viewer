@@ -44,6 +44,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.marcusfunt.neuroview.BuildConfig
 import com.marcusfunt.neuroview.ui.ViewerRenderPolicy
 import com.marcusfunt.neuroview.ui.theme.NeuroChrome
 import com.marcusfunt.neuroview.ui.theme.neuroWorkspaceBackground
@@ -180,8 +181,12 @@ fun SettingsScreen(
                 color = NeuroChrome.ink,
             )
             Text(
-                "Scanning, viewing, notes and format conversion stay on this device. " +
-                    "Optional BrainSuite processing uploads only after your explicit consent.",
+                if (BuildConfig.BRAIN_SUITE_ENABLED) {
+                    "Scanning, viewing, notes and format conversion stay on this device. " +
+                        "Optional BrainSuite processing uploads only after your explicit consent."
+                } else {
+                    "Scanning, viewing, notes and format conversion stay on this device."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = NeuroChrome.muted,
             )
