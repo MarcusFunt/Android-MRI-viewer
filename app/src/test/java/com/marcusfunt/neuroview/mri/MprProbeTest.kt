@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.roundToInt
 
 class MprProbeTest {
     private fun volume(): NiftiVolume {
@@ -66,5 +67,59 @@ class MprProbeTest {
         val v = volume()
         assertNull(MprProbe.sample(v, MriPlane.AXIAL, 5, -0.1, 0.5))
         assertNull(MprProbe.sample(v, MriPlane.AXIAL, 5, 0.5, 1.1))
+    }
+
+    @Test fun anisotropicRulerDistanceUsesCalibratedMillimeters() {
+        val v = NiftiVolume(
+            11, 11, 11, FloatArray(11 * 11 * 11),
+            SpatialAffine.axisAligned(0.5, 0.5, 3.0), 0f, 0f, "sform", 1,
+        )
+        val first = requireNotNull(MprProbe.sample(v, MriPlane.AXIAL, 4, 0.1, 0.5))
+        val second = requireNotNull(MprProbe.sample(v, MriPlane.AXIAL, 4, 0.9, 0.5))
+
+        assertEquals(4.0, MprProbe.distanceMm(first.worldRasMm, second.worldRasMm), 0.001)
+        assertEquals(first.worldRasMm[2], second.worldRasMm[2], 0.001)
+    }
+
+    @Test fun nativeObliqueAndReformattedSamplesStayOnTheirOwnPhysicalPlanes() {
+        val affine = SpatialAffine.fromRows(
+            doubleArrayOf(
+                0.5, 0.1, 0.4, 10.0,
+                0.0, 0.6, 0.3, -4.0,
+                0.0, 0.0, 2.0, 7.0,
+            ),
+        )
+        val v = NiftiVolume(
+            11, 11, 11, FloatArray(11 * 11 * 11), affine, 0f, 0f, "sform", 1,
+        )
+        val native = ViewPlaneDescriptor.nativeGrid(v, stackAxis = 2)
+        val nativeLeft = requireNotNull(MprProbe.sample(v, native, 4, 0.45, 0.5))
+        val nativeRight = requireNotNull(MprProbe.sample(v, native, 4, 0.55, 0.5))
+        val axialLeft = requireNotNull(MprProbe.sample(v, ViewPlaneDescriptor.worldAligned(MriPlane.AXIAL), 4, 0.45, 0.5))
+        val axialRight = requireNotNull(MprProbe.sample(v, ViewPlaneDescriptor.worldAligned(MriPlane.AXIAL), 4, 0.55, 0.5))
+
+        assertEquals(4.0, nativeLeft.voxelIJK[2], 1e-6)
+        assertEquals(4.0, nativeRight.voxelIJK[2], 1e-6)
+        assertEquals(axialLeft.worldRasMm[2], axialRight.worldRasMm[2], 1e-3)
+        assertTrue(MprProbe.distanceMm(nativeLeft.worldRasMm, nativeRight.worldRasMm) > 0.0)
+        assertTrue(MprProbe.distanceMm(axialLeft.worldRasMm, axialRight.worldRasMm) > 0.0)
+    }
+
+    @Test fun optionalEndpointSnapUsesAStableOutputGridWithinTheActivePlane() {
+        val v = volume()
+        val geometry = PlaneGeometry.create(v, ViewPlaneDescriptor.worldAligned(MriPlane.AXIAL), 768)
+        val snapped = geometry.snapFractionsToOutputGrid(0.333, 0.712)
+
+        assertEquals(
+            (snapped.horizontal * (geometry.width - 1)).roundToInt().toDouble(),
+            snapped.horizontal * (geometry.width - 1),
+            1e-8,
+        )
+        assertEquals(
+            (snapped.vertical * (geometry.height - 1)).roundToInt().toDouble(),
+            snapped.vertical * (geometry.height - 1),
+            1e-8,
+        )
+        assertTrue(snapped.horizontal in 0.0..1.0 && snapped.vertical in 0.0..1.0)
     }
 }

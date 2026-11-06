@@ -15,6 +15,7 @@ import com.marcusfunt.neuroview.mri.NiftiReader
 import com.marcusfunt.neuroview.mri.NiftiReadOptions
 import com.marcusfunt.neuroview.mri.NiftiSeriesInspector
 import com.marcusfunt.neuroview.mri.NiftiSeriesMetadata
+import com.marcusfunt.neuroview.mri.NiftiSpatialUnits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -139,7 +140,8 @@ class ScanCatalog(private val context: Context) {
                     val item = series.getJSONObject(idx)
                     val m = item.getJSONObject("metadata")
                     val dimensions = readInts(m.getJSONArray("dimensions"), 3)
-                    val spacings = readDoubles(m.getJSONArray("spacingMm"), 3)
+                    val spacingKey = if (m.has("spacingHeaderUnits")) "spacingHeaderUnits" else "spacingMm"
+                    val spacings = readDoubles(m.getJSONArray(spacingKey), 3)
                     ScanRecord(
                         id = item.getString("id"),
                         collectionId = item.getString("collectionId"),
@@ -148,11 +150,18 @@ class ScanCatalog(private val context: Context) {
                         customName = item.optString("customName").takeIf { it.isNotBlank() },
                         metadata = NiftiSeriesMetadata(
                             dimensions = dimensions,
-                            spacingMm = spacings,
+                            spacingHeaderUnits = spacings,
                             timepoints = m.getInt("frames"),
                             dataType = m.getString("dataType"),
                             orientation = m.getString("orientation"),
                             description = m.optString("description"),
+                            spatialUnits = NiftiSpatialUnits.fromStoredName(
+                                m.optString("spatialUnits").takeIf { it.isNotBlank() },
+                            ),
+                            qformCode = m.optInt("qformCode", 0),
+                            sformCode = m.optInt("sformCode", 0),
+                            transformHeaderFingerprint = m.optString("transformHeaderFingerprint")
+                                .takeIf { it.isNotBlank() },
                         ),
                     )
                 }.getOrNull()
@@ -532,7 +541,11 @@ class ScanCatalog(private val context: Context) {
             val m = scan.metadata
             val metadata = JSONObject()
                 .put("dimensions", JSONArray(m.dimensions))
-                .put("spacingMm", JSONArray(m.spacingMm))
+                .put("spacingHeaderUnits", JSONArray(m.spacingHeaderUnits))
+                .put("spatialUnits", m.spatialUnits.name)
+                .put("qformCode", m.qformCode)
+                .put("sformCode", m.sformCode)
+                .putOpt("transformHeaderFingerprint", m.transformHeaderFingerprint)
                 .put("frames", m.timepoints)
                 .put("dataType", m.dataType)
                 .put("orientation", m.orientation)

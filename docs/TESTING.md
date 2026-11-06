@@ -1,6 +1,6 @@
 # Testing and validation
 
-These are **developer and QA procedures for the current source**, not medical-device validation. The current source is the v1.6 Alpha candidate; tagged APKs may be older. See [README](../README.md) for installation and [Architecture](ARCHITECTURE.md) for module boundaries.
+These are **developer and QA procedures for the current source**, not medical-device validation. The current source candidate is `1.6.0-alpha.4` / versionCode 25; it has not been published. Earlier tagged APKs are older. See [README](../README.md) for installation and [Architecture](ARCHITECTURE.md) for module boundaries.
 
 ## Basic Android checks
 
@@ -43,6 +43,8 @@ To run instrumented UI tests locally with a booted device/emulator:
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
+The JVM suite covers archive format/version validation, UTF-8 byte bounds, duplicate and conflict handling, safe link matching and NIfTI header transform fingerprints. Instrumentation covers the sensitive-data confirmation before the SAF picker and the explicit confirmation required for manual note relinking. A full restore through an external document provider still needs a device-level check.
+
 Do not claim that the emulator tests visually verify every screen or rendering correctness. In particular, review the captured screenshot and OpenGL diagnostic log before relying on the Home 3D preview.
 
 For the requested large-text, TalkBack, touch-target, landscape, cutout, reduced-motion, and long-content coverage, use the [accessibility and responsive-layout QA matrix](ACCESSIBILITY_QA.md). Record screenshots and the exact build/device configuration; the matrix distinguishes pending physical-device checks from emulator evidence.
@@ -68,3 +70,7 @@ The following remain **verification tasks, not claims of completed validation**:
 For a reproducible QA report, record the Git commit and APK SHA-256; Android model/API; sanitized dataset source and NIfTI/DICOM variants; tested operations; external viewer comparison and screenshots; measured memory/storage/time; exact errors; and pass/fail status. Never commit identifying patient scans, confidential logs, or access credentials.
 
 **Release readiness is separate from diagnostic validation.** Even passing all technical tests does not make NeuroView a certified medical device.
+
+## Signed prerelease candidate
+
+See [Release signing and prerelease process](RELEASE.md) before creating the `v1.6.0-alpha.4` tag. The tag workflow runs JVM, lint, synthetic interoperability, BrainSuite bridge, and API 35 instrumentation checks without signing credentials, then passes the checksummed unsigned APK to a separate runner for signing and certificate verification. A reviewer-gated job attaches the signed APK, SHA-256 checksum, and provenance as a GitHub prerelease. It fails when credentials or the expected version are missing. The current checkout does not contain the stable key, so it cannot produce a distribution-signed candidate locally.

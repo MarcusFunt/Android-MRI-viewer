@@ -2,6 +2,7 @@ package com.marcusfunt.neuroview.notes
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.marcusfunt.neuroview.catalog.ScanRecord
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
@@ -16,13 +17,19 @@ data class ScanNote(
     val sliceCount: Int,
     val createdAtMillis: Long,
     val body: String,
-    val orientationVerified: Boolean = false,
+    /** A NIfTI spatial transform was present; this does not validate clinical orientation. */
+    val spatialTransformPresent: Boolean = false,
     val nativeStackAxis: Int? = null,
+    /** A hash of source filename and NIfTI header geometry; never contains the source URI. */
+    val sourceFingerprint: String? = null,
+    val sourceDisplayName: String? = null,
+    /** Original catalog ID retained when a restored note needs manual relinking. */
+    val archiveSourceScanId: String? = null,
 )
 
 /** Versioned line codec that safely handles delimiters, Unicode and multiline notes. */
 object ScanNoteCodec {
-    private const val VERSION = "v3"
+    private const val VERSION = "v4"
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
 
@@ -37,9 +44,12 @@ object ScanNoteCodec {
             note.sliceIndex.toString(),
             note.sliceCount.toString(),
             note.createdAtMillis.toString(),
-            note.orientationVerified.toString(),
+            note.spatialTransformPresent.toString(),
             note.nativeStackAxis?.toString() ?: "-",
             encodeText(note.body),
+            note.sourceFingerprint?.let(::encodeText) ?: "-",
+            note.sourceDisplayName?.let(::encodeText) ?: "-",
+            note.archiveSourceScanId?.let(::encodeText) ?: "-",
         ).joinToString("|")
     }
 
@@ -61,8 +71,12 @@ object ScanNoteCodec {
                 require(fields.size == 11)
                 true
             }
-            VERSION -> {
+            "v3" -> {
                 require(fields.size == 12)
+                true
+            }
+            VERSION -> {
+                require(fields.size == 15)
                 true
             }
             else -> error("Unsupported note record")
@@ -70,6 +84,12 @@ object ScanNoteCodec {
         val sliceIndex = fields[6].toInt()
         val sliceCount = fields[7].toInt()
         require(sliceIndex >= 0 && sliceCount > 0 && sliceIndex < sliceCount)
+        val bodyFieldIndex = when (version) {
+            "v1" -> 9
+            "v2" -> 10
+            "v3", VERSION -> 11
+            else -> error("Unsupported note record")
+        }
         ScanNote(
             id = decodeText(fields[1]),
             scanId = decodeText(fields[2]),
@@ -79,9 +99,14 @@ object ScanNoteCodec {
             sliceIndex = sliceIndex,
             sliceCount = sliceCount,
             createdAtMillis = fields[8].toLong(),
-            body = decodeText(fields[if (version == VERSION) 11 else if (hasOrientationState) 10 else 9]),
-            orientationVerified = hasOrientationState && fields[9].toBooleanStrict(),
-            nativeStackAxis = if (version == VERSION) fields[10].takeIf { it != "-" }?.toInt() else null,
+            body = decodeText(fields[bodyFieldIndex]),
+            spatialTransformPresent = hasOrientationState && fields[9].toBooleanStrict(),
+            nativeStackAxis = if (version == "v3" || version == VERSION) {
+                fields[10].takeIf { it != "-" }?.toInt()
+            } else null,
+            sourceFingerprint = if (version == VERSION) fields[12].takeIf { it != "-" }?.let(::decodeText) else null,
+            sourceDisplayName = if (version == VERSION) fields[13].takeIf { it != "-" }?.let(::decodeText) else null,
+            archiveSourceScanId = if (version == VERSION) fields[14].takeIf { it != "-" }?.let(::decodeText) else null,
         ).also {
             require(it.id.isNotBlank() && it.scanId.isNotBlank() && it.body.isNotBlank())
             require(it.nativeStackAxis == null || it.nativeStackAxis in 0..2)
@@ -114,8 +139,48 @@ class ScanNoteStore(context: Context) {
     }
 
     @Synchronized
+    fun mergeArchive(archive: ScanNoteArchive, currentScans: List<ScanRecord>): NoteArchiveMergeResult {
+        val result = ScanNoteArchiveCodec.merge(load(), archive, currentScans)
+        persist(result.notes)
+        return result
+    }
+
+    @Synchronized
+    fun relink(noteId: String, scan: ScanRecord): Boolean {
+        val current = load()
+        val existing = current.firstOrNull { it.id == noteId } ?: return false
+        val updated = existing.copy(
+            scanId = scan.id,
+            sourceFingerprint = ScanNoteArchiveCodec.fingerprint(scan),
+            sourceDisplayName = scan.displayName,
+            archiveSourceScanId = null,
+        )
+        persist(current.map { if (it.id == noteId) updated else it })
+        return true
+    }
+
+    @Synchronized
     fun delete(id: String) {
         preferences.edit().putString(KEY_NOTES, ScanNoteCodec.encode(load().filterNot { it.id == id })).apply()
+    }
+
+    private fun persist(notes: List<ScanNote>) {
+        val encoded = ScanNoteCodec.encode(notes)
+        require(encoded.length <= ScanNoteArchiveCodec.MAX_ARCHIVE_CHARS) {
+            "The local notes are too large to store safely. Export a backup and remove older notes before importing."
+        }
+        val oldValue = preferences.getString(KEY_NOTES, null)
+        if (preferences.edit().putString(KEY_NOTES, encoded).commit()) return
+
+        // SharedPreferences updates its in-memory map before its disk write. Restore the old value
+        // in memory too when the synchronous write reports failure; its atomic backup retains the
+        // previous on-disk value if storage remains unavailable.
+        val rollback = preferences.edit()
+        if (oldValue == null) rollback.remove(KEY_NOTES) else rollback.putString(KEY_NOTES, oldValue)
+        rollback.commit()
+        error(
+            "Could not save the notes archive. Existing notes were left unchanged."
+        )
     }
 
     private companion object {

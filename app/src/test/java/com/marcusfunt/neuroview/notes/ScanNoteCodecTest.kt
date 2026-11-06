@@ -35,7 +35,7 @@ class ScanNoteCodecTest {
 
         val restored = ScanNoteCodec.decode(v1).single()
         assertEquals("Older observation", restored.body)
-        assertFalse(restored.orientationVerified)
+        assertFalse(restored.spatialTransformPresent)
     }
 
     @Test
@@ -50,7 +50,22 @@ class ScanNoteCodecTest {
         val restored = ScanNoteCodec.decode(v2).single()
         assertEquals("Older observation", restored.body)
         assertEquals(null, restored.nativeStackAxis)
-        assertEquals(true, restored.orientationVerified)
+        assertEquals(true, restored.spatialTransformPresent)
+    }
+
+    @Test
+    fun versionThreeRecordsRemainReadableWithoutArchiveMetadata() {
+        fun text(value: String) = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(value.toByteArray(Charsets.UTF_8))
+        val v3 = listOf(
+            "v3", text("old-note"), text("scan-2"), text("Set"), text("T1"), text("AXIAL"),
+            "4", "10", "1797000000000", "true", "2", text("Older observation"),
+        ).joinToString("|")
+
+        val restored = ScanNoteCodec.decode(v3).single()
+        assertEquals("Older observation", restored.body)
+        assertEquals(2, restored.nativeStackAxis)
+        assertEquals(null, restored.sourceFingerprint)
     }
 
     @Test

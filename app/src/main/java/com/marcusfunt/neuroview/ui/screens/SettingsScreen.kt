@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
@@ -15,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -37,6 +39,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.marcusfunt.neuroview.ui.ViewerRenderPolicy
@@ -57,11 +62,16 @@ fun SettingsScreen(
     onGlowEnabledChange: (Boolean) -> Unit,
     onResetOrientation: () -> Unit,
     onClearCache: suspend () -> Int,
+    onExportNotesBackup: () -> Unit,
+    onImportNotesBackup: () -> Unit,
+    noteArchiveBusy: Boolean,
+    noteArchiveStatus: String?,
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var cacheStatus by rememberSaveable { mutableStateOf<String?>(null) }
     var cacheBusy by remember { mutableStateOf(false) }
+    var noteArchiveAction by rememberSaveable { mutableStateOf<String?>(null) }
 
     Scaffold(
         containerColor = NeuroChrome.background,
@@ -175,6 +185,34 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = NeuroChrome.muted,
             )
+            Text(
+                "Notes backups contain observation text, scan labels, slice locations, and a one-way " +
+                    "hash of NIfTI header metadata. They do not contain MRI images or document-provider " +
+                    "links. Note text and labels may still contain sensitive personal or medical information.",
+                style = MaterialTheme.typography.bodySmall,
+                color = NeuroChrome.muted,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(
+                    onClick = { noteArchiveAction = "export" },
+                    enabled = !noteArchiveBusy,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                ) { Text("Export notes") }
+                TextButton(
+                    onClick = { noteArchiveAction = "import" },
+                    enabled = !noteArchiveBusy,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                ) { Text("Import notes backup") }
+            }
+            if (noteArchiveBusy) Text("Working with notes backup…",
+                style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted)
+            noteArchiveStatus?.let {
+                Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    style = MaterialTheme.typography.bodySmall, color = NeuroChrome.muted)
+            }
             TextButton(
                 enabled = !cacheBusy,
                 onClick = {
@@ -202,6 +240,37 @@ fun SettingsScreen(
             }
             Spacer(Modifier.height(8.dp))
         }
+    }
+
+    noteArchiveAction?.let { action ->
+        val exporting = action == "export"
+        AlertDialog(
+            onDismissRequest = { noteArchiveAction = null },
+            title = { Text(if (exporting) "Export notes backup" else "Import notes backup") },
+            text = {
+                Text(
+                    if (exporting) {
+                        "Note backups may contain sensitive personal or medical information. " +
+                            "Save only to a location you trust. The archive contains note text and scan " +
+                            "metadata, not MRI files or file-provider access."
+                    } else {
+                        "Import merges notes without deleting existing entries. Identical notes are " +
+                            "skipped, conflicting notes are kept separately, and notes without their " +
+                            "original scan require manual relinking. MRI files and provider permissions " +
+                            "are not imported. Choose a backup you trust."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    noteArchiveAction = null
+                    if (exporting) onExportNotesBackup() else onImportNotesBackup()
+                }) { Text(if (exporting) "Choose backup location" else "Choose backup file") }
+            },
+            dismissButton = {
+                TextButton(onClick = { noteArchiveAction = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 

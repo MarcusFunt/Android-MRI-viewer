@@ -1,6 +1,6 @@
-# NeuroView architecture (current source: v1.5.0 candidate)
+# NeuroView architecture (current source candidate: v1.6.0-alpha.4)
 
-This document describes the Android source prepared for `main` as inspected on 2026-10-24. The v1.5.0 candidate is not yet a signed distribution build. Historical phase-by-phase implementation notes live in the [development log](DEVELOPMENT_LOG.md).
+This document describes the v1.6.0-alpha.4 source candidate. It is not yet a signed distribution build: the protected stable signing identity has not been provisioned for this checkout. Historical phase-by-phase implementation notes live in the [development log](DEVELOPMENT_LOG.md).
 
 ## Application structure
 
@@ -24,6 +24,12 @@ Key implementation locations:
 4. Small preview images are derived lazily and cached in `cacheDir/scan_thumbnails`. They may be evicted or explicitly cleared; the original files are not modified. Large volumes may use placeholders instead.
 
 `CatalogEdits` contains pure management operations. Serialized catalog writes update persistent metadata before cleaning removed thumbnail and URI references. The last-opened scan ID is stored as a local navigation preference. Window/level preferences are kept per selected document; neither changes source voxel data.
+
+## Scan notes and backups
+
+Notes are stored in app-private SharedPreferences by `ScanNoteStore`; the store never saves a document URI or scan voxels. Its line codec reads legacy v1-v3 records and writes v4 records with optional source metadata. Settings offers a versioned JSON archive through Android's Storage Access Framework. Import bounds and validates the full file before merging, skips exact duplicates, preserves ID conflicts as separate notes, and commits the merged note set together. An import does not remove existing notes.
+
+The archive stores note text, labels, slice location, the original catalog ID and filename, and a SHA-256 fingerprint over filename and NIfTI header metadata when the raw active qform/sform fields were captured. It excludes provider URIs and image data. A matching fingerprint alone never relinks a note: automatic restoration requires both original catalog ID and fingerprint. Older catalog records without a saved transform fingerprint, or files with no active spatial transform, stay unlinked until the user selects and confirms a Library scan. The header fingerprint is a hint and does not prove voxel identity. Backups are unencrypted and can contain sensitive medical or personal text; the user chooses their destination.
 
 ## NIfTI decoding, geometry and rendering
 
@@ -65,3 +71,5 @@ The separate Python `tools/brainsuite_bridge/server.py` listens on **127.0.0.1**
 `app/src/test` covers geometry, parsing, catalog, conversions, memory-backed volumes, and probe mapping. `app/src/androidTest` exercises Compose navigation. `scripts/qa/reference_interop.py` produces and verifies **synthetic**, externally generated NIfTI/DICOM fixtures using NumPy/nibabel/pydicom. `tools/brainsuite_bridge/test_server.py` mocks the Docker execution path. CI builds, lints, tests, and runs an Android 15 emulator smoke test with screenshot artifacts.
 
 Automated results do **not** establish physical-device performance, real-scanner correctness, BrainSuite scientific accuracy, or medical suitability. See [Testing and validation](TESTING.md) for commands and outstanding gates.
+
+The tag-bound release workflow is documented in [Release signing and prerelease process](RELEASE.md). It runs the automated verification gates before creating one stable-key-signed APK and attaches the APK checksum and source/signing provenance. A release requires protected repository secrets and an approved prerelease environment; no such key is included in the source tree.

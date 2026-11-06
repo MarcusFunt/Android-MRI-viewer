@@ -35,10 +35,12 @@ internal fun ScanDetailsDialog(scan: ScanRecord, importedAt: Long?, onDismiss: (
                     Text("${scanFormatLabel(scan)} · ${scan.metadata.dataType}")
                     Text("Dimensions\n${scan.metadata.dimensions.joinToString(" × ")} voxels · " +
                         resources.catalogQuantityText(CatalogQuantity.FRAMES, scan.metadata.timepoints))
-                    Text("Voxel spacing\n" + scan.metadata.spacingMm.joinToString(" × ") {
-                        String.format(Locale.getDefault(), "%.2f", it)
-                    } + " mm")
-                    Text("Orientation\n${scan.metadata.orientation}")
+                    Text("Voxel spacing\n${scanSpacingDetails(scan.metadata)}")
+                    scanSpatialUnitWarning(scan.metadata)?.let { warning ->
+                        Text(warning, color = MaterialTheme.colorScheme.error)
+                    }
+                    Text("Affine provenance\n${scanAffineProvenance(scan.metadata)}")
+                    Text("Acquisition pattern\n${scanSamplingInference(scan.metadata)}")
                     if (scan.metadata.description.isNotBlank()) Text("Description\n${scan.metadata.description}")
                     importedAt?.let { Text("Imported\n${DateFormat.getDateTimeInstance().format(Date(it))}") }
                     Text("Aliases only change the Library label. The original MRI file stays where it is stored.")

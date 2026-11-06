@@ -170,7 +170,7 @@ class NeuroViewNavigationSmokeTest {
             compose.onNodeWithText(note.body).performClick()
             compose.onNodeWithText("Note").assertExists()
             compose.onNodeWithText(note.body).assertExists()
-            compose.onNodeWithText("orientation unverified", substring = true).assertExists()
+            compose.onNodeWithText("spatial transform unknown", substring = true).assertExists()
             compose.onNodeWithText("Open saved slice").assertDoesNotExist()
         } finally {
             store.delete(note.id)
@@ -200,8 +200,8 @@ class NeuroViewNavigationSmokeTest {
                         onCancelLoad = {},
                         onRetryLoad = {},
                         onReturnToLibrary = {},
-                        onSaveNote = { plane, slice, _, _, orientationVerified, body ->
-                            if (body == "Check this slice") saved = Triple(plane, slice, orientationVerified)
+                        onSaveNote = { plane, slice, _, _, spatialTransformPresent, body ->
+                            if (body == "Check this slice") saved = Triple(plane, slice, spatialTransformPresent)
                         },
                         onImport = {},
                         onNavigate = {},
@@ -209,6 +209,7 @@ class NeuroViewNavigationSmokeTest {
                 }
             }
         }
+        compose.onNodeWithContentDescription("More viewer actions").performClick()
         compose.onNodeWithText("Add note").performClick()
         compose.onNodeWithText("Observation").performTextInput("Check this slice")
         compose.onNodeWithText("Save note").performClick()

@@ -1,6 +1,7 @@
 package com.marcusfunt.neuroview.catalog
 
 import com.marcusfunt.neuroview.mri.NiftiSeriesMetadata
+import com.marcusfunt.neuroview.mri.NiftiSpatialUnits
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -10,11 +11,12 @@ import org.junit.Test
 class CatalogEditsTest {
     private val metadata = NiftiSeriesMetadata(
         dimensions = listOf(100, 90, 80),
-        spacingMm = listOf(1.0, 1.0, 1.2),
+        spacingHeaderUnits = listOf(1.0, 1.0, 1.2),
         timepoints = 1,
         dataType = "int16",
         orientation = "sform",
         description = "test",
+        spatialUnits = NiftiSpatialUnits.MILLIMETER,
     )
 
     private fun initial() = ScanCatalogSnapshot(
