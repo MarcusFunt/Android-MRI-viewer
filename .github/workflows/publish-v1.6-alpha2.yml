@@ -80,9 +80,9 @@ jobs:
           - Visible magenta/cyan draw-order debug markers hidden in normal app use.
 
           ## Build provenance
-          - Exact tested source SHA: `$TESTED_SHA`
+          - Exact tested source SHA: $TESTED_SHA
           - [Successful Android CI run](https://github.com/$GITHUB_REPOSITORY/actions/runs/$CI_RUN)
-          - Android versionName: `1.6 Alpha 2`; versionCode: `23`.
+          - Android versionName: 1.6 Alpha 2; versionCode: 23.
           - The attached APK is **debug-signed**, not production-signed. Signature mismatch with a previous debug APK may prevent in-place updating. Uninstalling NeuroView deletes its app-private notes and catalog data. Back up important data before switching signing keys.
           - The APK and its SHA-256 checksum are attached.
 
