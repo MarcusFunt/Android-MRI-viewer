@@ -125,7 +125,7 @@ class PlaneGeometryTest {
     }
 
     @Test
-    fun shearIsReportedWithoutChangingTheStoredVoxelGrid() {
+    fun shearedNativeSamplesMapBackThroughTheOriginalVoxelGrid() {
         val affine = SpatialAffine.fromRows(doubleArrayOf(
             1.0, 0.25, 0.0, 0.0,
             0.0, 1.0, 0.0, 0.0,
@@ -135,8 +135,11 @@ class PlaneGeometryTest {
         assertTrue(affine.hasShear())
         val descriptor = ViewPlaneDescriptor.nativeGrid(volume, stackAxis = 2)
         val geometry = PlaneGeometry.create(volume, descriptor, 64)
-        val sample = geometry.sample(volume, 2, 2.0 / 6.0, 0.4)
-        assertTrue(sample?.voxelIJK?.all { kotlin.math.abs(it - kotlin.math.round(it)) < 1e-8 } == true)
+        val sample = requireNotNull(geometry.sample(volume, 2, 0.5, 0.5))
+        assertEquals(2.0, sample.voxelIJK[2], 1e-8)
+        val world = affine.world(sample.voxelIJK[0], sample.voxelIJK[1], sample.voxelIJK[2])
+        assertTrue(world.indices.all { kotlin.math.abs(world[it] - sample.worldRasMm[it]) < 1e-8 })
+        assertEquals(volume.sample(sample.voxelIJK[0], sample.voxelIJK[1], sample.voxelIJK[2]), sample.intensity)
     }
 
     @Test
@@ -159,6 +162,51 @@ class PlaneGeometryTest {
         assertEquals(2.0, assessment.sourceAxisSpacingMm[2], 1e-9)
         assertEquals(kotlin.math.sqrt(5.0), affine.axisSpacing(2), 1e-9)
         assertEquals(2.0, PlaneGeometry.create(volume, descriptor, 64).renderedSliceSpacingMm()!!, 1e-9)
+    }
+
+    @Test
+    fun worldAlignedRasterPreservesTheFinerSourceAxisWithinThePixelBudget() {
+        val volume = volume(256, 256, 64, SpatialAffine.axisAligned(0.5, 0.5, 3.0))
+        val geometry = PlaneGeometry.create(
+            volume, ViewPlaneDescriptor.worldAligned(MriPlane.CORONAL), maxSide = 512,
+        )
+
+        assertEquals(256, geometry.width)
+        assertTrue(geometry.height <= 512)
+        assertTrue(geometry.renderedPixelSpacingHorizontalMm <= 0.51)
+    }
+
+    @Test
+    fun nativeShearedRasterUsesAnOrthogonalDisplayedWorldBasis() {
+        val affine = SpatialAffine.fromRows(doubleArrayOf(
+            1.0, 0.5, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 2.0, 0.0,
+        ))
+        val volume = volume(32, 32, 8, affine)
+        val descriptor = ViewPlaneDescriptor.nativeGrid(volume, stackAxis = 2)
+        val geometry = PlaneGeometry.create(volume, descriptor, maxSide = 128)
+        val origin = geometry.worldAtFraction(0.5, 0.5, slice = 3)
+        val across = geometry.worldAtFraction(0.6, 0.5, slice = 3)
+        val down = geometry.worldAtFraction(0.5, 0.6, slice = 3)
+        val h = DoubleArray(3) { across[it] - origin[it] }
+        val v = DoubleArray(3) { down[it] - origin[it] }
+        val dot = h.indices.sumOf { h[it] * v[it] }
+        val hLength = kotlin.math.sqrt(h.sumOf { it * it })
+        val vLength = kotlin.math.sqrt(v.sumOf { it * it })
+
+        assertEquals(0.0, dot / (hLength * vLength), 1e-6)
+    }
+
+    @Test
+    fun nativeShearedRasterKeepsFineInPlaneSamplingWithinThePixelBudget() {
+        val volume = volume(256, 256, 64, SpatialAffine.axisAligned(0.5, 0.5, 3.0))
+        val descriptor = ViewPlaneDescriptor.nativeGrid(volume, stackAxis = 1)
+        val geometry = PlaneGeometry.create(volume, descriptor, maxSide = 512)
+
+        assertTrue(geometry.width >= 255)
+        assertTrue(geometry.height <= 512)
+        assertTrue(geometry.renderedPixelSpacingHorizontalMm <= 0.51)
     }
 
     private fun volume(

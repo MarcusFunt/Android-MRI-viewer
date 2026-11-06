@@ -117,7 +117,11 @@ private fun NoteRow(note: ScanNote, available: Boolean, onClick: () -> Unit) {
             Text(
                 listOf(
                     note.collectionLabel,
-                    "${note.planeName.lowercase().replaceFirstChar { it.uppercase() }} image plane · slice ${note.sliceIndex + 1}/${note.sliceCount}",
+                    if (note.nativeStackAxis != null) {
+                        "Native grid · ${note.planeName.lowercase().replaceFirstChar { it.uppercase() }} · slice ${note.sliceIndex + 1}/${note.sliceCount}"
+                    } else {
+                        "${note.planeName.lowercase().replaceFirstChar { it.uppercase() }} image plane · slice ${note.sliceIndex + 1}/${note.sliceCount}"
+                    },
                 )
                     .filter(String::isNotBlank).joinToString("  ·  "),
                 modifier = Modifier.weight(1f),

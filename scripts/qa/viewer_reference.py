@@ -67,8 +67,8 @@ def main():
         position = BOUNDS[0][fixed] + selected / (count - 1) * span[fixed]
         horizontal_density = math.sqrt(sum(inverse[row][horizontal] ** 2 for row in range(3)))
         vertical_density = math.sqrt(sum(inverse[row][vertical] ** 2 for row in range(3)))
-        pixel_step = max(1 / horizontal_density,
-                         1 / vertical_density,
+        pixel_step = max(min(1 / horizontal_density,
+                             1 / vertical_density),
                          max(span[horizontal], span[vertical]) / 95)
         width = math.floor(span[horizontal] / pixel_step + .5) + 1
         height = math.floor(span[vertical] / pixel_step + .5) + 1

@@ -118,4 +118,47 @@ class ViewerNativeGridTest {
             else preferences.edit().remove(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY).commit()
         }
     }
+
+    @Test
+    fun reopeningAnObliqueNativeGridNoteRestoresItsStoredAxisAndSlice() {
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val preferences = targetContext.getSharedPreferences(VIEWER_DISPLAY_PREFERENCES, Context.MODE_PRIVATE)
+        val wasPresent = preferences.contains(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY)
+        val previous = preferences.getBoolean(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY, true)
+        preferences.edit().putBoolean(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY, false).commit()
+        val angle = Math.toRadians(15.0)
+        val oblique = SpatialAffine.fromRows(doubleArrayOf(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 2.0 * kotlin.math.cos(angle), -2.5 * kotlin.math.sin(angle), 0.0,
+            0.0, 2.0 * kotlin.math.sin(angle), 2.5 * kotlin.math.cos(angle), 0.0,
+        ))
+        try {
+            compose.setContent {
+                NeuroViewTheme {
+                    ViewerScreen(
+                        volumeState = VolumeLoadState.Ready("oblique note", volume(oblique)),
+                        selectedDocumentUri = "content://native-grid-test/note-${System.nanoTime()}",
+                        initialNoteId = "oblique-note",
+                        initialNotePlane = "AXIAL",
+                        initialNoteSlice = 3,
+                        initialNoteNativeStackAxis = 2,
+                        onFirstSliceBitmapReady = {},
+                        onFirstSliceDisplayed = {},
+                        onFirstSliceRenderStarted = { _, _, _ -> },
+                        onFirstSliceRenderFinished = { _, _, _ -> },
+                        onCancelLoad = {}, onRetryLoad = {}, onReturnToLibrary = {},
+                        onImport = {}, onNavigate = {},
+                    )
+                }
+            }
+            compose.waitUntil(15_000L) {
+                compose.onAllNodesWithContentDescription("Native · oblique MRI slice")
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("4 / 8").assertExists()
+        } finally {
+            if (wasPresent) preferences.edit().putBoolean(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY, previous).commit()
+            else preferences.edit().remove(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY).commit()
+        }
+    }
 }

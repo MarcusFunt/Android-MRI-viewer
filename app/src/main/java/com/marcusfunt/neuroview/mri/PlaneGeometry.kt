@@ -1,7 +1,6 @@
 package com.marcusfunt.neuroview.mri
 
 import kotlin.math.acos
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 /** Describes the displayed plane and how it relates to the stored voxel grid. */
@@ -137,6 +136,16 @@ object NativeGridOrientation {
 
 data class PlaneFractions(val horizontal: Double, val vertical: Double)
 
+private data class NativePlaneBasis(
+    val horizontal: DoubleArray,
+    val vertical: DoubleArray,
+    val normal: DoubleArray,
+    val horizontalMin: Double,
+    val horizontalMax: Double,
+    val verticalMin: Double,
+    val verticalMax: Double,
+)
+
 /** Reversible mapping between a raster plane, voxel samples and RAS+ millimetres. */
 class PlaneGeometry private constructor(
     val descriptor: ViewPlaneDescriptor,
@@ -150,6 +159,7 @@ class PlaneGeometry private constructor(
     private val bounds: Array<DoubleArray>,
     private val horizontalSpan: Double,
     private val verticalSpan: Double,
+    private val nativeBasis: NativePlaneBasis?,
 ) {
     val renderedPixelSpacingHorizontalMm: Double
         get() = horizontalSpan / (width - 1).coerceAtLeast(1)
@@ -166,13 +176,15 @@ class PlaneGeometry private constructor(
 
     fun fractionsForWorld(worldRas: DoubleArray, slice: Int): PlaneFractions {
         require(worldRas.size == 3 && worldRas.all(Double::isFinite))
-        val voxel = volume.affine.voxel(worldRas[0], worldRas[1], worldRas[2])
         if (descriptor.isNativeGrid) {
-            val hDim = dimension(descriptor.horizontalAxis) - 1.0
-            val vDim = dimension(descriptor.verticalAxis) - 1.0
+            val basis = requireNotNull(nativeBasis)
             return PlaneFractions(
-                fractionForIndex(voxel[descriptor.horizontalAxis], hDim, descriptor.flipHorizontal),
-                fractionForIndex(voxel[descriptor.verticalAxis], vDim, descriptor.flipVertical),
+                fractionForCoordinate(
+                    dot(worldRas, basis.horizontal), basis.horizontalMin, basis.horizontalMax, flip = false,
+                ),
+                fractionForCoordinate(
+                    dot(worldRas, basis.vertical), basis.verticalMin, basis.verticalMax, flip = false,
+                ),
             )
         }
         val hAxis = descriptor.horizontalAxis
@@ -242,15 +254,25 @@ class PlaneGeometry private constructor(
         val h = horizontal.coerceIn(0.0, 1.0)
         val v = vertical.coerceIn(0.0, 1.0)
         if (descriptor.isNativeGrid) {
-            val voxel = DoubleArray(3)
-            val hAxis = descriptor.horizontalAxis
-            val vAxis = descriptor.verticalAxis
+            val basis = requireNotNull(nativeBasis)
             val sAxis = requireNotNull(descriptor.stackAxis)
-            voxel[hAxis] = indexAtFraction(h, dimension(hAxis), descriptor.flipHorizontal)
-            voxel[vAxis] = indexAtFraction(v, dimension(vAxis), descriptor.flipVertical)
-            voxel[sAxis] = if (descriptor.flipStack) dimension(sAxis) - 1.0 - slice.coerceIn(0, sliceCount - 1)
+            val stackIndex = if (descriptor.flipStack) dimension(sAxis) - 1.0 - slice.coerceIn(0, sliceCount - 1)
                 else slice.coerceIn(0, sliceCount - 1).toDouble()
-            return voxel
+            val stackVoxel = DoubleArray(3).also { it[sAxis] = stackIndex }
+            val planePoint = volume.affine.world(stackVoxel[0], stackVoxel[1], stackVoxel[2])
+            val horizontalPosition = coordinateAtFraction(
+                h, basis.horizontalMin, basis.horizontalMax, flip = false,
+            )
+            val verticalPosition = coordinateAtFraction(
+                v, basis.verticalMin, basis.verticalMax, flip = false,
+            )
+            val normalPosition = dot(planePoint, basis.normal)
+            val world = DoubleArray(3) { axis ->
+                basis.horizontal[axis] * horizontalPosition +
+                    basis.vertical[axis] * verticalPosition +
+                    basis.normal[axis] * normalPosition
+            }
+            return volume.affine.voxel(world[0], world[1], world[2])
         }
         val plane = requireNotNull(descriptor.nearestAnatomicalPlane)
         val world = DoubleArray(3)
@@ -284,56 +306,91 @@ class PlaneGeometry private constructor(
             val verticalSpacing: Double
             val width: Int
             val height: Int
+            val nativeBasis: NativePlaneBasis?
             if (descriptor.isNativeGrid) {
-                val hAxis = descriptor.horizontalAxis
-                val vAxis = descriptor.verticalAxis
-                val hCount = axisDimension(volume, hAxis)
-                val vCount = axisDimension(volume, vAxis)
-                horizontalSpacing = volume.affine.axisSpacing(hAxis)
-                verticalSpacing = volume.affine.axisSpacing(vAxis)
-                horizontalSpan = horizontalSpacing * (hCount - 1).coerceAtLeast(0)
-                verticalSpan = verticalSpacing * (vCount - 1).coerceAtLeast(0)
-                val aspect = horizontalSpan / verticalSpan.coerceAtLeast(1e-9)
-                val sourceInformationSide = max(hCount, vCount)
-                val outputSide = minOf(maxSide, sourceInformationSide)
-                width = if (aspect >= 1.0) outputSide else
-                    (outputSide * aspect).roundToInt().coerceAtLeast(1)
-                height = if (aspect < 1.0) outputSide else
-                    (outputSide / aspect).roundToInt().coerceAtLeast(1)
+                nativeBasis = createNativeBasis(volume, descriptor)
+                horizontalSpan = (nativeBasis.horizontalMax - nativeBasis.horizontalMin).coerceAtLeast(0.001)
+                verticalSpan = (nativeBasis.verticalMax - nativeBasis.verticalMin).coerceAtLeast(0.001)
+                horizontalSpacing = volume.affine.worldDirectionSamplingStep(nativeBasis.horizontal)
+                verticalSpacing = volume.affine.worldDirectionSamplingStep(nativeBasis.vertical)
             } else {
+                nativeBasis = null
                 val hAxis = descriptor.horizontalAxis
                 val vAxis = descriptor.verticalAxis
                 horizontalSpan = (bounds[1][hAxis] - bounds[0][hAxis]).coerceAtLeast(0.001)
                 verticalSpan = (bounds[1][vAxis] - bounds[0][vAxis]).coerceAtLeast(0.001)
                 horizontalSpacing = volume.affine.worldAxisSamplingStep(hAxis)
                 verticalSpacing = volume.affine.worldAxisSamplingStep(vAxis)
-                val pixelStep = maxOf(
-                    horizontalSpacing,
-                    verticalSpacing,
-                    maxOf(horizontalSpan, verticalSpan) / (maxSide - 1).coerceAtLeast(1),
-                )
-                width = (horizontalSpan / pixelStep).roundToInt().coerceAtLeast(1) + 1
-                height = (verticalSpan / pixelStep).roundToInt().coerceAtLeast(1) + 1
             }
+            // Preserve detail from the finer in-plane source direction within the
+            // independent render-side budget. A coarse perpendicular axis must not
+            // downsample the higher-resolution axis.
+            val pixelStep = maxOf(
+                minOf(horizontalSpacing, verticalSpacing),
+                maxOf(horizontalSpan, verticalSpan) / (maxSide - 1).coerceAtLeast(1),
+            )
+            width = (horizontalSpan / pixelStep).roundToInt().coerceAtLeast(1) + 1
+            height = (verticalSpan / pixelStep).roundToInt().coerceAtLeast(1) + 1
             return PlaneGeometry(
                 descriptor, volume, width, height, count, horizontalSpacing, verticalSpacing,
-                volume.hasKnownSpatialUnits, bounds, horizontalSpan, verticalSpan,
+                volume.hasKnownSpatialUnits, bounds, horizontalSpan, verticalSpan, nativeBasis,
             )
         }
 
-        private fun axisDimension(volume: NiftiVolume, axis: Int) = when (axis) {
-            0 -> volume.nx
-            1 -> volume.ny
-            else -> volume.nz
+        private fun createNativeBasis(
+            volume: NiftiVolume,
+            descriptor: ViewPlaneDescriptor,
+        ): NativePlaneBasis {
+            val stackAxis = requireNotNull(descriptor.stackAxis)
+            val normal = volume.affine.voxelPlaneNormalDirectionRas(stackAxis)
+            val horizontalSign = if (descriptor.flipHorizontal) -1.0 else 1.0
+            val verticalSign = if (descriptor.flipVertical) -1.0 else 1.0
+            val rawHorizontal = volume.affine.voxelAxisDirectionRas(descriptor.horizontalAxis)
+            val horizontalProjected = subtract(rawHorizontal, scale(normal, dot(rawHorizontal, normal)))
+            val horizontal = normalize(scale(horizontalProjected, horizontalSign))
+
+            val rawVertical = volume.affine.voxelAxisDirectionRas(descriptor.verticalAxis)
+            var verticalProjected = subtract(rawVertical, scale(normal, dot(rawVertical, normal)))
+            verticalProjected = subtract(verticalProjected, scale(horizontal, dot(verticalProjected, horizontal)))
+            val vertical = normalize(scale(verticalProjected, verticalSign))
+
+            var horizontalMin = Double.POSITIVE_INFINITY
+            var horizontalMax = Double.NEGATIVE_INFINITY
+            var verticalMin = Double.POSITIVE_INFINITY
+            var verticalMax = Double.NEGATIVE_INFINITY
+            for (i in listOf(0.0, (volume.nx - 1).toDouble())) {
+                for (j in listOf(0.0, (volume.ny - 1).toDouble())) {
+                    for (k in listOf(0.0, (volume.nz - 1).toDouble())) {
+                        val world = volume.affine.world(i, j, k)
+                        val horizontalPosition = dot(world, horizontal)
+                        val verticalPosition = dot(world, vertical)
+                        horizontalMin = minOf(horizontalMin, horizontalPosition)
+                        horizontalMax = maxOf(horizontalMax, horizontalPosition)
+                        verticalMin = minOf(verticalMin, verticalPosition)
+                        verticalMax = maxOf(verticalMax, verticalPosition)
+                    }
+                }
+            }
+            return NativePlaneBasis(
+                horizontal, vertical, normal,
+                horizontalMin, horizontalMax, verticalMin, verticalMax,
+            )
+        }
+
+        private fun scale(vector: DoubleArray, factor: Double) = DoubleArray(3) { vector[it] * factor }
+
+        private fun subtract(first: DoubleArray, second: DoubleArray) =
+            DoubleArray(3) { first[it] - second[it] }
+
+        private fun normalize(vector: DoubleArray): DoubleArray {
+            val length = kotlin.math.sqrt(dot(vector, vector)).coerceAtLeast(1e-12)
+            return scale(vector, 1.0 / length)
         }
 
         private fun indexAtFraction(fraction: Double, dimension: Int, flip: Boolean): Double {
             val position = fraction.coerceIn(0.0, 1.0) * (dimension - 1).coerceAtLeast(0)
             return if (flip) dimension - 1.0 - position else position
         }
-
-        private fun fractionForIndex(index: Double, lastIndex: Double, flip: Boolean): Double =
-            (if (flip) lastIndex - index else index) / lastIndex.coerceAtLeast(1.0)
 
         private fun coordinateAtFraction(fraction: Double, lower: Double, upper: Double, flip: Boolean) =
             if (flip) upper - fraction * (upper - lower) else lower + fraction * (upper - lower)
