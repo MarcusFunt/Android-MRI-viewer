@@ -64,7 +64,11 @@ fun NoteDetailScreen(
             Text(
                 listOfNotNull(
                     note.collectionLabel.takeIf(String::isNotBlank),
-                    "${note.planeName.lowercase().replaceFirstChar { it.uppercase() }} image plane · slice ${note.sliceIndex + 1}/${note.sliceCount}",
+                    if (note.nativeStackAxis != null) {
+                        "Native grid · ${note.planeName.lowercase().replaceFirstChar { it.uppercase() }} · slice ${note.sliceIndex + 1}/${note.sliceCount}"
+                    } else {
+                        "${note.planeName.lowercase().replaceFirstChar { it.uppercase() }} image plane · slice ${note.sliceIndex + 1}/${note.sliceCount}"
+                    },
                     if (note.orientationVerified) "orientation verified" else "orientation unverified",
                     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                         .format(Date(note.createdAtMillis)),

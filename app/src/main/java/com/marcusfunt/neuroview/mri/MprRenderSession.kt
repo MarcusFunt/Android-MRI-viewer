@@ -51,7 +51,9 @@ class MprRenderSession(
     } else doubleArrayOf(0.0, 0.0, 0.0)
 
     private val cache = LinkedHashMap<Int, MprScalarSlice>(cacheEntries + 1, 0.75f, true)
-    private var cachedBytes = 0L
+    @Volatile
+    var cachedBytes: Long = 0L
+        private set
 
     fun sample(slice: Int, cancellationCheck: () -> Unit = {}): MprScalarSlice {
         val validSlice = slice.coerceIn(0, geometry.sliceCount - 1)
@@ -137,11 +139,19 @@ class MprRenderSession(
         }
     }
 
+    /** Must be called after render work using this session has been canceled and joined. */
+    fun clearCache() {
+        cache.clear()
+        cachedBytes = 0L
+    }
+
     private fun vectorDifference(first: DoubleArray, second: DoubleArray) =
         doubleArrayOf(first[0] - second[0], first[1] - second[1], first[2] - second[2])
 
     companion object {
-        const val DEFAULT_CACHE_BUDGET_BYTES = 8L * 1024L * 1024L
+        const val DEFAULT_CACHE_BUDGET_BYTES = 4L * 1024L * 1024L
+        const val PREVIEW_CACHE_BUDGET_BYTES = 1L * 1024L * 1024L
+        const val STILL_CACHE_BUDGET_BYTES = 4L * 1024L * 1024L
         private const val MEBIBYTE = 1024L * 1024L
     }
 }

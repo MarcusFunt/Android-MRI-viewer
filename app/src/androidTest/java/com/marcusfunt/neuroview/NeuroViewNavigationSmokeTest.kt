@@ -200,7 +200,7 @@ class NeuroViewNavigationSmokeTest {
                         onCancelLoad = {},
                         onRetryLoad = {},
                         onReturnToLibrary = {},
-                        onSaveNote = { plane, slice, _, orientationVerified, body ->
+                        onSaveNote = { plane, slice, _, _, orientationVerified, body ->
                             if (body == "Check this slice") saved = Triple(plane, slice, orientationVerified)
                         },
                         onImport = {},

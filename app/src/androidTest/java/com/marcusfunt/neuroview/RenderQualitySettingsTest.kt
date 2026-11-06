@@ -11,6 +11,9 @@ import com.marcusfunt.neuroview.ui.screens.PROBE_CROSSHAIR_ENABLED_KEY
 import com.marcusfunt.neuroview.ui.screens.RENDER_QUALITY_MODE_KEY
 import com.marcusfunt.neuroview.ui.screens.VIEWER_DISPLAY_PREFERENCES
 import com.marcusfunt.neuroview.ui.screens.NeuroViewSettingsSheet
+import com.marcusfunt.neuroview.mri.RenderEnvironmentSnapshot
+import com.marcusfunt.neuroview.mri.RenderQualityProfile
+import com.marcusfunt.neuroview.mri.ThermalStatus
 import com.marcusfunt.neuroview.ui.theme.NeuroViewTheme
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
@@ -59,5 +62,42 @@ class RenderQualitySettingsTest {
         } finally {
             preferences.edit().clear().commit()
         }
+    }
+
+    @Test
+    fun settingsExplainRequestedAndEffectiveResolutionUnderMemoryPressure() {
+        compose.setContent {
+            NeuroViewTheme {
+                NeuroViewSettingsSheet(
+                    autoRotate = false,
+                    onAutoRotateChange = {},
+                    glowEnabled = false,
+                    onGlowEnabledChange = {},
+                    onResetBrainOrientation = null,
+                    onClearCache = { 0 },
+                    scrollToViewerSettings = false,
+                    renderQualityProfile = RenderQualityProfile(
+                        previewMaxSide = 192,
+                        stillMaxSide = 256,
+                        refineDelayMs = 72,
+                        requestedPreviewMaxSide = 256,
+                        requestedStillMaxSide = 768,
+                        constraintReason = "reduced for memory headroom",
+                    ),
+                    renderEnvironmentSnapshot = RenderEnvironmentSnapshot(
+                        maxHeapBytes = 512L * 1024 * 1024,
+                        availableHeapBytes = 30L * 1024 * 1024,
+                        viewportMaxSidePx = 1200,
+                        powerSave = false,
+                        thermalStatus = ThermalStatus.NOMINAL,
+                    ),
+                    onDismiss = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText("Rendering priority").performScrollTo()
+        compose.onNodeWithText("Requested still side: 768 px", substring = true).assertExists()
+        compose.onNodeWithText("reduced for memory headroom", substring = true).assertExists()
     }
 }
