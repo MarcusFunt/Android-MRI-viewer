@@ -445,10 +445,40 @@ class ViewerTouchNavigationTest {
     ) {
         NeuroViewTheme {
             CompositionLocalProvider(LocalNeuroViewMotion provides motion) {
-                    MriContent(Modifier.fillMaxSize(), focus.value, false, false, { focus.value = !focus.value },
-                        false, false, {}, 3f, volumeForTest, MriPlane.AXIAL, bitmap.value, false, {},
-                        slice.intValue, 256, onSliceChange ?: { slice.intValue = it }, { scrubbing.value = it }, {},
-                        null, "synthetic", null, {}, 0.4f, {}, 0.8f, {})
+                    MriContent(
+                        modifier = Modifier.fillMaxSize(),
+                        focusMode = focus.value,
+                        showSliceButtons = false,
+                        inertialScrolling = false,
+                        onFocusToggle = { focus.value = !focus.value },
+                        showOrientationMarkers = false,
+                        probeCrosshairEnabled = false,
+                        onProbeCrosshairChange = {},
+                        crosshairThicknessDp = 3f,
+                        onZoomScaleChanged = {},
+                        volume = volumeForTest,
+                        plane = MriPlane.AXIAL,
+                        descriptor = ViewPlaneDescriptor.worldAligned(MriPlane.AXIAL),
+                        bitmap = bitmap.value,
+                        renderStatusVisible = false,
+                        onImageViewportSizeChanged = {},
+                        selectedSlice = slice.intValue,
+                        totalSlices = 256,
+                        onSliceChange = onSliceChange ?: { slice.intValue = it },
+                        onScrubbingChanged = { scrubbing.value = it },
+                        onPlaneSelect = {},
+                        onNativeGridSelect = {},
+                        onStartupViewChange = {},
+                        onResetStartupView = {},
+                        selectedDocumentUri = null,
+                        originalDocumentName = "synthetic",
+                        referenceWorld = null,
+                        onReferenceWorldChange = {},
+                        windowCenter = 0.4f,
+                        onWindowCenter = {},
+                        windowWidth = 0.8f,
+                        onWindowWidth = {},
+                    )
             }
         }
     }

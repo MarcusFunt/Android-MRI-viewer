@@ -12,12 +12,12 @@ class RenderQualityPolicyTest {
             mode = RenderQualityMode.MANUAL,
             adaptive = true,
             previewMaxSide = 40,
-            stillMaxSide = 900,
+            stillMaxSide = 1800,
             refineDelayMs = 500,
         ).validated()
 
         assertEquals(96, settings.previewMaxSide)
-        assertEquals(768, settings.stillMaxSide)
+        assertEquals(1536, settings.stillMaxSide)
         assertEquals(250L, settings.refineDelayMs)
     }
 
@@ -45,7 +45,7 @@ class RenderQualityPolicyTest {
             AdaptiveQualityLevel.LOW,
         )
 
-        assertEquals(RenderQualityProfile(160, 384, 72L), profile)
+        assertEquals(RenderQualityProfile(160, 768, 72L), profile)
     }
 
     @Test
@@ -105,7 +105,36 @@ class RenderQualityPolicyTest {
             AdaptiveQualityLevel.STANDARD,
         )
 
-        assertEquals(RenderQualityProfile(128, 320, 72L), profile)
+        assertEquals(RenderQualityProfile(128, 640, 72L), profile)
+    }
+
+    @Test
+    fun settledResolutionFollowsZoomAndDoesNotExceedSourceGridInformation() {
+        val zoomed = RenderQualityPolicy.resolve(
+            RenderQualitySettings(mode = RenderQualityMode.HIGH_DETAIL, adaptive = false),
+            RenderEnvironment(
+                maxHeapBytes = 1024L * 1024 * 1024,
+                viewportMaxSidePx = 400,
+                powerSave = false,
+                thermalStatus = ThermalStatus.NOMINAL,
+                zoomScale = 2f,
+                sourceMaxSide = 1200,
+            ),
+        )
+        assertEquals(800, zoomed.stillMaxSide)
+
+        val sourceLimited = RenderQualityPolicy.resolve(
+            RenderQualitySettings(mode = RenderQualityMode.HIGH_DETAIL, adaptive = false),
+            RenderEnvironment(
+                maxHeapBytes = 1024L * 1024 * 1024,
+                viewportMaxSidePx = 1600,
+                powerSave = false,
+                thermalStatus = ThermalStatus.NOMINAL,
+                zoomScale = 3f,
+                sourceMaxSide = 512,
+            ),
+        )
+        assertEquals(512, sourceLimited.stillMaxSide)
     }
 
     @Test

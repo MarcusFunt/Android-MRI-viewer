@@ -146,6 +146,9 @@ import com.marcusfunt.neuroview.mri.MprRenderer
 import com.marcusfunt.neuroview.mri.MprProbe
 import com.marcusfunt.neuroview.mri.MprImage
 import com.marcusfunt.neuroview.mri.MriPlane
+import com.marcusfunt.neuroview.mri.ViewPlaneDescriptor
+import com.marcusfunt.neuroview.mri.NativeGridOrientation
+import com.marcusfunt.neuroview.mri.PlaneGeometry
 import com.marcusfunt.neuroview.mri.NiftiVolume
 import com.marcusfunt.neuroview.mri.AdaptiveQualityLevel
 import com.marcusfunt.neuroview.mri.AdaptiveRenderQualityController
@@ -153,6 +156,7 @@ import com.marcusfunt.neuroview.mri.RenderEnvironment
 import com.marcusfunt.neuroview.mri.RenderPerformanceMonitor
 import com.marcusfunt.neuroview.mri.RenderPerformanceSnapshot
 import com.marcusfunt.neuroview.mri.RenderQualityPolicy
+import com.marcusfunt.neuroview.mri.RenderQualitySettings
 import com.marcusfunt.neuroview.mri.RenderRequestGate
 import com.marcusfunt.neuroview.mri.ThermalStatus
 import com.marcusfunt.neuroview.navigation.Destination
@@ -247,6 +251,9 @@ fun ViewerScreen(
                 ?: MriPlane.AXIAL,
         )
     }
+    var nativeGridSelected by rememberSaveable(selectedDocumentUri, initialNoteId) {
+        mutableStateOf(false)
+    }
     var focusMode by rememberSaveable { mutableStateOf(false) }
     var sliceIndex by rememberSaveable(selectedDocumentUri, initialNoteId, initialNotePlane) {
         mutableIntStateOf(initialNoteSlice ?: 0)
@@ -288,6 +295,7 @@ fun ViewerScreen(
                 SHOW_SLICE_BUTTONS_KEY -> showSliceButtons = displayPrefs.getBoolean(SHOW_SLICE_BUTTONS_KEY, false)
                 INERTIAL_SCROLLING_KEY -> inertialScrolling = displayPrefs.getBoolean(INERTIAL_SCROLLING_KEY, true)
                 IMMERSIVE_FOCUS_KEY -> immersiveFocus = displayPrefs.getBoolean(IMMERSIVE_FOCUS_KEY, false)
+                OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY -> Unit // Applied when a scan is opened.
                 SHOW_ORIENTATION_MARKERS_KEY -> {
                     showOrientationMarkers = displayPrefs.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false)
                 }
@@ -368,6 +376,39 @@ fun ViewerScreen(
     val loading = volumeState as? VolumeLoadState.Loading
     val volume = ready?.volume ?: firstSlice?.volume ?: loading?.decodedVolume
     val contentDisplayName = ready?.displayName ?: firstSlice?.displayName
+    val activeDescriptor = remember(volume, plane, nativeGridSelected) {
+        if (volume != null && nativeGridSelected) {
+            val assessment = NativeGridOrientation.analyze(volume)
+            ViewPlaneDescriptor.nativeGrid(volume, assessment.preferredStackAxis)
+        } else {
+            ViewPlaneDescriptor.worldAligned(plane)
+        }
+    }
+    val viewKey = if (activeDescriptor.isNativeGrid) "NATIVE_${activeDescriptor.stackAxis}" else plane.name
+    LaunchedEffect(volume, scanKey, initialNoteId, initialNotePlane) {
+        val loadedVolume = volume ?: return@LaunchedEffect
+        val savedStartup = scanKey?.let { displayPrefs.getString("${it}_startup_view", null) }
+        val shouldUseNative = when {
+            initialNoteId != null -> false
+            savedStartup == "NATIVE" -> true
+            savedStartup != null -> false
+            else -> displayPrefs.getBoolean(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY, true)
+        }
+        val startupPlane = when {
+            initialNoteId != null -> initialNotePlane?.let { runCatching { MriPlane.valueOf(it) }.getOrNull() }
+                ?: MriPlane.AXIAL
+            savedStartup != null && savedStartup != "NATIVE" ->
+                runCatching { MriPlane.valueOf(savedStartup) }.getOrDefault(MriPlane.AXIAL)
+            savedStartup == "NATIVE" -> ViewPlaneDescriptor.nativeGrid(
+                loadedVolume, NativeGridOrientation.analyze(loadedVolume).preferredStackAxis,
+            ).nearestAnatomicalPlane ?: MriPlane.AXIAL
+            else -> NativeGridOrientation.initialDescriptor(loadedVolume, shouldUseNative)
+                .nearestAnatomicalPlane ?: MriPlane.AXIAL
+        }
+        plane = startupPlane
+        nativeGridSelected = shouldUseNative && initialNoteId == null &&
+            (savedStartup == "NATIVE" || NativeGridOrientation.analyze(loadedVolume).useNativeForStartup)
+    }
     val powerManager = remember(context.applicationContext) {
         context.getSystemService(Context.POWER_SERVICE) as? PowerManager
     }
@@ -404,6 +445,7 @@ fun ViewerScreen(
         ).roundToInt()
     }
     var imageViewportSize by remember(volume) { mutableStateOf(IntSize.Zero) }
+    var renderZoomScale by rememberSaveable(selectedDocumentUri) { mutableFloatStateOf(1f) }
     val viewportMaxSidePx = if (imageViewportSize == IntSize.Zero) {
         deviceViewportMaxSidePx
     } else {
@@ -426,7 +468,7 @@ fun ViewerScreen(
     } else ThermalStatus.NOMINAL
     val renderEnvironment = remember(
         runtimeMaxHeap, volume, viewportMaxSidePx, powerSave, thermalStatus, environmentRevision,
-        renderQualitySettings,
+        renderQualitySettings, renderZoomScale,
     ) {
         RenderEnvironment(
             maxHeapBytes = runtimeMaxHeap,
@@ -434,6 +476,8 @@ fun ViewerScreen(
             viewportMaxSidePx = viewportMaxSidePx,
             powerSave = powerSave,
             thermalStatus = thermalStatus,
+            zoomScale = renderZoomScale,
+            sourceMaxSide = volume?.let { maxOf(it.nx, it.ny, it.nz) } ?: RenderQualitySettings.MAX_STILL_SIDE,
         )
     }
     var adaptiveQualityLevel by remember(volume) {
@@ -456,7 +500,10 @@ fun ViewerScreen(
                     (scrollPreviewQuality / ViewerRenderPolicy.DEFAULT_PREVIEW_QUALITY))
                     .roundToInt()
                     .coerceIn(
-                        ViewerRenderPolicy.MIN_PREVIEW_RESOLUTION,
+                        minOf(
+                            ViewerRenderPolicy.MIN_PREVIEW_RESOLUTION,
+                            baseRenderQualityProfile.stillMaxSide,
+                        ),
                         baseRenderQualityProfile.stillMaxSide,
                     )
             } else {
@@ -470,15 +517,15 @@ fun ViewerScreen(
         lastViewerInputAtNs = SystemClock.elapsedRealtimeNanos()
     }
     var referenceWorld by remember(volume) { mutableStateOf<DoubleArray?>(null) }
-    val sliceCount = if (volume != null) MprRenderer.sliceCount(volume, plane) else 1
+    val sliceCount = if (volume != null) MprRenderer.sliceCount(volume, activeDescriptor) else 1
     val selectedSlice = sliceIndex.coerceIn(0, sliceCount - 1)
 
-    LaunchedEffect(volume, plane, initialNoteId) {
+    LaunchedEffect(volume, plane, nativeGridSelected, initialNoteId) {
         if (volume == null) {
             sliceIndex = 0
             return@LaunchedEffect
         }
-        val count = MprRenderer.sliceCount(volume, plane)
+        val count = MprRenderer.sliceCount(volume, activeDescriptor)
         if (initialNoteId != null && restoredInitialNoteId != initialNoteId) {
             if (initialNotePlane == plane.name && initialNoteSlice != null) {
                 sliceIndex = initialNoteSlice.coerceIn(0, count - 1)
@@ -486,17 +533,17 @@ fun ViewerScreen(
             restoredInitialNoteId = initialNoteId
         } else {
             sliceIndex = when {
-                referenceWorld != null -> MprProbe.sliceForWorld(volume, plane, requireNotNull(referenceWorld))
-                scanKey != null -> displayPrefs.getInt("${scanKey}_${plane.name}_slice", count / 2)
+                referenceWorld != null -> MprProbe.sliceForWorld(volume, activeDescriptor, requireNotNull(referenceWorld))
+                scanKey != null -> displayPrefs.getInt("${scanKey}_${viewKey}_slice", count / 2)
                     .coerceIn(0, count - 1)
                 else -> count / 2
             }
         }
     }
-    LaunchedEffect(scanKey, plane, sliceIndex, sliceCount, volume) {
+    LaunchedEffect(scanKey, viewKey, sliceIndex, sliceCount, volume) {
         if (scanKey == null || volume == null) return@LaunchedEffect
         delay(180L)
-        displayPrefs.edit().putInt("${scanKey}_${plane.name}_slice", selectedSlice).apply()
+        displayPrefs.edit().putInt("${scanKey}_${viewKey}_slice", selectedSlice).apply()
     }
 
     LaunchedEffect(volume) {
@@ -513,12 +560,12 @@ fun ViewerScreen(
     // During interaction render a smaller preview, then refine at full resolution
     // once the gesture/slider settles. Cached scalar slices avoid costly rereads
     // when changing window levels or moving backwards through the stack.
-    var bitmap by remember(volume, plane) { mutableStateOf<Bitmap?>(null) }
-    var committedRenderGeneration by remember(volume, plane) { mutableLongStateOf(0L) }
-    var committedInputStartedAtNs by remember(volume, plane) { mutableLongStateOf(0L) }
-    var lastMeasuredDisplayGeneration by remember(volume, plane) { mutableLongStateOf(0L) }
-    var renderStatusVisible by remember(volume, plane) { mutableStateOf(false) }
-    LaunchedEffect(bitmap, volume, plane) {
+    var bitmap by remember(volume, activeDescriptor) { mutableStateOf<Bitmap?>(null) }
+    var committedRenderGeneration by remember(volume, activeDescriptor) { mutableLongStateOf(0L) }
+    var committedInputStartedAtNs by remember(volume, activeDescriptor) { mutableLongStateOf(0L) }
+    var lastMeasuredDisplayGeneration by remember(volume, activeDescriptor) { mutableLongStateOf(0L) }
+    var renderStatusVisible by remember(volume, activeDescriptor) { mutableStateOf(false) }
+    LaunchedEffect(bitmap, volume, activeDescriptor) {
         if (bitmap == null) {
             delay(160L)
             renderStatusVisible = true
@@ -550,8 +597,8 @@ fun ViewerScreen(
             onFirstSliceDisplayed(operationId)
         }
     }
-    val renderRequestGate = remember(volume, plane) { RenderRequestGate() }
-    LaunchedEffect(volume, plane, renderQualityProfile) {
+    val renderRequestGate = remember(volume, activeDescriptor) { RenderRequestGate() }
+    LaunchedEffect(volume, activeDescriptor, renderQualityProfile) {
         if (volume == null) return@LaunchedEffect
         val operationId = loading?.operation?.id
         val renderJob = currentCoroutineContext()[Job]
@@ -560,21 +607,13 @@ fun ViewerScreen(
         }
         try {
             val preview = withContext(Dispatchers.Default) {
-                val context = currentCoroutineContext()
-                MprRenderSession(
-                    volume, plane, renderQualityProfile.previewMaxSide,
-                    cancellationCheck = { context.ensureActive() },
-                )
+                MprRenderSession(volume, activeDescriptor, renderQualityProfile.previewMaxSide)
             }
             val full = if (renderQualityProfile.stillMaxSide == renderQualityProfile.previewMaxSide) {
                 preview
             } else {
                 withContext(Dispatchers.Default) {
-                    val context = currentCoroutineContext()
-                    MprRenderSession(
-                        volume, plane, renderQualityProfile.stillMaxSide,
-                        cancellationCheck = { context.ensureActive() },
-                    )
+                    MprRenderSession(volume, activeDescriptor, renderQualityProfile.stillMaxSide)
                 }
             }
             // Observe the mutable sliceIndex directly. The composable's selectedSlice
@@ -785,8 +824,10 @@ fun ViewerScreen(
                                 displayPrefs.edit().putBoolean(PROBE_CROSSHAIR_ENABLED_KEY, enabled).apply()
                             },
                             crosshairThicknessDp = crosshairThicknessDp,
+                            onZoomScaleChanged = { renderZoomScale = it },
                             volume = requireNotNull(volume),
                             plane = plane,
+                            descriptor = activeDescriptor,
                             bitmap = bitmap,
                             renderStatusVisible = renderStatusVisible,
                             onImageViewportSizeChanged = { imageViewportSize = it },
@@ -802,15 +843,51 @@ fun ViewerScreen(
                             },
                             onPlaneSelect = { selectedPlane ->
                                 noteViewerInput()
+                                nativeGridSelected = false
                                 sliceIndex = when {
                                     referenceWorld != null -> MprProbe.sliceForWorld(
                                         requireNotNull(volume),
-                                        selectedPlane,
+                                        ViewPlaneDescriptor.worldAligned(selectedPlane),
                                         requireNotNull(referenceWorld),
                                     )
                                     else -> MprRenderer.sliceCount(requireNotNull(volume), selectedPlane) / 2
                                 }
                                 plane = selectedPlane
+                            },
+                            onNativeGridSelect = {
+                                noteViewerInput()
+                                val native = ViewPlaneDescriptor.nativeGrid(
+                                    requireNotNull(volume),
+                                    NativeGridOrientation.analyze(requireNotNull(volume)).preferredStackAxis,
+                                )
+                                plane = native.nearestAnatomicalPlane ?: MriPlane.AXIAL
+                                nativeGridSelected = true
+                                sliceIndex = if (referenceWorld != null) {
+                                    MprProbe.sliceForWorld(requireNotNull(volume), native, requireNotNull(referenceWorld))
+                                } else native.let { MprRenderer.sliceCount(requireNotNull(volume), it) / 2 }
+                            },
+                            onStartupViewChange = { view ->
+                                if (scanKey != null) {
+                                    displayPrefs.edit().putString("${scanKey}_startup_view", view).apply()
+                                }
+                                if (view == "NATIVE") {
+                                    val native = ViewPlaneDescriptor.nativeGrid(
+                                        requireNotNull(volume),
+                                        NativeGridOrientation.analyze(requireNotNull(volume)).preferredStackAxis,
+                                    )
+                                    plane = native.nearestAnatomicalPlane ?: MriPlane.AXIAL
+                                    nativeGridSelected = true
+                                    sliceIndex = MprRenderer.sliceCount(requireNotNull(volume), native) / 2
+                                } else {
+                                    val selectedPlane = runCatching { MriPlane.valueOf(view) }
+                                        .getOrDefault(MriPlane.AXIAL)
+                                    plane = selectedPlane
+                                    nativeGridSelected = false
+                                    sliceIndex = MprRenderer.sliceCount(requireNotNull(volume), selectedPlane) / 2
+                                }
+                            },
+                            onResetStartupView = {
+                                if (scanKey != null) displayPrefs.edit().remove("${scanKey}_startup_view").apply()
                             },
                             selectedDocumentUri = selectedDocumentUri,
                             originalDocumentName = contentDisplayName,
@@ -1072,8 +1149,10 @@ internal fun MriContent(
     probeCrosshairEnabled: Boolean,
     onProbeCrosshairChange: (Boolean) -> Unit,
     crosshairThicknessDp: Float,
+    onZoomScaleChanged: (Float) -> Unit,
     volume: NiftiVolume,
     plane: MriPlane,
+    descriptor: ViewPlaneDescriptor,
     bitmap: Bitmap?,
     renderStatusVisible: Boolean,
     onImageViewportSizeChanged: (IntSize) -> Unit,
@@ -1082,6 +1161,9 @@ internal fun MriContent(
     onSliceChange: (Int) -> Unit,
     onScrubbingChanged: (Boolean) -> Unit,
     onPlaneSelect: (MriPlane) -> Unit,
+    onNativeGridSelect: () -> Unit,
+    onStartupViewChange: (String) -> Unit,
+    onResetStartupView: () -> Unit,
     selectedDocumentUri: String?,
     originalDocumentName: String?,
     referenceWorld: DoubleArray?,
@@ -1107,11 +1189,13 @@ internal fun MriContent(
     var noteEditorOpen by rememberSaveable { mutableStateOf(false) }
     var noteText by rememberSaveable { mutableStateOf("") }
     var noteSaved by rememberSaveable { mutableStateOf(false) }
+    var orientationMenuExpanded by rememberSaveable(volume) { mutableStateOf(false) }
+    var orientationDetailsOpen by rememberSaveable(volume) { mutableStateOf(false) }
     val editStateHolder = rememberSaveableStateHolder()
     var bridgeToken by remember { mutableStateOf("") }
     var measurementMode by rememberSaveable(volume) { mutableStateOf(false) }
     var showUnknownSpatialUnitsDialog by remember(volume) { mutableStateOf(false) }
-    val measurementPoints = remember(volume, plane, selectedSlice) {
+    val measurementPoints = remember(volume, descriptor, selectedSlice) {
         mutableStateOf<List<MprMeasurementPoint>>(emptyList())
     }
     val currentMeasurementPoints by rememberUpdatedState(measurementPoints)
@@ -1123,10 +1207,10 @@ internal fun MriContent(
         save = { listOf(it.x, it.y) }, restore = { Offset(it[0], it[1]) },
     )) { mutableStateOf(Offset.Zero) }
     var imageViewport by remember { mutableStateOf(IntSize.Zero) }
-    var pendingTap by remember(volume, plane) { mutableStateOf<PendingViewerTap?>(null) }
-    var pendingTapJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
+    var pendingTap by remember(volume, descriptor) { mutableStateOf<PendingViewerTap?>(null) }
+    var pendingTapJob by remember(volume, descriptor) { mutableStateOf<Job?>(null) }
     val flingScope = rememberCoroutineScope()
-    var flingJob by remember(volume, plane) { mutableStateOf<Job?>(null) }
+    var flingJob by remember(volume, descriptor) { mutableStateOf<Job?>(null) }
 
     fun setMeasurementMode(enabled: Boolean) {
         if (enabled && !volume.hasKnownSpatialUnits) {
@@ -1154,7 +1238,7 @@ internal fun MriContent(
         val fractions = imageFractionsFromTap(tap, currentBitmap, imageViewport, scale, panOffset)
             ?: return
         val sampled = MprProbe.sample(
-            volume, plane, currentSlice, fractions.first, fractions.second,
+            volume, descriptor, currentSlice, fractions.first, fractions.second,
         )
         if (currentMeasurementMode) {
             if (sampled != null) {
@@ -1199,7 +1283,7 @@ internal fun MriContent(
         val image = currentBitmap ?: return
         val fraction = viewportTransform(image)?.imageFractionForScreenPoint(position) ?: return
         val sample = MprProbe.sample(
-            volume, plane, currentSlice, fraction.x.toDouble(), fraction.y.toDouble(),
+            volume, descriptor, currentSlice, fraction.x.toDouble(), fraction.y.toDouble(),
         ) ?: return
         val points = currentMeasurementPoints.value.toMutableList()
         if (index !in points.indices) return
@@ -1211,6 +1295,7 @@ internal fun MriContent(
         val transform = viewportTransform() ?: return
         val next = if (scale > 1.01f) transform.fit() else transform.zoomAt(tap, 2f)
         scale = next.scale
+        onZoomScaleChanged(next.scale)
         panOffset = next.panOffset
     }
 
@@ -1226,6 +1311,7 @@ internal fun MriContent(
         val transform = viewportTransform(bitmap) ?: return@LaunchedEffect
         val bounded = transform.clamped()
         scale = bounded.scale
+        onZoomScaleChanged(bounded.scale)
         panOffset = bounded.panOffset
     }
 
@@ -1253,6 +1339,57 @@ internal fun MriContent(
         }
     }
     val orientationUnknown = volume.transformSource.startsWith("NO ORIENTATION")
+    val nativeAssessment = remember(volume) { NativeGridOrientation.analyze(volume) }
+    val planeGeometry = remember(volume, descriptor, bitmap?.width) {
+        PlaneGeometry.create(volume, descriptor, maxOf(8, bitmap?.width ?: MprRenderer.MAX_IMAGE_SIDE))
+    }
+    val orientationDetails = remember(volume, descriptor, bitmap?.width, bitmap?.height) {
+        val directions = (0..2).joinToString("\n") { axis ->
+            val name = listOf("i", "j", "k")[axis]
+            val direction = volume.affine.voxelAxisDirectionRas(axis)
+                .joinToString(", ") { "%.3f".format(java.util.Locale.US, it) }
+            "$name axis → RAS+ ($direction)"
+        }
+        val pixdim = volume.sourcePixdimMm.joinToString(" × ") {
+            "%.3f".format(java.util.Locale.US, it)
+        }
+        val unitLabel = if (volume.hasKnownSpatialUnits) "mm" else "header values; units unset"
+        val inPlaneNumbers = "%.3f × %.3f".format(
+            java.util.Locale.US,
+            planeGeometry.sourcePixelSpacingHorizontalMm,
+            planeGeometry.sourcePixelSpacingVerticalMm,
+        )
+        val inPlane = if (volume.hasKnownSpatialUnits) "$inPlaneNumbers mm"
+            else "$inPlaneNumbers (units unknown; no mm calibration)"
+        val renderedPixels = if (volume.hasKnownSpatialUnits) {
+            "%.3f × %.3f mm".format(
+                java.util.Locale.US,
+                planeGeometry.renderedPixelSpacingHorizontalMm,
+                planeGeometry.renderedPixelSpacingVerticalMm,
+            )
+        } else "unavailable (units unknown)"
+        val renderedSpacing = planeGeometry.renderedSliceSpacingMm()?.let {
+            "%.3f mm".format(java.util.Locale.US, it)
+        } ?: "unavailable (units unset or one slice)"
+        val sourceKind = when {
+            nativeAssessment.nearIsotropic -> "near-isotropic heuristic; acquisition type unknown"
+            nativeAssessment.likely2DLike -> "anisotropic / 2D-like heuristic; not confirmed"
+            else -> "acquisition type unknown"
+        }
+        val obliquity = "%.2f°".format(java.util.Locale.US, descriptor.obliquityDegrees)
+        val effectiveSize = bitmap?.let { "${it.width} × ${it.height} px" } ?: "render pending"
+        buildString {
+            appendLine("Stored grid: ${volume.nx} × ${volume.ny} × ${volume.nz} voxels")
+            appendLine("Header pixdim: $pixdim $unitLabel · qfac ${volume.sourceQfac?.toString() ?: "not available"}")
+            appendLine("Affine: ${volume.transformSource}${if (volume.affine.hasShear()) " · shear present" else ""}")
+            appendLine(directions)
+            appendLine("Grid classification: $sourceKind")
+            appendLine("Current view: ${descriptor.label} · nearest plane ${descriptor.nearestAnatomicalPlane?.label ?: "unknown"} · obliquity $obliquity")
+            appendLine("View orientation: RAS+ affine; DICOM convention is LPS. Patient labels depend on a valid transform.")
+            appendLine("Image: $effectiveSize · source in-plane spacing $inPlane · rendered pixel spacing $renderedPixels · rendered slice spacing $renderedSpacing")
+            append("“Native grid” means the orientation stored in this NIfTI file; it does not prove original scanner acquisition orientation.")
+        }
+    }
     Column(
         modifier = modifier.padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -1269,13 +1406,11 @@ internal fun MriContent(
                 targetOffsetY = { it / 6 },
             ),
         ) {
-            Box(
-                modifier = Modifier.fillMaxWidth().traceComposeFirstDraw("viewer.plane-tabs"),
-            ) {
+            Column(modifier = Modifier.fillMaxWidth().traceComposeFirstDraw("viewer.plane-tabs")) {
                 Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
-                    .offset(y = (-4).dp).selectableGroup(),
-                verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+                        .offset(y = (-4).dp).selectableGroup(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     MriPlane.entries.forEach { option ->
                         val selected = plane == option
@@ -1292,12 +1427,19 @@ internal fun MriContent(
                                 ),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(
-                                option.label,
-                                style = MaterialTheme.typography.labelLarge.copy(fontSize = 16.sp),
-                                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                                color = tabColor,
-                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    option.label,
+                                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 16.sp),
+                                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                                    color = tabColor,
+                                )
+                                if (selected && descriptor.isNativeGrid && !descriptor.isObliqueNative) {
+                                    Text(if (nativeAssessment.orientationKnown) "Native grid" else "Native*",
+                                        color = NeuroChrome.accent.copy(alpha = 0.82f),
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
+                                }
+                            }
                             if (selected) {
                                 Box(
                                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -1310,16 +1452,74 @@ internal fun MriContent(
                         }
                     }
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = if (descriptor.isNativeGrid) {
+                            { onPlaneSelect(descriptor.nearestAnatomicalPlane ?: MriPlane.AXIAL) }
+                        } else onNativeGridSelect,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    ) {
+                        Text(
+                            if (descriptor.isNativeGrid && descriptor.isObliqueNative) {
+                                "Native · oblique · return to ${descriptor.nearestAnatomicalPlane?.label ?: "Axial"}"
+                            } else if (descriptor.isNativeGrid) {
+                                "Return to ${descriptor.nearestAnatomicalPlane?.label ?: "Axial"}"
+                            } else if (!nativeAssessment.orientationKnown) {
+                                "Native grid · assumed"
+                            } else if (nativeAssessment.obliquityDegrees > NativeGridOrientation.ALIGNED_TOLERANCE_DEGREES) {
+                                "Native · oblique"
+                            } else "Native grid",
+                            color = NeuroChrome.accent,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    Box {
+                        TextButton(
+                            onClick = { orientationMenuExpanded = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        ) { Text("Startup", color = NeuroChrome.muted, style = MaterialTheme.typography.labelSmall) }
+                        DropdownMenu(
+                            expanded = orientationMenuExpanded,
+                            onDismissRequest = { orientationMenuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Open Native grid on startup for this scan") },
+                                onClick = { orientationMenuExpanded = false; onStartupViewChange("NATIVE") },
+                            )
+                            MriPlane.entries.forEach { startupPlane ->
+                                DropdownMenuItem(
+                                    text = { Text("Open ${startupPlane.label} on startup for this scan") },
+                                    onClick = {
+                                        orientationMenuExpanded = false
+                                        onStartupViewChange(startupPlane.name)
+                                    },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Follow global startup preference") },
+                                onClick = { orientationMenuExpanded = false; onResetStartupView() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Orientation details") },
+                                onClick = { orientationMenuExpanded = false; orientationDetailsOpen = true },
+                            )
+                        }
+                    }
+                }
                 if (DrawOrderDiagnostics.isEnabled()) {
                     Box(
-                        modifier = Modifier.align(Alignment.Center).offset(x = 140.dp).size(12.dp)
+                        modifier = Modifier.align(Alignment.CenterHorizontally).offset(x = 140.dp).size(12.dp)
                             .zIndex(10f).background(Color.Magenta)
                             .testTag("viewer-tabs-overlay-diagnostic"),
                     )
                 }
             }
         }
-        DisposableEffect(volume, plane, probeCrosshairEnabled, measurementMode) {
+        DisposableEffect(volume, descriptor, probeCrosshairEnabled, measurementMode) {
             onDispose {
                 flingJob?.cancel()
                 pendingTapJob?.cancel()
@@ -1336,7 +1536,7 @@ internal fun MriContent(
                     imageViewport = it
                     onImageViewportSizeChanged(it)
                 }
-                .pointerInput(volume, plane, totalSlices) {
+                .pointerInput(volume, descriptor, totalSlices) {
                     awaitEachGesture {
                         val firstDown = awaitFirstDown(requireUnconsumed = false)
                         flingJob?.cancel()
@@ -1410,6 +1610,7 @@ internal fun MriContent(
                                                 zoomFactor = span / previousSpan,
                                             )
                                             scale = updated.scale
+                                            onZoomScaleChanged(updated.scale)
                                             panOffset = updated.panOffset
                                         }
                                         previousCentroid = centroid
@@ -1567,7 +1768,9 @@ internal fun MriContent(
             if (bitmap != null) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Real ${plane.label} MRI slice",
+                    contentDescription = if (descriptor.isNativeGrid) {
+                        "${descriptor.label} MRI slice"
+                    } else "Real ${plane.label} MRI slice",
                     modifier = Modifier.fillMaxSize().graphicsLayer {
                         scaleX = scale
                         scaleY = scale
@@ -1588,7 +1791,7 @@ internal fun MriContent(
                         strokeWidth = 2.dp,
                     )
                     Text(
-                        "Rendering ${plane.label.lowercase(java.util.Locale.ROOT)} view",
+                        "Rendering ${descriptor.label.lowercase(java.util.Locale.ROOT)} view",
                         color = NeuroChrome.muted,
                         style = MaterialTheme.typography.labelSmall,
                     )
@@ -1613,6 +1816,7 @@ internal fun MriContent(
                     onClick = {
                         val fit = viewportTransform()?.fit() ?: return@TextButton
                         scale = fit.scale
+                        onZoomScaleChanged(fit.scale)
                         panOffset = fit.panOffset
                     },
                     modifier = Modifier.align(Alignment.TopStart).semantics {
@@ -1630,13 +1834,8 @@ internal fun MriContent(
             }
             val reference = referenceWorld
             if (probeCrosshairEnabled && reference != null && bitmap != null && imageViewport.width > 0) {
-                val position = MprRenderer.slicePosition(volume, plane, currentSlice)
-                val count = MprRenderer.sliceCount(volume, plane)
-                val bounds = volume.affine.bounds(volume.nx, volume.ny, volume.nz)
-                val spacing = (bounds[1][plane.firstAxis] - bounds[0][plane.firstAxis]) /
-                    (count - 1).coerceAtLeast(1)
-                if (abs(reference[plane.firstAxis] - position) <= spacing * 0.55) {
-                    val (fx, fy) = MprProbe.fractionsForWorld(volume, plane, reference)
+                if (MprProbe.sliceForWorld(volume, descriptor, reference) == currentSlice) {
+                    val (fx, fy) = MprProbe.fractionsForWorld(volume, descriptor, reference)
                     val position = viewportTransform(bitmap)?.screenPointForImageFraction(
                         Offset(fx.toFloat(), fy.toFloat()),
                     )
@@ -1773,15 +1972,19 @@ internal fun MriContent(
         }
 
         if (!focusMode) {
-            val slicePosition = MprRenderer.slicePosition(volume, plane, selectedSlice)
-            val positionAxis = if (orientationUnknown) null else when (plane) {
+            val slicePosition = planeGeometry.slicePositionMm(selectedSlice)
+            val positionAxis = descriptor.nearestAnatomicalPlane?.let { nearest -> when (nearest) {
                 MriPlane.AXIAL -> "S"
                 MriPlane.CORONAL -> "A"
                 MriPlane.SAGITTAL -> "R"
+            } }
+            val positionLabel = when {
+                slicePosition == null -> "Units unknown"
+                descriptor.isObliqueNative && positionAxis != null ->
+                    "≈$positionAxis  %.1f mm".format(java.util.Locale.US, slicePosition)
+                positionAxis == null || orientationUnknown -> "%.1f mm".format(java.util.Locale.US, slicePosition)
+                else -> "$positionAxis  %.1f mm".format(java.util.Locale.US, slicePosition)
             }
-            val formattedPosition = "%.1f mm".format(java.util.Locale.US, slicePosition)
-            val positionLabel = if (positionAxis == null) formattedPosition
-                else "$positionAxis  $formattedPosition"
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
@@ -1961,6 +2164,23 @@ internal fun MriContent(
             },
             confirmButton = {
                 TextButton(onClick = { showUnknownSpatialUnitsDialog = false }) { Text("OK") }
+            },
+        )
+    }
+
+    if (orientationDetailsOpen) {
+        AlertDialog(
+            onDismissRequest = { orientationDetailsOpen = false },
+            title = { Text("Orientation and sampling") },
+            text = {
+                Text(
+                    orientationDetails,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { orientationDetailsOpen = false }) { Text("Done") }
             },
         )
     }

@@ -81,6 +81,7 @@ internal const val RENDER_REFINE_DELAY_KEY = "render_refine_delay_ms"
 internal const val SHOW_SLICE_BUTTONS_KEY = "show_slice_buttons"
 internal const val INERTIAL_SCROLLING_KEY = "inertial_slice_scrolling"
 internal const val IMMERSIVE_FOCUS_KEY = "immersive_focus"
+internal const val OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY = "open_native_grid_when_appropriate"
 
 internal fun SharedPreferences.readRenderQualitySettings(): RenderQualitySettings {
     val mode = runCatching {
@@ -90,7 +91,7 @@ internal fun SharedPreferences.readRenderQualitySettings(): RenderQualitySetting
         mode = mode,
         adaptive = getBoolean(ADAPTIVE_RENDERING_KEY, true),
         previewMaxSide = getInt(PREVIEW_MAX_SIDE_KEY, 160),
-        stillMaxSide = getInt(STILL_MAX_SIDE_KEY, 384),
+        stillMaxSide = getInt(STILL_MAX_SIDE_KEY, 768),
         refineDelayMs = getInt(RENDER_REFINE_DELAY_KEY, 72).toLong(),
     ).validated()
 }
@@ -153,6 +154,9 @@ internal fun NeuroViewSettingsSheet(
     var showSliceButtons by remember(viewerPreferences) { mutableStateOf(viewerPreferences.getBoolean(SHOW_SLICE_BUTTONS_KEY, false)) }
     var inertialScrolling by remember(viewerPreferences) { mutableStateOf(viewerPreferences.getBoolean(INERTIAL_SCROLLING_KEY, true)) }
     var immersiveFocus by remember(viewerPreferences) { mutableStateOf(viewerPreferences.getBoolean(IMMERSIVE_FOCUS_KEY, false)) }
+    var openNativeGridWhenAppropriate by remember(viewerPreferences) {
+        mutableStateOf(viewerPreferences.getBoolean(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY, true))
+    }
     var cacheStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val viewerSectionRequester = remember { BringIntoViewRequester() }
@@ -168,6 +172,8 @@ internal fun NeuroViewSettingsSheet(
                 SHOW_SLICE_BUTTONS_KEY -> showSliceButtons = preferences.getBoolean(SHOW_SLICE_BUTTONS_KEY, false)
                 INERTIAL_SCROLLING_KEY -> inertialScrolling = preferences.getBoolean(INERTIAL_SCROLLING_KEY, true)
                 IMMERSIVE_FOCUS_KEY -> immersiveFocus = preferences.getBoolean(IMMERSIVE_FOCUS_KEY, false)
+                OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY -> openNativeGridWhenAppropriate =
+                    preferences.getBoolean(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY, true)
                 SHOW_ORIENTATION_MARKERS_KEY -> {
                     showOrientationMarkers = preferences.getBoolean(SHOW_ORIENTATION_MARKERS_KEY, false)
                 }
@@ -259,6 +265,15 @@ internal fun NeuroViewSettingsSheet(
                 color = SettingsForeground,
             )
             Text("Navigation", style = MaterialTheme.typography.titleSmall, color = SettingsForeground)
+            SettingsSwitchRow(
+                title = "Open in native grid when appropriate",
+                detail = "Use the stored voxel grid for clearly anisotropic, oriented scans. This describes the file grid, not proven scanner acquisition.",
+                checked = openNativeGridWhenAppropriate,
+                onCheckedChange = { enabled ->
+                    openNativeGridWhenAppropriate = enabled
+                    viewerPreferences.edit().putBoolean(OPEN_NATIVE_GRID_WHEN_APPROPRIATE_KEY, enabled).apply()
+                },
+            )
             SettingsSwitchRow(
                 title = "Show previous/next slice buttons",
                 checked = showSliceButtons,

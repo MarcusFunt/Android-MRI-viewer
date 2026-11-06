@@ -22,28 +22,56 @@ class MprRendererTest {
             assertEquals(5, MprRenderer.sliceCount(v, plane))
             assertEquals(2.0, MprRenderer.slicePosition(v, plane, 2), 1e-6)
             val image = MprRenderer.render(v, plane, 2, maxSide = 16)
-            assertEquals(16, image.width)
-            assertEquals(16, image.height)
-            assertEquals(256, image.pixels.size)
+            assertEquals(5, image.width)
+            assertEquals(5, image.height)
+            assertEquals(25, image.pixels.size)
             assertTrue(image.pixels.all { (it ushr 24) == 255 })
         }
     }
 
-    @Test fun axialAndCoronalShowPatientRightOnScreenLeftForRasPositiveX() {
+    @Test fun anisotropicVolumesUseAPlaneSpecificWorldAxisSamplingStep() {
+        val volume = NiftiVolume(
+            17, 13, 9, FloatArray(17 * 13 * 9),
+            SpatialAffine.axisAligned(0.7, 0.7, 2.5),
+            0f, 1f, "sform (RAS+)", 1,
+        )
+
+        assertEquals(9, MprRenderer.sliceCount(volume, MriPlane.AXIAL))
+        assertEquals(13, MprRenderer.sliceCount(volume, MriPlane.CORONAL))
+        assertEquals(17, MprRenderer.sliceCount(volume, MriPlane.SAGITTAL))
+        assertEquals(2.5, MprRenderer.sliceStepWorld(volume, MriPlane.AXIAL), 1e-9)
+        assertEquals(0.7, MprRenderer.sliceStepWorld(volume, MriPlane.CORONAL), 1e-9)
+        assertEquals(0.7, MprRenderer.sliceStepWorld(volume, MriPlane.SAGITTAL), 1e-9)
+    }
+
+    @Test fun largeWorldPlaneStacksReportTheIndependentQualityCap() {
+        val volume = NiftiVolume(
+            900, 2, 2, FloatArray(900 * 2 * 2),
+            SpatialAffine.axisAligned(0.01, 1.0, 1.0),
+            0f, 1f, "sform (RAS+)", 1,
+        )
+        val info = MprRenderer.sliceSamplingInfo(volume, MriPlane.SAGITTAL)
+        assertEquals(701, info.renderedCount)
+        assertEquals(900, info.estimatedCount)
+        assertTrue(info.limitedByQualityCap)
+        assertEquals(8.99 / 700, info.renderedStepMm, 1e-9)
+    }
+
+    @Test fun axialAndCoronalShowPatientRightOnScreenLeftForRasPositiveXDirection() {
         val v = sampleVolume()
         for (plane in listOf(MriPlane.AXIAL, MriPlane.CORONAL)) {
             val image = MprRenderer.render(v, plane, 2, maxSide = 16)
-            val left = image.pixels[8 * 16] and 255
-            val right = image.pixels[8 * 16 + 15] and 255
-            assertTrue("Screen left should be higher positive RAS X", left > right)
+            val left = image.pixels[2 * image.width] and 255
+            val right = image.pixels[2 * image.width + image.width - 1] and 255
+            assertTrue("Screen-left patient-right should be higher RAS X", left > right)
         }
     }
 
     @Test fun sagittalHasAnteriorOnScreenLeftAndSuperiorAtTop() {
         val v = sampleVolume()
         val image = MprRenderer.render(v, MriPlane.SAGITTAL, 2, maxSide = 16)
-        assertTrue((image.pixels[8 * 16] and 255) > (image.pixels[8 * 16 + 15] and 255))
-        assertTrue((image.pixels[0] and 255) > (image.pixels[15 * 16] and 255))
+        assertTrue((image.pixels[2 * image.width] and 255) > (image.pixels[2 * image.width + image.width - 1] and 255))
+        assertTrue((image.pixels[0] and 255) > (image.pixels[(image.height - 1) * image.width] and 255))
     }
 
     @Test fun inverseAffineRoundTripsRotatedShearedAndTranslatedPositions() {

@@ -29,6 +29,18 @@ def intensity(world):
     return max(0, min(255, math.floor((value + 50) / 122.5 * 255 + .5)))
 
 
+def inverse3(rows):
+    a, b, c = rows[0]
+    d, e, f = rows[1]
+    g, h, i = rows[2]
+    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+    return (
+        ((e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det),
+        ((f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det),
+        ((d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det),
+    )
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     header = bytearray(352)
@@ -45,19 +57,28 @@ def main():
     # Deliberately very different second frame exposes accidental timepoint mixing.
     (OUT / "asymmetric-oblique-4d.nii").write_bytes(header + struct.pack("<420f", *values, *[v + 10000 for v in values]))
     rows = []
+    inverse = inverse3(((0, -1.5, .2), (1.2, 0, 0), (0, .1, 2)))
     for name, fixed, horizontal, vertical in (("AXIAL", 2, 0, 1), ("CORONAL", 1, 0, 2), ("SAGITTAL", 0, 1, 2)):
         span = [BOUNDS[1][a] - BOUNDS[0][a] for a in range(3)]
-        count = math.floor(span[fixed] / 1.2 + .5) + 1
+        density = math.sqrt(sum(inverse[row][fixed] ** 2 for row in range(3)))
+        intervals = span[fixed] * density
+        count = math.ceil(intervals - 1e-9 * max(1.0, intervals)) + 1
         selected = count // 2
         position = BOUNDS[0][fixed] + selected / (count - 1) * span[fixed]
-        aspect = span[horizontal] / span[vertical]
-        width = 96 if aspect >= 1 else math.floor(96 * aspect + .5)
-        height = 96 if aspect < 1 else math.floor(96 / aspect + .5)
+        horizontal_density = math.sqrt(sum(inverse[row][horizontal] ** 2 for row in range(3)))
+        vertical_density = math.sqrt(sum(inverse[row][vertical] ** 2 for row in range(3)))
+        pixel_step = max(1 / horizontal_density,
+                         1 / vertical_density,
+                         max(span[horizontal], span[vertical]) / 95)
+        width = math.floor(span[horizontal] / pixel_step + .5) + 1
+        height = math.floor(span[vertical] / pixel_step + .5) + 1
         pixels = []
         for y in range(height):
             for x in range(width):
                 world = [0., 0., 0.]
                 world[fixed] = position
+                # Radiological view: RAS+ patient-right (axial/coronal) or anterior
+                # (sagittal) is screen-left, so the horizontal world coordinate descends.
                 world[horizontal] = BOUNDS[1][horizontal] - x / (width - 1) * span[horizontal]
                 world[vertical] = BOUNDS[1][vertical] - y / (height - 1) * span[vertical]
                 pixels.append(intensity(world))

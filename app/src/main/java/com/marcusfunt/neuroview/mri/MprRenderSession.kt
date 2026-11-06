@@ -3,107 +3,100 @@ package com.marcusfunt.neuroview.mri
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-/** Float intensities are cached independently from brightness/contrast settings.
- * NaN marks geometrically outside voxels; source NIfTI nonfinite voxels were
- * already normalized by NiftiReader.
- */
+/** Float intensities are cached independently from brightness/contrast settings. NaN means outside. */
 data class MprScalarSlice(val width: Int, val height: Int, val values: FloatArray)
 
 /**
- * Reusable world-to-voxel sampling grid for one plane and output resolution.
- * The expensive affine transformation is calculated once per output pixel,
- * not again for every scroll frame. The first-axis shift is handled as a
- * constant voxel-space delta for every slice.
- *
- * Not thread safe: one render coordinator owns one session.
+ * Reusable sampling for one plane and resolution. Four 3-element vectors replace the old three
+ * width×height coordinate maps. Each output coordinate is an affine increment from the origin.
+ * The access-ordered scalar cache is bounded by both entry count and bytes.
  */
 class MprRenderSession(
     private val volume: NiftiVolume,
-    private val plane: MriPlane,
+    val descriptor: ViewPlaneDescriptor,
     maxSide: Int,
     private val cacheEntries: Int = 8,
-    private val cancellationCheck: () -> Unit = {},
+    private val cacheBudgetBytes: Long = DEFAULT_CACHE_BUDGET_BYTES,
 ) {
+    constructor(
+        volume: NiftiVolume,
+        plane: MriPlane,
+        maxSide: Int,
+        cacheEntries: Int = 8,
+        cacheBudgetBytes: Long = DEFAULT_CACHE_BUDGET_BYTES,
+    ) : this(
+        volume, ViewPlaneDescriptor.worldAligned(plane), maxSide, cacheEntries,
+        cacheBudgetBytes,
+    )
+
     init {
-        require(maxSide in 8..1024)
+        require(maxSide in 8..MprRenderer.MAX_QUALITY_SIDE)
         require(cacheEntries in 0..32)
+        require(cacheBudgetBytes in 0L..64L * MEBIBYTE)
     }
 
-    private val bounds = volume.affine.bounds(volume.nx, volume.ny, volume.nz)
-    private val horizontalSpan = (bounds[1][plane.horizontalAxis] -
-        bounds[0][plane.horizontalAxis]).coerceAtLeast(0.001)
-    private val verticalSpan = (bounds[1][plane.verticalAxis] -
-        bounds[0][plane.verticalAxis]).coerceAtLeast(0.001)
-    private val aspect = horizontalSpan / verticalSpan
-    val width: Int = if (aspect >= 1) maxSide else (maxSide * aspect).roundToInt().coerceAtLeast(8)
-    val height: Int = if (aspect < 1) maxSide else (maxSide / aspect).roundToInt().coerceAtLeast(8)
+    private val geometry = PlaneGeometry.create(volume, descriptor, maxSide)
+    val width: Int = geometry.width
+    val height: Int = geometry.height
 
-    private val baseI = DoubleArray(width * height)
-    private val baseJ = DoubleArray(width * height)
-    private val baseK = DoubleArray(width * height)
-    private val shiftI: Double
-    private val shiftJ: Double
-    private val shiftK: Double
+    private val origin = geometry.voxelAtFractionRaw(0.0, 0.0, 0)
+    private val columnStep = vectorDifference(
+        geometry.voxelAtFractionRaw(1.0 / max(1, width - 1), 0.0, 0), origin,
+    )
+    private val rowStep = vectorDifference(
+        geometry.voxelAtFractionRaw(0.0, 1.0 / max(1, height - 1), 0), origin,
+    )
+    private val sliceStep = if (geometry.sliceCount > 1) {
+        vectorDifference(geometry.voxelAtFractionRaw(0.0, 0.0, 1), origin)
+    } else doubleArrayOf(0.0, 0.0, 0.0)
 
-    private val cache = object : LinkedHashMap<Int, MprScalarSlice>(cacheEntries + 1, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, MprScalarSlice>): Boolean =
-            size > cacheEntries
-    }
-
-    init {
-        val stepWorld = (bounds[1][plane.firstAxis] - bounds[0][plane.firstAxis]) /
-            max(1, MprRenderer.sliceCount(volume, plane) - 1)
-        val at = bounds[0].clone()
-        val from = DoubleArray(3)
-        val to = DoubleArray(3)
-        volume.affine.voxelInto(at[0], at[1], at[2], from)
-        at[plane.firstAxis] += stepWorld
-        volume.affine.voxelInto(at[0], at[1], at[2], to)
-        shiftI = to[0] - from[0]
-        shiftJ = to[1] - from[1]
-        shiftK = to[2] - from[2]
-
-        at[plane.firstAxis] = bounds[0][plane.firstAxis]
-        val voxel = DoubleArray(3)
-        for (row in 0 until height) {
-            cancellationCheck()
-            at[plane.verticalAxis] = bounds[1][plane.verticalAxis] -
-                row.toDouble() / max(1, height - 1) * verticalSpan
-            for (col in 0 until width) {
-                at[plane.horizontalAxis] = bounds[1][plane.horizontalAxis] -
-                    col.toDouble() / max(1, width - 1) * horizontalSpan
-                volume.affine.voxelInto(at[0], at[1], at[2], voxel)
-                val index = row * width + col
-                baseI[index] = voxel[0]
-                baseJ[index] = voxel[1]
-                baseK[index] = voxel[2]
-            }
-        }
-    }
+    private val cache = LinkedHashMap<Int, MprScalarSlice>(cacheEntries + 1, 0.75f, true)
+    private var cachedBytes = 0L
 
     fun sample(slice: Int, cancellationCheck: () -> Unit = {}): MprScalarSlice {
-        cache[slice]?.let { return it }
+        val validSlice = slice.coerceIn(0, geometry.sliceCount - 1)
+        cache[validSlice]?.let { return it }
         val values = FloatArray(width * height)
-        val di = shiftI * slice
-        val dj = shiftJ * slice
-        val dk = shiftK * slice
+        val sliceI = origin[0] + sliceStep[0] * validSlice
+        val sliceJ = origin[1] + sliceStep[1] * validSlice
+        val sliceK = origin[2] + sliceStep[2] * validSlice
         val nx = volume.nx - 1.0
         val ny = volume.ny - 1.0
         val nz = volume.nz - 1.0
         for (row in 0 until height) {
             cancellationCheck()
+            val rowI = sliceI + rowStep[0] * row
+            val rowJ = sliceJ + rowStep[1] * row
+            val rowK = sliceK + rowStep[2] * row
+            var i = rowI
+            var j = rowJ
+            var k = rowK
+            val rowOffset = row * width
             for (col in 0 until width) {
-                val index = row * width + col
-                val i = baseI[index] + di
-                val j = baseJ[index] + dj
-                val k = baseK[index] + dk
-                values[index] = if (i < -0.0001 || j < -0.0001 || k < -0.0001 ||
+                values[rowOffset + col] = if (i < -0.0001 || j < -0.0001 || k < -0.0001 ||
                     i > nx + 0.0001 || j > ny + 0.0001 || k > nz + 0.0001
-                ) Float.NaN else volume.sample(i, j, k)
+                ) Float.NaN else {
+                    val exactNativeVoxel = descriptor.isNativeGrid &&
+                        kotlin.math.abs(i - i.roundToInt()) < 1e-8 &&
+                        kotlin.math.abs(j - j.roundToInt()) < 1e-8 &&
+                        kotlin.math.abs(k - k.roundToInt()) < 1e-8
+                    if (exactNativeVoxel) {
+                        volume.nearest(i.roundToInt(), j.roundToInt(), k.roundToInt())
+                    } else {
+                        volume.sample(i, j, k)
+                    }
+                }
+                i += columnStep[0]
+                j += columnStep[1]
+                k += columnStep[2]
             }
         }
         val result = MprScalarSlice(width, height, values)
-        if (cacheEntries > 0) cache[slice] = result
+        if (cacheEntries > 0 && cacheBudgetBytes > 0L) {
+            cache[validSlice] = result
+            cachedBytes += values.size.toLong() * Float.SIZE_BYTES
+            trimCache()
+        }
         return result
     }
 
@@ -126,12 +119,29 @@ class MprRenderSession(
                 val index = row * width + col
                 val value = scalar.values[index]
                 val intensity = if (value.isNaN()) 0 else
-                    (((value.toDouble() - lower) / window) * 255.0)
-                        .roundToInt().coerceIn(0, 255)
-                pixels[index] = (255 shl 24) or (intensity shl 16) or
-                    (intensity shl 8) or intensity
+                    (((value.toDouble() - lower) / window) * 255.0).roundToInt().coerceIn(0, 255)
+                pixels[index] = (255 shl 24) or (intensity shl 16) or (intensity shl 8) or intensity
             }
         }
         return MprImage(width, height, pixels)
+    }
+
+    private fun trimCache() {
+        while (cache.isNotEmpty() &&
+            (cache.size > cacheEntries || cachedBytes > cacheBudgetBytes)
+        ) {
+            val eldest = cache.entries.iterator()
+            val entry = eldest.next()
+            cachedBytes -= entry.value.values.size.toLong() * Float.SIZE_BYTES
+            eldest.remove()
+        }
+    }
+
+    private fun vectorDifference(first: DoubleArray, second: DoubleArray) =
+        doubleArrayOf(first[0] - second[0], first[1] - second[1], first[2] - second[2])
+
+    companion object {
+        const val DEFAULT_CACHE_BUDGET_BYTES = 8L * 1024L * 1024L
+        private const val MEBIBYTE = 1024L * 1024L
     }
 }

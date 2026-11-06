@@ -35,7 +35,7 @@ class MprQualityTest {
             val middle = i.height / 2
             val left = i.pixels[middle * i.width + 1] and 255
             val right = i.pixels[middle * i.width + i.width - 2] and 255
-            assertTrue("Positive RAS-X patient-right must appear on screen-left", left > right)
+            assertTrue("Patient-right (positive RAS-X) must appear on screen-left", left > right)
         }
     }
 
