@@ -54,11 +54,18 @@ class NeuroViewNavigationSmokeTest {
             compose.onAllNodesWithTag(marker).fetchSemanticsNodes().isNotEmpty()
         }
 
-        val screenshot = androidx.test.platform.app.InstrumentationRegistry
-            .getInstrumentation().uiAutomation.takeScreenshot()
+        // GL submission and SurfaceTexture updates can precede the window screenshot by a frame.
+        // Require actual rendered brain pixels to appear without a user touch, not only a GL marker.
+        var visiblePixels = 0
+        compose.waitUntil(timeoutMillis = 10_000) {
+            val screenshot = androidx.test.platform.app.InstrumentationRegistry
+                .getInstrumentation().uiAutomation.takeScreenshot()
+            visiblePixels = countVisibleBrainPixels(screenshot)
+            visiblePixels >= 1_000
+        }
         assertTrue(
-            "The brain submitted a GL frame, but no brain-colored pixels were visible on screen",
-            countVisibleBrainPixels(screenshot) >= 1_000,
+            "The Home brain never became visible without user interaction (pixels=$visiblePixels)",
+            visiblePixels >= 1_000,
         )
     }
 
